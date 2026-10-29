@@ -50,7 +50,7 @@ export function offersInstall(state: InstallState): boolean {
 
 // An iPhone, iPod or iPad. iPadOS asks for desktop sites by default, naming itself a Mac, so a
 // Mac with a touch screen counts too.
-function isIosDevice(userAgent: string, maxTouchPoints: number): boolean {
+export function isIosDevice(userAgent: string, maxTouchPoints: number): boolean {
   return /iPhone|iPad|iPod/.test(userAgent) || (/Macintosh/.test(userAgent) && maxTouchPoints > 1);
 }
 
