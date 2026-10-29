@@ -13,7 +13,7 @@ class FakePage implements ExitPage {
       this.visited.push(url);
     },
   };
-  readonly navigator: ExitPage["navigator"];
+  readonly navigator: { maxTouchPoints: number; standalone: boolean; userAgent: string };
   readonly visited: string[] = [];
   readonly waits: number[] = [];
   private readonly waiting: (() => void)[] = [];
@@ -46,32 +46,32 @@ class FakePage implements ExitPage {
 }
 
 describe("exitApp", () => {
-  it.each<[string, boolean, boolean, boolean, { closes: number; visited: string[] }]>([
+  // Installed as an app (display mode or iOS's standalone) or in a browser tab, its window
+  // closing on close() or staying open: each closes once, and goes home only where it stays open.
+  const pages = [
+    ["a browser tab", false, false],
+    ["an installed app", true, false],
+    ["iOS's Home Screen app", false, true],
+  ] as const;
+  const rows = pages.flatMap(([name, displayInstalled, iosStandalone]) => [
+    [`${name} that closes, closes`, displayInstalled, iosStandalone, true, []] as const,
     [
-      "a browser tab goes home without closing",
+      `${name} that stays open, goes home`,
+      displayInstalled,
+      iosStandalone,
       false,
-      false,
-      true,
-      { closes: 0, visited: [HOME_URL] },
-    ],
-    ["an installed app closes", true, false, true, { closes: 1, visited: [] }],
-    ["iOS's Home Screen app closes", false, true, true, { closes: 1, visited: [] }],
-    [
-      "an installed app whose window stays open goes home",
-      true,
-      false,
-      false,
-      { closes: 1, visited: [HOME_URL] },
-    ],
-  ])("%s", (_, displayInstalled, iosStandalone, closeWorks, expected) => {
+      [HOME_URL],
+    ] as const,
+  ]);
+  it.each(rows)("%s", (_, displayInstalled, iosStandalone, closeWorks, visited) => {
     const page = new FakePage(displayInstalled, iosStandalone, closeWorks);
     exitApp(page);
     page.wait();
-    expect({ closes: page.closes, visited: page.visited }).toEqual(expected);
+    expect({ closes: page.closes, visited: page.visited }).toEqual({ closes: 1, visited });
   });
 
   it("waits EXIT_WAIT_MS for the window to close before going home", () => {
-    const page = new FakePage(true, false, false);
+    const page = new FakePage(false, false, false);
     exitApp(page);
     const beforeWait = [...page.visited];
     page.wait();

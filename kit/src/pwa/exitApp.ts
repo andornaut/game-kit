@@ -1,5 +1,3 @@
-import { type InstallHost, pageRunsAsApp } from "./installFlow";
-
 // The site's home page, where exiting goes when the window stays open.
 export const HOME_URL = "/";
 
@@ -7,7 +5,7 @@ export const HOME_URL = "/";
 export const EXIT_WAIT_MS = 500;
 
 // The parts of window exitApp uses, so tests can pass a fake.
-export interface ExitPage extends Pick<InstallHost, "matchMedia" | "navigator"> {
+export interface ExitPage {
   close(): void;
   // Whether the window has closed.
   readonly closed: boolean;
@@ -20,20 +18,15 @@ export function browserExitPage(): ExitPage {
   return window;
 }
 
-// Leaves the game, for a start screen's Exit button. The installed app (display-mode fullscreen
-// or standalone, or iOS's navigator.standalone) closes its window, which the browser allows while
-// its history holds only the game; where the window is still open EXIT_WAIT_MS later, or in a
-// browser tab, the page goes to the site's home page.
+// Leaves the game, for a start screen's Exit or a Quit question's Quit. The window closes, as an
+// installed app or a browser tab does where its history holds only the game; where the window is
+// still open EXIT_WAIT_MS later (a browser that refuses the close, or a tab with pages before the
+// game), the page goes to the site's home page.
 export function exitApp(page: ExitPage): void {
-  const home = () => page.location.assign(HOME_URL);
-  if (!pageRunsAsApp(page)) {
-    home();
-    return;
-  }
   page.close();
   page.setTimeout(() => {
     if (!page.closed) {
-      home();
+      page.location.assign(HOME_URL);
     }
   }, EXIT_WAIT_MS);
 }
