@@ -13,7 +13,7 @@ Requires Node 24 (`.nvmrc`). Run `npm install`, then:
 | `npm run lint`   | Prettier check, ESLint and markdownlint |
 | `npm test`       | Run the kit's unit tests with Vitest    |
 
-ESLint holds the kit's boundary: `kit/src/` imports nothing from a game and its own modules by relative path, and only `phaser/` folders import Phaser.
+ESLint holds the kit's boundary: `kit/src/` imports nothing from a game and its own modules by relative path, only `phaser/` folders import Phaser, and only `vite/` folders import Vite.
 
 ## Including the kit in a game
 
