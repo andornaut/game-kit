@@ -59,3 +59,11 @@ export function rectAboveIn(
     y: keep(at.bottom - size.height, size.height, bounds.y, bounds.height),
   };
 }
+
+// The point of rect nearest to point: the point itself inside rect, else on rect's edge, the last
+// column or row for one past its right or bottom edge (containsPoint leaves those edges out).
+export function clampInto(rect: Rect, point: Point): Point {
+  const within = (value: number, start: number, size: number) =>
+    Math.min(Math.max(value, start), start + size - 1);
+  return { x: within(point.x, rect.x, rect.width), y: within(point.y, rect.y, rect.height) };
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { containsPoint, insetRect, rectAboveIn, rectsOverlap } from "./rect";
+import { clampInto, containsPoint, insetRect, rectAboveIn, rectsOverlap } from "./rect";
 
 describe("containsPoint", () => {
   const rect = { height: 20, width: 10, x: 5, y: 40 };
@@ -67,5 +67,20 @@ describe("rectAboveIn", () => {
       x: 10,
       y: 20,
     });
+  });
+});
+
+describe("clampInto", () => {
+  const rect = { height: 560, width: 360, x: 10, y: 20 };
+
+  it.each([
+    ["a point inside stays", { x: 12.5, y: 300 }, { x: 12.5, y: 300 }],
+    ["past the left edge", { x: -40, y: 300 }, { x: 10, y: 300 }],
+    ["past the right edge, onto the last column", { x: 400, y: 300 }, { x: 369, y: 300 }],
+    ["above the top edge", { x: 100, y: -8 }, { x: 100, y: 20 }],
+    ["below the bottom edge, onto the last row", { x: 100, y: 700 }, { x: 100, y: 579 }],
+    ["past a corner", { x: -5, y: 900 }, { x: 10, y: 579 }],
+  ])("%s", (_, point, expected) => {
+    expect(clampInto(rect, point)).toEqual(expected);
   });
 });
