@@ -6,6 +6,7 @@
   "private": true,
   "type": "module",
   "peerDependencies": {
+    "@jsquash/webp": "1.5.0",
     "phaser": "^4.2.1"
   }
 }
