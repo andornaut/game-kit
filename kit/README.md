@@ -11,7 +11,7 @@ import { seededRandom } from "@andornaut/game-kit/random";
 import { frameSteps } from "@andornaut/game-kit/clock/fixedStep";
 ```
 
-The game maps `@andornaut/game-kit/*` to `packages/game-kit/src/*` in its `tsconfig.json` `paths` (read by tsc and tsx) and its Vite `resolve.alias` (read by Vite and Vitest). Modules inside the kit import each other by relative path.
+A game holds this copy in `vendor/game-kit/` and maps `@andornaut/game-kit/*` to `vendor/game-kit/src/*` in its `tsconfig.json` `paths` (read by tsc and tsx) and its Vite `resolve.alias` (read by Vite and Vitest). Modules inside the kit import each other by relative path. `KIT_COMMIT`, beside this file in a game's copy, names the game-kit commit it was copied from; the copy is never edited by hand.
 
 ## Layout
 
@@ -22,7 +22,7 @@ The game maps `@andornaut/game-kit/*` to `packages/game-kit/src/*` in its `tscon
 
 ## Boundary
 
-The kit never imports a game's code: anything game-specific, such as a screen size or a step length, is passed in. It holds no player text. Pure code sits at each folder's root and runs in unit tests without a renderer; only `phaser/` folders import Phaser. The game's ESLint config enforces the first and the last.
+The kit never imports a game's code: anything game-specific, such as a screen size or a step length, is passed in. It holds no player text. Pure code sits at each folder's root and runs in unit tests without a renderer; only `phaser/` folders import Phaser. The game-kit repository's ESLint config enforces the first and the last.
 
 ## Licence
 
