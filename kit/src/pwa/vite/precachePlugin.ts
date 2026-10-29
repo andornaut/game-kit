@@ -108,21 +108,27 @@ export function precachePlugin({
           contents.set(url, bundleBytes(url) ?? new Uint8Array());
         }
 
-        const publicUrls = pageUrls.filter((url) => !(url.slice(1) in bundle));
-        // The loop also visits the URLs pushed onto publicUrls while it runs.
-        for (const url of publicUrls) {
-          if (contents.has(url)) {
+        // The public files the page links, and the icons each web app manifest names, read from
+        // the build output where a plugin wrote them there (hashedIconsPlugin's manifest and
+        // hashed icons) and otherwise from the public directory. The loop also visits the URLs
+        // pushed onto linkedUrls while it runs.
+        const linkedUrls = pageUrls.filter(
+          (url) => !(url.slice(1) in bundle) || url.endsWith(".webmanifest"),
+        );
+        for (const url of linkedUrls) {
+          if (contents.has(url) && !url.endsWith(".webmanifest")) {
             continue;
           }
           // Each file's references are only known once it is read, so reads run one at a time.
           // eslint-disable-next-line no-await-in-loop
-          const bytes = await readPublicFile(url);
+          const bytes = bundleBytes(url) ?? (await readPublicFile(url));
           if (bytes === undefined) {
             continue;
           }
           contents.set(url, bytes);
           if (url.endsWith(".webmanifest")) {
-            publicUrls.push(...webManifestIconUrls(JSON.parse(decoder.decode(bytes))));
+            const icons = webManifestIconUrls(JSON.parse(decoder.decode(bytes)));
+            linkedUrls.push(...icons.filter((icon) => !linkedUrls.includes(icon)));
           }
         }
 
