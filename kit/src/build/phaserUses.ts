@@ -1,7 +1,7 @@
 // Checks a game against its build's Phaser (phaserBuild.ts): a test calls phaserBuildProblems with
 // the game's PhaserBuild and its shipped modules, and expects []. Node only, for tests.
-import { readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 
 import ts from "typescript";
 
@@ -10,16 +10,48 @@ import {
   type PhaserBuild,
   type PhaserExports,
   phaserExports,
+  phaserFlags,
   phaserSourceDir,
 } from "./phaserBuild";
 
-// What only the omitted namespaces' folders register: game object factories and creators,
-// which a scene reaches as this.add.<name> and this.make.<name>, and scene plugins, reached as
-// this.<name>. `physics` is the name a scene reaches its default physics system by.
-export interface SceneNames {
-  factories: ReadonlySet<string>;
-  plugins: ReadonlySet<string>;
+// What a game's code may reach that the build's Phaser lacks, by how the code reaches it.
+export interface LackingNames {
+  // Game object factories and creators, reached as this.add.<name> and this.make.<name>.
+  readonly factories: ReadonlySet<string>;
+  // Game object classes, reached as GameObjects.<name>.
+  readonly gameObjects: ReadonlySet<string>;
+  // Values imported from "phaser": namespaces and constants.
+  readonly imports: ReadonlySet<string>;
+  // Loader file types, reached as load.<name>.
+  readonly loaders: ReadonlySet<string>;
+  // Scene plugins, reached as any property or config key <name>. `physics` is the name a scene
+  // reaches its default physics system by.
+  readonly plugins: ReadonlySet<string>;
+  // Game systems, reached as <name> on this, a game, a scene or a scene's sys: this.sound,
+  // game.sound.
+  readonly systems: ReadonlySet<string>;
 }
+
+// What a feature flag set false takes from the build's Phaser beyond what its `typeof <FLAG>`
+// blocks register (flagGatedNames): the constant that asks for the renderer it removes, and for
+// FEATURE_SOUND the sound manager (game.sound, a scene's sound) and the loader file types that
+// decode through it. A flag with no row removes nothing a game reaches.
+export const FLAG_FEATURES: Readonly<
+  Record<string, Pick<LackingNames, "imports" | "loaders" | "systems">>
+> = {
+  CANVAS_RENDERER: { imports: new Set(["CANVAS"]), loaders: new Set(), systems: new Set() },
+  FEATURE_SOUND: {
+    imports: new Set(),
+    loaders: new Set(["audio", "audioSprite"]),
+    systems: new Set(["sound"]),
+  },
+  WEBGL_RENDERER: { imports: new Set(["WEBGL"]), loaders: new Set(), systems: new Set() },
+};
+
+const FACTORY = /GameObject(?:Factory|Creator)\.register\('(\w+)'/g;
+const PLUGIN = /PluginCache\.register\('\w+',\s*\w+,\s*'(\w+)'/g;
+const GAME_OBJECT = /GameObjects\.(\w+) = require/g;
+const REQUIRE = /require\('(\.[^']+)'\)/g;
 
 // Phaser's source files under dir, a folder under phaser/src/.
 function phaserFiles(sourceDir: string, dir: string): string[] {
@@ -28,37 +60,98 @@ function phaserFiles(sourceDir: string, dir: string): string[] {
     .map((path) => join(sourceDir, dir, path));
 }
 
-// The factories, creators and scene plugins that only omitted's folders register.
-export function omittedSceneNames(
+function matches(pattern: RegExp, text: string): string[] {
+  return [...text.matchAll(pattern)].map(([, name]) => name ?? "");
+}
+
+// The text of each block `if (typeof <flag>...) { ... }` opens in text.
+export function flagBlocks(flag: string, text: string): string[] {
+  return [...text.matchAll(new RegExp(`if \\(typeof ${flag}\\b[^)]*\\)\\s*\\{`, "g"))].map(
+    (match) => {
+      const open = (match.index ?? 0) + match[0].length;
+      let depth = 1;
+      let at = open;
+      while (at < text.length && depth > 0) {
+        depth += text[at] === "{" ? 1 : text[at] === "}" ? -1 : 0;
+        at += 1;
+      }
+      return text.slice(open, at - 1);
+    },
+  );
+}
+
+// The factories and game object classes that Phaser's source registers only inside its
+// `typeof <flag>` blocks, directly or in a module a block requires.
+export function flagGatedNames(
+  sourceDir: string,
+  flag: string,
+): Pick<LackingNames, "factories" | "gameObjects"> {
+  const factories = new Set<string>();
+  const gameObjects = new Set<string>();
+  for (const file of phaserFiles(sourceDir, ".")) {
+    for (const block of flagBlocks(flag, readFileSync(file, "utf8"))) {
+      const required = matches(REQUIRE, block).map((module) => {
+        const path = join(dirname(file), module);
+        return path.endsWith(".js") ? path : `${path}.js`;
+      });
+      const texts = [
+        block,
+        ...required.filter(existsSync).map((path) => readFileSync(path, "utf8")),
+      ];
+      texts.flatMap((text) => matches(FACTORY, text)).forEach((name) => factories.add(name));
+      matches(GAME_OBJECT, block).forEach((name) => gameObjects.add(name));
+    }
+  }
+  return { factories, gameObjects };
+}
+
+// What the build's Phaser lacks: the omitted namespaces, what only their folders register, and
+// what each feature flag the build sets false takes out (FLAG_FEATURES, flagGatedNames).
+export function lackingNames(
   sourceDir: string,
   exports: PhaserExports,
-  omitted: readonly string[],
-): SceneNames {
-  const factory = /GameObject(?:Factory|Creator)\.register\('(\w+)'/g;
-  const plugin = /PluginCache\.register\('\w+',\s*\w+,\s*'(\w+)'/g;
-  const folders = omitted.flatMap((name) => {
+  build: PhaserBuild,
+): LackingNames {
+  const folders = build.omitted.flatMap((name) => {
     const module = exports.namespaces.get(name) ?? "";
     return module.split("/").length === 2 ? [module] : [];
   });
   const texts = folders
     .flatMap((folder) => phaserFiles(sourceDir, folder))
     .map((file) => readFileSync(file, "utf8"));
-  const names = (pattern: RegExp) =>
-    texts.flatMap((text) => [...text.matchAll(pattern)].map(([, name]) => name ?? ""));
+  const offFlags = Object.entries(phaserFlags(build))
+    .filter(([flag, on]) => !on && flag in FLAG_FEATURES)
+    .map(([flag]) => flag);
+  const gated = offFlags.map((flag) => flagGatedNames(sourceDir, flag));
+  const features = offFlags.flatMap((flag) => FLAG_FEATURES[flag] ?? []);
   return {
-    factories: new Set(names(factory)),
-    plugins: new Set(["physics", ...names(plugin)]),
+    factories: new Set([
+      ...texts.flatMap((text) => matches(FACTORY, text)),
+      ...gated.flatMap(({ factories }) => [...factories]),
+    ]),
+    gameObjects: new Set(gated.flatMap(({ gameObjects }) => [...gameObjects])),
+    imports: new Set([...build.omitted, ...features.flatMap(({ imports }) => [...imports])]),
+    loaders: new Set(features.flatMap(({ loaders }) => [...loaders])),
+    plugins: new Set(["physics", ...texts.flatMap((text) => matches(PLUGIN, text))]),
+    systems: new Set(features.flatMap(({ systems }) => [...systems])),
   };
 }
 
-// What a module's text uses of Phaser that the build's Phaser may lack: each value it imports
-// from "phaser" ("*" for a default, namespace or dynamic import, which the scan cannot follow)
-// and each of names it reaches: a factory through add or make, or a plugin by any property.
-export function phaserUses(names: SceneNames, text: string): string[] {
+const SYSTEM_HOLDERS: ReadonlySet<string> = new Set(["game", "scene", "sys"]);
+
+// Each use in a module's text of something names lacks, as the code reaches it: an import from
+// "phaser" by its name ("*" for a default, namespace or dynamic import or a re-export, which the
+// scan cannot follow), add.<factory> or make.<factory>, a plugin's name, a system's name,
+// load.<file type> and GameObjects.<class>.
+export function phaserUses(names: LackingNames, text: string): string[] {
   const source = ts.createSourceFile("module.ts", text, ts.ScriptTarget.Latest, true);
   const uses: string[] = [];
   const isPhaser = (node: ts.Node | undefined) =>
     node !== undefined && ts.isStringLiteral(node) && node.text === "phaser";
+  // The name an expression ends in: an identifier's, or a property access's last name.
+  const nameOf = (node: ts.Expression) =>
+    ts.isIdentifier(node) ? node.text : ts.isPropertyAccessExpression(node) ? node.name.text : "";
+  const named = (node: ts.Expression, wanted: ReadonlySet<string>) => wanted.has(nameOf(node));
   const visit = (node: ts.Node): void => {
     if (ts.isImportDeclaration(node) && isPhaser(node.moduleSpecifier)) {
       const clause = node.importClause;
@@ -69,7 +162,10 @@ export function phaserUses(names: SceneNames, text: string): string[] {
         }
         if (bindings && ts.isNamedImports(bindings)) {
           for (const element of bindings.elements.filter(({ isTypeOnly }) => !isTypeOnly)) {
-            uses.push((element.propertyName ?? element.name).text);
+            const name = (element.propertyName ?? element.name).text;
+            if (names.imports.has(name)) {
+              uses.push(name);
+            }
           }
         }
       }
@@ -81,15 +177,25 @@ export function phaserUses(names: SceneNames, text: string): string[] {
       isPhaser(node.arguments[0])
     ) {
       uses.push("*");
+    } else if (ts.isPropertyAccessExpression(node)) {
+      const name = node.name.text;
+      const holder = node.expression;
+      if (names.factories.has(name) && named(holder, new Set(["add", "make"]))) {
+        uses.push(`${nameOf(holder)}.${name}`);
+      } else if (names.loaders.has(name) && named(holder, new Set(["load"]))) {
+        uses.push(`load.${name}`);
+      } else if (names.gameObjects.has(name) && named(holder, new Set(["GameObjects"]))) {
+        uses.push(`GameObjects.${name}`);
+      } else if (
+        names.systems.has(name) &&
+        (holder.kind === ts.SyntaxKind.ThisKeyword || named(holder, SYSTEM_HOLDERS))
+      ) {
+        uses.push(name);
+      } else if (names.plugins.has(name)) {
+        uses.push(name);
+      }
     } else if (
-      ts.isPropertyAccessExpression(node) &&
-      names.factories.has(node.name.text) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ["add", "make"].includes(node.expression.name.text)
-    ) {
-      uses.push(node.name.text);
-    } else if (
-      (ts.isPropertyAccessExpression(node) || ts.isPropertyAssignment(node)) &&
+      ts.isPropertyAssignment(node) &&
       ts.isIdentifier(node.name) &&
       names.plugins.has(node.name.text)
     ) {
@@ -120,8 +226,7 @@ export function phaserBuildProblems(
 ): string[] {
   const sourceDir = phaserSourceDir();
   const exports = phaserExports(readFileSync(join(sourceDir, "phaser-esm.js"), "utf8"));
-  const names = omittedSceneNames(sourceDir, exports, build.omitted);
-  const lacking = new Set([...build.omitted, ...names.factories, ...names.plugins, "*"]);
+  const names = lackingNames(sourceDir, exports, build);
   return [
     ...build.omitted
       .filter((name) => !exports.namespaces.has(name))
@@ -130,9 +235,7 @@ export function phaserBuildProblems(
       .filter((flag) => !(flag in PHASER_ESM_FLAGS))
       .map((flag) => `Phaser has no feature flag ${flag}`),
     ...files.flatMap((file) =>
-      phaserUses(names, readFileSync(file, "utf8"))
-        .filter((use) => lacking.has(use))
-        .map((use) => `${relative(root, file)}: ${use}`),
+      phaserUses(names, readFileSync(file, "utf8")).map((use) => `${relative(root, file)}: ${use}`),
     ),
   ];
 }
