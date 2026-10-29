@@ -1,6 +1,6 @@
 # @andornaut/game-kit
 
-Game-agnostic TypeScript helpers for Phaser games: arrays, maps, records, numbers, seeded random, rects, line wrapping, branded units, a fixed-step clock, integer zoom and the build label.
+Game-agnostic TypeScript helpers for Phaser games: arrays, maps, records, numbers, seeded random, rects, line wrapping, branded units, a fixed-step clock, integer zoom, bitmap-font text fitting and the build label.
 
 ## Importing
 
@@ -18,6 +18,7 @@ A game holds this copy in `vendor/game-kit/` and maps `@andornaut/game-kit/*` to
 - `src/`: pure helpers, with no game knowledge
 - `src/build/`: the build's version and commit label. `build/buildInfo.d.ts` declares the `__APP_VERSION__` and `__COMMIT__` globals, which the game's bundler defines (`shortCommit` and `gitHead` in `build/buildVersion.ts` give the commit)
 - `src/clock/`: the fixed-step clock
+- `src/text/`: bitmap-font text fitting. `text/bitmapFont.ts` reads an XML BMFont (`.fnt`) file into a `BitmapFont` and measures it: its rows (`fontMetrics`) and a line's ink width at a scale (`inkWidth`), laid out as Phaser's `BitmapText` lays it out. `text/textFit.ts` sets text at one fixed size, wrapped at spaces within a room on up to a style's lines (`fittingText`), with any measure; `bitmapMeasure` is a bitmap font's. `text/overflow.ts` lists every text in a table of roles that overflows its room, for a test to expect `[]`. `text/phaser/phaserBitmapFont.ts` reads a loaded font from Phaser's cache into the same `BitmapFont`, so runtime and tests measure alike
 - `src/view/`: the integer zoom; `view/phaser/` keeps the game canvas at it
 
 ## Boundary
