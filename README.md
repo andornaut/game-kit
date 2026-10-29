@@ -29,7 +29,7 @@ The first copies `kit/` as committed at this repository's HEAD into `<game>/vend
 The game then:
 
 - maps `@andornaut/game-kit/*` to `vendor/game-kit/src/*` in its `tsconfig.json` `paths` (tsc and tsx) and its Vite `resolve.alias` (Vite and Vitest), and includes `vendor/game-kit/src` in tsc and `vendor/game-kit/src/**/*.test.ts` in Vitest
-- keeps `vite.config.ts` free of kit imports, direct or through the modules it imports: Vite bundles the config without its own alias, so a config that needs repository code loads it through `runnerImport` from `vite`, given the alias
+- exports `gameViteConfig` (`kit/src/build/vite/gameConfig.ts`) from `vite.config.ts`, imported by its path under `vendor/game-kit/`: Vite bundles the config without its own alias, so the config imports no module that uses the alias, and `gameViteConfig` loads the game's plugins from its config module through `runnerImport` from `vite`, given the alias
 - leaves `vendor/` out of its Prettier, ESLint and markdownlint runs: the copy is linted here
 - never edits the copy by hand
 
