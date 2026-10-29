@@ -7,11 +7,11 @@ const sumHash = (bytes: Uint8Array) => `h${bytes.reduce((sum, byte) => sum + byt
 
 describe("hashedIconUrl", () => {
   it.each([
-    ["/icons/icon-192.png", "/icons/icon-192.h1.png"],
-    ["/art/favicon-16.png", "/art/favicon-16.h1.png"],
-    ["/icons.d/icon", "/icons.d/icon.h1"],
+    ["/icons/icon-192.png", "/assets/icons/icon-192-h1.png"],
+    ["/art/favicon-16.png", "/assets/art/favicon-16-h1.png"],
+    ["/icons.d/icon", "/assets/icons.d/icon-h1"],
   ])("names %s %s", (url, hashed) => {
-    expect(hashedIconUrl(url, "h1")).toBe(hashed);
+    expect(hashedIconUrl("assets", url, "h1")).toBe(hashed);
   });
 });
 
@@ -25,7 +25,7 @@ describe("hashIcons", () => {
     ["play/index.html", '<link rel="icon" href="/art/favicon.png" /><a href="/art/favicon.png.x">'],
     ["manifest.webmanifest", '{"icons":[{"src":"/icons/icon-192.png"}],"start_url":"/play/"}'],
   ]);
-  const result = hashIcons(sumHash, ICONS, TEXTS);
+  const result = hashIcons(sumHash, "assets", ICONS, TEXTS);
 
   // Every quoted URL in a rewritten text that names an icon file.
   const iconRefs = (text: string) =>
@@ -35,7 +35,9 @@ describe("hashIcons", () => {
     const refs = iconRefs(result.texts.get(name) ?? "");
     const wrong = refs.filter((ref) => {
       const bytes = result.files.get(ref);
-      return bytes === undefined || !ref.includes(`.${sumHash(bytes)}.`);
+      return (
+        bytes === undefined || !ref.startsWith("/assets/") || !ref.includes(`-${sumHash(bytes)}.`)
+      );
     });
     expect({ refs: refs.length > 0, wrong }).toEqual({ refs: true, wrong: [] });
   });

@@ -13,7 +13,8 @@ export interface HashedIconsPluginOptions {
   readonly webManifest?: string;
 }
 
-// In a build, writes each icon again under its content-hashed name (hashedIcons.ts) and points
+// In a build, writes each icon again under its content-hashed name in Vite's assets directory
+// (hashedIcons.ts), beside Vite's own hashed output, and points
 // every built page and the web app manifest there. The manifest is written into the build output
 // under its own name with its icons rewritten, so precachePlugin precaches the hashed icons it
 // names. Fails the build for an icon that is missing or that nothing names. Runs after Vite has
@@ -26,7 +27,7 @@ export function hashedIconsPlugin({
     apply: "build",
     enforce: "post",
     async generateBundle(_options, bundle) {
-      const { publicDir } = this.environment.config;
+      const { build, publicDir } = this.environment.config;
       const read = async (url: string) => {
         try {
           return await this.fs.readFile(`${publicDir}${url}`);
@@ -51,7 +52,7 @@ export function hashedIconsPlugin({
           ] as const;
         }),
       ]);
-      const hashed = hashIcons(contentHash, iconFiles, texts);
+      const hashed = hashIcons(contentHash, build.assetsDir, iconFiles, texts);
       if (hashed.unreferenced.length > 0) {
         this.error(`hashed icons: no page or manifest names ${hashed.unreferenced.join(", ")}`);
       }
