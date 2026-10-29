@@ -1,7 +1,6 @@
 import { isFirefoxAndroid } from "./installState";
 
 export interface HistoryLike {
-  go(delta: number): void;
   // How many entries the window's session history holds, before and after the current one.
   readonly length: number;
   pushState(data: unknown, unused: string): void;
@@ -11,17 +10,13 @@ export interface HistoryLike {
 // The part of a CloseWatcher the game uses: it fires close on a close request (the Android back
 // gesture or button, or Escape on a keyboard) and is spent by it. TypeScript's DOM lib has no
 // CloseWatcher type.
-export interface CloseWatcherLike extends EventTarget {
-  destroy(): void;
-}
+export type CloseWatcherLike = EventTarget;
 
 // Creates a CloseWatcher, where the browser has them.
 export type CloseWatcherFactory = () => CloseWatcherLike;
 
-// What leaving the game needs of the page besides its history.
-export interface LeaveHost {
-  // Closes the window, where the browser lets a script close it.
-  close(): void;
+// The page's timer, which ends an Escape press's handling once its close has fired.
+export interface TimerHost {
   setTimeout(handler: () => void, ms: number): unknown;
 }
 
@@ -46,22 +41,9 @@ export function backGuardState(stateKey: string): Readonly<Record<string, true>>
 // interaction its pointerup brings, leaving the game's entry without one.
 export const BACK_GUARD_GESTURES = ["keydown", "pointerup"] as const;
 
-// How long leaving waits for the page to go before it tries closing the window instead.
-export const LEAVE_WAIT_MS = 500;
-
 // The key that is a close request on a keyboard. The game's own keys handle it, so the close it
 // causes is not a back press.
 const ESCAPE_KEY = "Escape";
-
-export interface BackGuard {
-  // Leaves the game. With nothing before the game's entry (an installed app's launch, or a tab
-  // opened on the game), it closes the window, which the browser allows while the history holds
-  // only that entry. Otherwise it goes back over the guard entry, without pushing it again, and
-  // past the game's own entry to the previous page, and closes the window if the page is still
-  // there after LEAVE_WAIT_MS. Where the window stays, nothing catches the next back (an
-  // installed app closes) unless the player's input first restores the guard or the watcher.
-  leave(): void;
-}
 
 // The close watchers that catch back, or undefined where the guard entry must: where the browser
 // has none, and in Firefox for Android, which hands back to a close watcher only when its history
@@ -109,7 +91,7 @@ function eventKey(event: Event): unknown {
 // Two ways catch it:
 // - A close watcher, where the browser has CloseWatcher, created at load and again after each
 //   close it fires. It adds no history entry, so with nothing before the game the history holds
-//   one entry and leave may close the window.
+//   one entry, as an installed app's window needs for a script to close it.
 // - A guard history entry for back to pop, pushed again on each pop, where there is no close
 //   watcher (backCloseWatcher) or the history already holds more than one entry, so the window
 //   could not close anyway. It also catches a desktop browser's Back button, which is not a close
@@ -122,13 +104,10 @@ function eventKey(event: Event): unknown {
 export function guardBackNavigation(
   { onBack, stateKey }: BackGuardOptions,
   eventTarget: EventTarget,
-  host: LeaveHost,
+  host: TimerHost,
   createCloseWatcher: CloseWatcherFactory | undefined,
   history: HistoryLike,
-): BackGuard {
-  // Whether leave has stepped back over the guard and goes on past the game's own entry once it
-  // lands there.
-  let leaving = false;
+): void {
   // Whether an Escape keydown is being handled: the close it causes is the keyboard's, not back.
   let escaping = false;
   let watcher: CloseWatcherLike | undefined;
@@ -166,11 +145,6 @@ export function guardBackNavigation(
     watchClose();
   };
   const onPopState = () => {
-    if (leaving) {
-      leaving = false;
-      history.go(-1);
-      return;
-    }
     // Forward onto the guard entry is not a back press.
     if (isGuard()) {
       return;
@@ -182,32 +156,5 @@ export function guardBackNavigation(
     eventTarget.addEventListener(type, onGesture, { capture: true, passive: true });
   }
   eventTarget.addEventListener("popstate", onPopState);
-  // A page restored from the back-forward cache after leaving catches back again.
-  eventTarget.addEventListener("pageshow", watchClose);
   watchClose();
-  return {
-    leave() {
-      watcher?.removeEventListener("close", onClose);
-      watcher?.destroy();
-      watcher = undefined;
-      if (history.length <= 1) {
-        host.close();
-        return;
-      }
-      // A page kept for back-forward caching hides here: back on it later must not close it.
-      let hidden = false;
-      const onPageHide = () => {
-        hidden = true;
-      };
-      eventTarget.addEventListener("pagehide", onPageHide, { once: true });
-      leaving = isGuard();
-      history.go(-1);
-      host.setTimeout(() => {
-        eventTarget.removeEventListener("pagehide", onPageHide);
-        if (!hidden) {
-          host.close();
-        }
-      }, LEAVE_WAIT_MS);
-    },
-  };
 }

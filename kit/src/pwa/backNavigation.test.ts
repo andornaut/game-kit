@@ -10,7 +10,7 @@ import {
   type HistoryLike,
   INSTALLED_APP_DISPLAY_QUERY,
   isFirefoxAndroidApp,
-  type LeaveHost,
+  type TimerHost,
 } from "./backNavigation";
 // The guard entry's state key, and what seen records for each back the guard keeps on the game.
 const STATE_KEY = "testGameBackGuard";
@@ -142,14 +142,9 @@ class FakeCloseWatchers {
   }
 }
 
-// Runs what leaving waits for when told to, and counts the window's closes.
-class FakeLeaveHost implements LeaveHost {
-  closes = 0;
+// Runs what the guard waits for when told to.
+class FakeTimer implements TimerHost {
   private readonly waiting: (() => void)[] = [];
-
-  close(): void {
-    this.closes += 1;
-  }
 
   setTimeout(handler: () => void): void {
     this.waiting.push(handler);
@@ -176,11 +171,11 @@ describe("guardBackNavigation", () => {
   // installed app's launch, or a tab opened on the game).
   function open({ closeWatcher, firefoxAndroid = false, previous }: Browser) {
     const history = new FakeHistory(previous);
-    const host = new FakeLeaveHost();
+    const host = new FakeTimer();
     const watchers = closeWatcher ? new FakeCloseWatchers() : undefined;
     const seen: string[] = [];
     const userAgent = firefoxAndroid ? FIREFOX_ANDROID_UA : CHROME_ANDROID_UA;
-    const guard = guardBackNavigation(
+    guardBackNavigation(
       recordBacks(seen),
       history,
       host,
@@ -214,7 +209,7 @@ describe("guardBackNavigation", () => {
       }
       history.dispatchEvent(Object.assign(new Event("keydown"), { key }));
     };
-    return { back, guard, history, host, input, seen, watchers };
+    return { back, history, host, input, seen, watchers };
   }
 
   // One with the player's first input given.
@@ -299,55 +294,6 @@ describe("guardBackNavigation", () => {
     },
   );
 
-  // With nothing before the game, a close at once where the history holds one entry, or, after
-  // stepping back over the guard, one the browser may refuse, the game left on its own entry.
-  it.each([
-    { closeWatcher: false, closes: [0, 1], left: false, previous: false },
-    { closeWatcher: false, closes: [0, 0], left: true, previous: true },
-    { closeWatcher: true, closes: [1, 1], left: false, previous: false },
-    { closeWatcher: true, closes: [0, 0], left: true, previous: true },
-    { closeWatcher: true, closes: [0, 1], firefoxAndroid: true, left: false, previous: false },
-    { closeWatcher: true, closes: [0, 0], firefoxAndroid: true, left: true, previous: true },
-  ])(
-    "CloseWatcher $closeWatcher, Firefox Android $firefoxAndroid, previous $previous: leaving closes $closes",
-    (row) => {
-      const { guard, history, host, seen } = played(row);
-      guard.leave();
-      const closesAtOnce = host.closes;
-      host.wait();
-      expect({
-        closes: [closesAtOnce, host.closes],
-        left: history.left,
-        seen,
-        state: history.state,
-      }).toEqual({ closes: row.closes, left: row.left, seen: [], state: null });
-    },
-  );
-
-  // Where the window stays after leaving, the next back is the system's, which closes an
-  // installed app, unless an input first restores the guard or the watcher.
-  it.each(
-    BROWSERS.filter(({ previous }) => !previous).flatMap((browser) => [
-      { ...browser, input: false },
-      { ...browser, input: true },
-    ]),
-  )(
-    "CloseWatcher $closeWatcher, Firefox Android $firefoxAndroid: after leaving, input $input before back",
-    (row) => {
-      const { back, guard, history, host, input, seen } = played({ ...row, previous: false });
-      guard.leave();
-      host.wait();
-      if (row.input) {
-        input();
-      }
-      back();
-      expect({ seen, systemBacks: history.systemBacks }).toEqual({
-        seen: row.input ? [BACK] : [],
-        systemBacks: row.input ? 0 : 1,
-      });
-    },
-  );
-
   // The guard waits for input; a close watcher needs none.
   it.each([
     { closeWatcher: false, presses: [], watching: 0 },
@@ -390,14 +336,6 @@ describe("guardBackNavigation", () => {
     expect({ active: watchers?.active, seen }).toEqual({ active: 1, seen: [] });
   });
 
-  it("watches again when the page comes back from the back-forward cache", () => {
-    const { guard, history, watchers } = played({ closeWatcher: true, previous: true });
-    guard.leave();
-    const afterLeaving = watchers?.active;
-    history.dispatchEvent(new Event("pageshow"));
-    expect([afterLeaving, watchers?.active]).toEqual([0, 1]);
-  });
-
   // Only input the browser records before the page sees it pushes the guard: a key press other
   // than Escape, or a pointerup.
   it.each([
@@ -407,7 +345,7 @@ describe("guardBackNavigation", () => {
     { gameEntries: 2, key: undefined, type: "pointerup" },
   ])("$type with key $key, twice, leaves $gameEntries game entries", (row) => {
     const history = new FakeHistory(false);
-    guardBackNavigation(recordBacks([]), history, new FakeLeaveHost(), undefined, history);
+    guardBackNavigation(recordBacks([]), history, new FakeTimer(), undefined, history);
     for (let press = 0; press < 2; press += 1) {
       history.dispatchEvent(Object.assign(new Event(row.type), { key: row.key }));
     }
@@ -416,7 +354,7 @@ describe("guardBackNavigation", () => {
 
   it("does not push a second guard when the page reloads on one", () => {
     const { history } = played({ closeWatcher: false, previous: false });
-    guardBackNavigation(recordBacks([]), history, new FakeLeaveHost(), undefined, history);
+    guardBackNavigation(recordBacks([]), history, new FakeTimer(), undefined, history);
     history.dispatchEvent(new Event(BACK_GUARD_GESTURES[0]));
     expect(history.gameEntries).toBe(2);
   });
@@ -436,7 +374,7 @@ describe("guardBackNavigation", () => {
     const history = new FakeHistory(false);
     history.pushState(backGuardState(`other-${STATE_KEY}`));
     const seen: string[] = [];
-    guardBackNavigation(recordBacks(seen), history, new FakeLeaveHost(), undefined, history);
+    guardBackNavigation(recordBacks(seen), history, new FakeTimer(), undefined, history);
     history.dispatchEvent(new Event(BACK_GUARD_GESTURES[0]));
     expect(history.gameEntries).toBe(3);
   });
