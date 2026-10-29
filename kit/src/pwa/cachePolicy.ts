@@ -64,6 +64,18 @@ export function installUrls(
   return [...urls, ...chosen];
 }
 
+// How an install stores its URLs: hashed URLs an earlier version's cache holds are copied from
+// it, since a hashed name never changes content, and the rest are fetched. Unhashed URLs, such as
+// the page and the revalidated ones, are always fetched fresh.
+export function installPlan(
+  policy: CachePolicy,
+  previouslyCached: ReadonlySet<string>,
+  urls: readonly string[],
+): { copy: string[]; fetch: string[] } {
+  const copied = (url: string) => isHashedAssetUrl(policy, url) && previouslyCached.has(url);
+  return { copy: urls.filter(copied), fetch: urls.filter((url) => !copied(url)) };
+}
+
 // The URLs the service worker answers from its cache: the precache list and every sound file.
 export function cachedUrlsOf({ sounds, urls }: PrecacheManifest): Set<string> {
   return new Set([...urls, ...Object.values(sounds).flat()]);

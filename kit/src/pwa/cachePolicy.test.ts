@@ -5,6 +5,7 @@ import {
   cacheKeyFor,
   cacheNameFor,
   type CachePolicy,
+  installPlan,
   installUrls,
   precacheFetchOptions,
   staleCacheNames,
@@ -99,5 +100,25 @@ describe("staleCacheNames", () => {
     const names = [named("old"), named("new"), "someone-else", named("older")];
     expect(staleCacheNames(POLICY, named("new"), names)).toEqual([named("old"), named("older")]);
     expect(named("new")).toBe("game-new");
+  });
+});
+
+describe("installPlan", () => {
+  const urls = ["/play/", "/nav.js", "/art/sprite.png", "/assets/play-new.js", "/assets/art-a.png"];
+
+  it.each<[string, string[], string[]]>([
+    ["fetches everything on a first install", [], []],
+    ["copies hashed files an earlier cache holds", ["/assets/art-a.png"], ["/assets/art-a.png"]],
+    [
+      "fetches unhashed files fresh even when an earlier cache holds them",
+      ["/play/", "/nav.js", "/art/sprite.png", "/assets/art-a.png"],
+      ["/assets/art-a.png"],
+    ],
+    ["fetches a hashed file no earlier cache holds", ["/assets/play-old.js"], []],
+  ])("%s", (_case, previous, copy) => {
+    expect(installPlan(POLICY, new Set(previous), urls)).toEqual({
+      copy,
+      fetch: urls.filter((url) => !copy.includes(url)),
+    });
   });
 });

@@ -5,6 +5,7 @@ import {
   type ContainerLike,
   createUpdateFlow,
   newerVersionOf,
+  registerWhenDue,
   type RegistrationLike,
   RESUME_CHECK_MS,
   resumeCheckDue,
@@ -400,5 +401,57 @@ describe("createUpdateFlow", () => {
     flow.accept();
     expect(shown).toEqual([]);
     expect(reload).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("registerWhenDue", () => {
+  // Each step is true for the home screen in front, false for it hidden.
+  it.each<[string, unknown, boolean[], number]>([
+    ["registers a controlled page at once", RUNNING_WORKER, [], 1],
+    [
+      "registers a controlled page once, whatever home does",
+      RUNNING_WORKER,
+      [true, false, true],
+      1,
+    ],
+    ["holds a first visit's registration until home shows", null, [], 0],
+    ["holds a first visit's registration while home is hidden", null, [false], 0],
+    ["registers a first visit on its first arrival home", null, [false, true], 1],
+    ["registers a first visit once", null, [true, false, true], 1],
+  ])("%s", async (_case, controller, steps, registrations) => {
+    const container = new FakeContainer(controller);
+    const flow = createUpdateFlow(
+      container,
+      () => 0,
+      () => true,
+      vi.fn(),
+      vi.fn(),
+    );
+    const setOnHome = vi.spyOn(flow, "setOnHome");
+    const register = vi.fn(() => Promise.resolve<RegistrationLike>(new FakeRegistration()));
+    const onHome = registerWhenDue(container, flow, register);
+    for (const step of steps) {
+      onHome(step);
+    }
+    await settle();
+    expect(register).toHaveBeenCalledTimes(registrations);
+    expect(setOnHome.mock.calls).toEqual(steps.map((step) => [step]));
+  });
+
+  it("watches the registration, or lets the game start when it fails", async () => {
+    const container = new FakeContainer(RUNNING_WORKER);
+    const flow = createUpdateFlow(
+      container,
+      () => 0,
+      () => true,
+      vi.fn(),
+      vi.fn(),
+    );
+    const [watch, none] = [vi.spyOn(flow, "watch"), vi.spyOn(flow, "noRegistration")];
+    const registration = new FakeRegistration();
+    registerWhenDue(container, flow, () => Promise.resolve(registration));
+    registerWhenDue(container, flow, () => Promise.reject(new Error("blocked")));
+    await settle();
+    expect([watch.mock.calls, none.mock.calls.length]).toEqual([[[registration]], 1]);
   });
 });

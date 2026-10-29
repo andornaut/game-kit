@@ -131,7 +131,9 @@ export interface UpdateFlow {
   // browser fetches the newer version (a game may show the plate with none waiting, such as for
   // a save a newer version wrote). Does nothing while a switch is reloading.
   accept(): void;
-  // Resolves once the game may boot. It never resolves for a page that reloads first.
+  // Resolves once no newer version is about to take over, so the game may show its first screen
+  // and write its save. Construct the game and load its assets meanwhile: only the first screen
+  // and the save wait for this. It never resolves for a page that reloads first.
   readonly bootable: Promise<void>;
   endBootWait(): void;
   noteInteraction(): void;
@@ -254,5 +256,35 @@ export function createUpdateFlow(
       }
       check(registration).then(read, read);
     },
+  };
+}
+
+// Registers the service worker through register and hands the registration to flow.watch, or
+// tells flow there is none when register rejects. A page some version controls registers at once,
+// so its update check runs while the game loads. A first visit registers on the game's first
+// arrival home, so the precache's downloads do not compete with the game's own. Returns the
+// game's home hook, to call in place of flow.setOnHome on each change of whether the home screen
+// is in front.
+export function registerWhenDue(
+  container: ContainerLike,
+  flow: UpdateFlow,
+  register: () => Promise<RegistrationLike>,
+): (onHome: boolean) => void {
+  let registered = false;
+  const start = () => {
+    registered = true;
+    register().then(
+      (registration) => flow.watch(registration),
+      () => flow.noRegistration(),
+    );
+  };
+  if (container.controller !== null) {
+    start();
+  }
+  return (onHome) => {
+    flow.setOnHome(onHome);
+    if (onHome && !registered) {
+      start();
+    }
   };
 }

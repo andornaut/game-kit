@@ -9,6 +9,7 @@ import {
   cacheNameFor,
   type CachePolicy,
   type FetchStrategy,
+  installPlan,
   installUrls,
   precacheFetchOptions,
   staleCacheNames,
@@ -58,11 +59,36 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
   const cacheName = cacheNameFor(policy, manifest.version);
   const cachedUrls = cachedUrlsOf(manifest);
 
+  // Hashed files an earlier version stored are copied from its cache rather than fetched again, so
+  // a deploy downloads only what changed (installPlan). The earlier caches stay until activate.
   const precache = async () => {
     const soundFormat = new URL(worker.location.href).searchParams.get(SOUND_FORMAT_PARAM);
     const urls = installUrls(manifest, soundFormat);
     const cache = await caches.open(cacheName);
-    await cache.addAll(urls.map((url) => new Request(url, precacheFetchOptions(policy, url))));
+    // Each URL an earlier cache holds, with the cache that holds it.
+    const earlier = await Promise.all(
+      staleCacheNames(policy, cacheName, await caches.keys()).map((name) => caches.open(name)),
+    );
+    const listed = await Promise.all(
+      earlier.map(async (old) =>
+        (await old.keys()).map((request) => [new URL(request.url).pathname, old] as const),
+      ),
+    );
+    const holders = new Map(listed.flat());
+    const plan = installPlan(policy, new Set(holders.keys()), urls);
+    // A copy that is gone by now (another tab's worker cleared the cache) is fetched instead.
+    const uncopied = await Promise.all(
+      plan.copy.map(async (url) => {
+        const response = await holders.get(url)?.match(url);
+        if (response === undefined) {
+          return [url];
+        }
+        await cache.put(url, response);
+        return [];
+      }),
+    );
+    const fetched = [...plan.fetch, ...uncopied.flat()];
+    await cache.addAll(fetched.map((url) => new Request(url, precacheFetchOptions(policy, url))));
   };
 
   const deleteStaleCaches = async () => {
