@@ -1,0 +1,11 @@
+{
+  "name": "@andornaut/game-kit",
+  "version": "0.0.1",
+  "description": "Game-agnostic TypeScript helpers for Phaser games.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "peerDependencies": {
+    "phaser": "^4.2.1"
+  }
+}
