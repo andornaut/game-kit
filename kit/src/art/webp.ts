@@ -15,12 +15,9 @@ import encoderFactory, {
 import { defaultOptions } from "@jsquash/webp/meta.js";
 import { initEmscriptenModule } from "@jsquash/webp/utils.js";
 
-// An image's pixels, 4 bytes each (red, green, blue, alpha), row by row.
-export interface RgbaImage {
-  data: Uint8Array;
-  height: number;
-  width: number;
-}
+import type { RgbaImage } from "./rgbaImage";
+
+export type { RgbaImage };
 
 const require = createRequire(import.meta.url);
 
