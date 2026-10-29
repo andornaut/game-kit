@@ -50,7 +50,10 @@ export async function gameViteConfig<Modules>(
   // pages/, so every path goes through here instead.
   const repoPath = (path: string) => resolve(options.repoRoot, path);
   const kitAlias = { "@andornaut/game-kit": repoPath("vendor/game-kit/src") };
+  // configFile: false, so the runner resolves its own config from these options alone rather than
+  // loading vite.config.ts, which calls this function, again.
   const { module } = await runnerImport<Modules>(repoPath(options.configModules), {
+    configFile: false,
     resolve: { alias: kitAlias },
   });
   const packageVersion: string = JSON.parse(readFileSync(repoPath("package.json"), "utf8")).version;
