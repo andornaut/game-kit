@@ -1,0 +1,9 @@
+node_modules/
+
+# Agent worktrees, local only.
+.claude/
+
+# AI agent instructions, local only.
+AGENTS.md
+CLAUDE.md
+GEMINI.md

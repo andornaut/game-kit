@@ -1,0 +1,31 @@
+{
+  "name": "game-kit-repo",
+  "description": "The gate and sync script for @andornaut/game-kit, which lives in kit/.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.21.0"
+  },
+  "scripts": {
+    "check": "tsc",
+    "format": "prettier --write . && eslint --fix .",
+    "lint": "prettier --check . && eslint --max-warnings 0 . && markdownlint-cli2",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.19.2",
+    "eslint": "^10.13.0",
+    "eslint-plugin-import-x": "4.17.1",
+    "eslint-plugin-simple-import-sort": "^14.0.0",
+    "eslint-plugin-sort-destructure-keys": "^3.0.0",
+    "globals": "^17.13.0",
+    "markdownlint-cli2": "^0.24.0",
+    "phaser": "^4.2.1",
+    "prettier": "^3.9.10",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.2",
+    "vitest": "^5.0.5"
+  }
+}
