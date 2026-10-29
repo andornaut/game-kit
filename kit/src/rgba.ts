@@ -14,3 +14,32 @@ export function remapRgb(remap: (colour: number) => number, pixels: Uint8Clamped
     pixels[i + 2] = mapped & 0xff;
   }
 }
+
+function distance(a: number, b: number): number {
+  const red = ((a >> 16) & 0xff) - ((b >> 16) & 0xff);
+  const green = ((a >> 8) & 0xff) - ((b >> 8) & 0xff);
+  const blue = (a & 0xff) - (b & 0xff);
+  return red * red + green * green + blue * blue;
+}
+
+// Moves a colour (0xRRGGBB) steps down its ramp: snapped first to the nearest colour oneStep
+// maps, so a colour off the palette (a blended pixel) still lands on a ramp, then through oneStep
+// steps times, stopping at a ramp's end. Never blends with black. oneStep maps each palette colour
+// to the next one down its ramp.
+export function rampDown(
+  oneStep: ReadonlyMap<number, number>,
+  steps: number,
+): (colour: number) => number {
+  const palette = [...oneStep.keys()];
+  return (colour) => {
+    let result = palette.reduce(
+      (best, candidate) =>
+        distance(candidate, colour) < distance(best, colour) ? candidate : best,
+      palette[0] ?? colour,
+    );
+    for (let step = 0; step < steps; step += 1) {
+      result = oneStep.get(result) ?? result;
+    }
+    return result;
+  };
+}
