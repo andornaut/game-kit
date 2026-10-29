@@ -37,10 +37,9 @@ vendor="$(cd "$game" && pwd)/vendor/game-kit"
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
-# The kit's tree at a commit, plus KIT_COMMIT, in $scratch/kit/.
+# The kit's tree at a commit in $scratch/kit/.
 export_kit() {
   git -C "$kit_repo" archive "$1" kit/ | tar -x -C "$scratch"
-  echo "$1" >"$scratch/kit/KIT_COMMIT"
 }
 
 if $check; then
@@ -54,6 +53,7 @@ if $check; then
     exit 1
   fi
   export_kit "$commit"
+  echo "$commit" >"$scratch/kit/KIT_COMMIT"
   if diff -r "$scratch/kit" "$vendor"; then
     echo "$vendor matches game-kit $commit"
   else
@@ -69,5 +69,9 @@ fi
 commit=$(git -C "$kit_repo" rev-parse HEAD)
 export_kit "$commit"
 mkdir -p "$vendor"
-rsync -a --delete "$scratch/kit/" "$vendor/"
+# --checksum compares contents: by default rsync skips a file whose size and modification time
+# (to the second) match, which misses a same-size edit made in the same second. KIT_COMMIT is
+# excluded, which also keeps --delete off it, and written directly.
+rsync -a --checksum --delete --exclude=/KIT_COMMIT "$scratch/kit/" "$vendor/"
+echo "$commit" >"$vendor/KIT_COMMIT"
 echo "Copied game-kit $commit into $vendor"
