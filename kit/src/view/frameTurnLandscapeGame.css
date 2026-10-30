@@ -1,0 +1,51 @@
+/* The turned page frame for a game drawn for landscape (view/frameTurn.ts): under
+   turnedFrameQuery("landscape"), a touch screen in portrait, <body> turns 90 degrees
+   onto its side to cover html's box, or -90 degrees where watchFrameTurn marks <html> with
+   data-frame-turn="-90". The --inset-* properties are the safe-area insets on the frame's own
+   edges, which the turn moves: a game uses them in place of env(safe-area-inset-*). html's box,
+   the visible page, measures the frame as a size container, since viewport units can count the
+   system bars in an installed app and would make the frame overrun the screen. The html prefix
+   outranks a page's own body rules whichever stylesheet loads last. */
+
+:root {
+  --inset-bottom: env(safe-area-inset-bottom, 0px);
+  --inset-left: env(safe-area-inset-left, 0px);
+  --inset-right: env(safe-area-inset-right, 0px);
+  --inset-top: env(safe-area-inset-top, 0px);
+}
+
+@media (orientation: portrait) and (pointer: coarse) {
+  :root {
+    --inset-bottom: env(safe-area-inset-left, 0px);
+    --inset-left: env(safe-area-inset-top, 0px);
+    --inset-right: env(safe-area-inset-bottom, 0px);
+    --inset-top: env(safe-area-inset-right, 0px);
+  }
+
+  :root[data-frame-turn="-90"] {
+    --inset-bottom: env(safe-area-inset-right, 0px);
+    --inset-left: env(safe-area-inset-bottom, 0px);
+    --inset-right: env(safe-area-inset-top, 0px);
+    --inset-top: env(safe-area-inset-left, 0px);
+  }
+
+  html {
+    container-type: size;
+  }
+
+  /* Turned about its top-left corner, then moved back onto html's box by its own height. */
+  html > body {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100cqh;
+    height: 100cqw;
+    padding-top: var(--inset-top);
+    transform: translateX(100cqw) rotate(90deg);
+    transform-origin: top left;
+  }
+
+  html[data-frame-turn="-90"] > body {
+    transform: translateY(100cqh) rotate(-90deg);
+  }
+}
