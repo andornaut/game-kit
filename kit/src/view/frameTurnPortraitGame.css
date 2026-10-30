@@ -14,6 +14,20 @@
   --inset-top: env(safe-area-inset-top, 0px);
 }
 
+/* The page's box is no taller than the visible area: phaser/followFrameTurn keeps --page-height
+   at the visual viewport's height. The turned frame measures its size from this box; unturned,
+   the page fills it. Its width stays the layout viewport's: a page wider than that would widen
+   the layout viewport on a phone. */
+html {
+  height: min(100%, var(--page-height, 100%));
+}
+
+@media not all and (orientation: landscape) and (pointer: coarse) {
+  html > body {
+    height: 100%;
+  }
+}
+
 @media (orientation: landscape) and (pointer: coarse) {
   :root {
     --inset-bottom: env(safe-area-inset-right, 0px);

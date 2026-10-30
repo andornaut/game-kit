@@ -78,6 +78,9 @@ export interface FrameTurnWatch {
   // the direction flipping), such as for a game to pause its play, until the returned function
   // is called.
   onChange(listener: (turn: FrameTurn) => void): () => void;
+  // Reads the screen again, as a change event would: a page in the background can miss the
+  // events that report a turn, so followFrameTurn rechecks on the page's return and periodically.
+  recheck(): void;
   // The turn now, for followFrameTurn and a game's own pointer mapping.
   turn(): FrameTurn;
 }
@@ -116,6 +119,7 @@ export function watchFrameTurn(
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    recheck: update,
     turn: () => turn,
   };
 }

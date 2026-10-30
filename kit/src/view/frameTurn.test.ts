@@ -33,7 +33,8 @@ describe("turnedFrameQuery", () => {
     expect({
       opposite: css.includes(`[${FRAME_TURN_ATTRIBUTE}="${other}"]`),
       query: css.includes(`@media ${turnedFrameQuery(game)} {`),
-    }).toEqual({ opposite: true, query: true });
+      unturned: css.includes(`@media not all and ${turnedFrameQuery(game)} {`),
+    }).toEqual({ opposite: true, query: true, unturned: true });
   });
 });
 
@@ -123,6 +124,17 @@ describe("watchFrameTurn", () => {
       seen: [90, -90, 0],
       told: [-90, 0],
     });
+  });
+
+  it("rechecks the screen on request, for a change whose event never came", () => {
+    const fake = fakeHost(true, "portrait-primary");
+    const watch = watchFrameTurn(fake.host, "landscape");
+    const told: FrameTurn[] = [];
+    watch.onChange((turn) => told.push(turn));
+    fake.state.matches = false;
+    const before = watch.turn();
+    watch.recheck();
+    expect({ after: watch.turn(), before, told }).toEqual({ after: 0, before: 90, told: [0] });
   });
 
   it("stops telling a listener once it is removed", () => {
