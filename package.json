@@ -11,7 +11,8 @@
     "check": "tsc",
     "format": "prettier --write . && eslint --fix .",
     "lint": "prettier --check . && eslint --max-warnings 0 . && markdownlint-cli2",
-    "test": "vitest run"
+    "test": "vitest run",
+    "verify": "bash scripts/check.sh"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+check_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+check_cache=$check_root/.claude/npm-cache
+check_uid=$(id -u)
+check_gid=$(id -g)
+check_image=node:24.21.0
+cd -- "$check_root"
+
+fingerprint() {
+  {
+    git rev-parse HEAD
+    git status --porcelain=v1 --untracked-files=all -z
+    while IFS= read -r -d '' path; do
+      printf '%s\0' "$path"
+      if [[ -L "$path" ]]; then
+        readlink -- "$path"
+      elif [[ -f "$path" ]]; then
+        sha256sum -- "$path"
+      else
+        printf 'missing\0'
+      fi
+    done < <(git ls-files --cached --others --exclude-standard -z | sort -zu)
+  } | sha256sum
+}
+
+check_before=$(fingerprint)
+finish() {
+  local result=$?
+  trap - EXIT
+  local after
+  if ! after=$(fingerprint); then
+    echo 'Cannot verify source fingerprints; discard the gate result.' >&2
+    exit 1
+  fi
+  if [[ "$check_before" != "$after" ]]; then
+    echo 'Source changed during verification; discard the gate result.' >&2
+    exit 1
+  fi
+  exit "$result"
+}
+trap finish EXIT
+
+require_load() {
+  if ! LC_ALL=C uptime | awk '
+    match($0, /load averages?: /) {
+      found = 1
+      split(substr($0, RSTART + RLENGTH), values, /[ ,]+/)
+      exit !(values[1] ~ /^[0-9]+([.][0-9]+)?$/ && values[1] + 0 < 24)
+    }
+    END { if (!found) exit 1 }
+  '; then
+    echo 'One-minute load must be available and below 24 before starting a container.' >&2
+    exit 1
+  fi
+}
+
+# Only the npm cache persists; dependencies and temporary files live in container tmpfs.
+mkdir -p -- "$check_cache" "$check_root/node_modules"
+check_container=(
+  docker run --rm --read-only --cpus 4
+  -u "$check_uid:$check_gid"
+  -e HOME=/tmp -e npm_config_cache=/npmcache
+  -v "$check_root:/app:ro" -v "$check_cache:/npmcache"
+  -w /app
+  --tmpfs "/tmp:exec,uid=$check_uid,gid=$check_gid"
+  --tmpfs "/app/node_modules:exec,uid=$check_uid,gid=$check_gid"
+)
+
+require_load
+echo 'Populating the project npm cache in a container.'
+"${check_container[@]}" "$check_image" npm ci --ignore-scripts --no-audit --no-fund
+
+require_load
+echo 'Checking types, lint and tests offline in a fresh container.'
+"${check_container[@]}" --network none "$check_image" sh -ec '
+  npm ci --offline --ignore-scripts --no-audit --no-fund
+  npm run check
+  npm run lint
+  npm test -- --maxWorkers=4
+'
