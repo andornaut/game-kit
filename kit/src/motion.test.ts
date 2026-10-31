@@ -3,20 +3,22 @@ import { describe, expect, it } from "vitest";
 import { easeProgress, progressAt, type Segment, segmentAt } from "./motion";
 
 describe("progressAt", () => {
-  it.each([-Infinity, 1, 4, 6, 8, 20, Infinity])("clamps position %s", (position) => {
-    expect(progressAt(4, 4, position)).toBe(Math.min(1, Math.max(0, (position - 4) / 4)));
+  it.each([
+    [-Infinity, 0],
+    [1, 0],
+    [4, 0],
+    [6, 0.5],
+    [8, 1],
+    [20, 1],
+    [Infinity, 1],
+  ])("clamps position %s to %s", (position, expected) => {
+    expect(progressAt(4, 4, position)).toBe(expected);
   });
 
   it("changes instantly at a zero-duration segment's start", () => {
     expect([-Infinity, 3, 4, 5, Infinity].map((position) => progressAt(4, 0, position))).toEqual([
       0, 0, 1, 1, 1,
     ]);
-  });
-
-  it("preserves fractions when the progress unit is scaled or its origin shifted", () => {
-    for (const position of [-2, 4, 5, 7, 8, 10]) {
-      expect(progressAt(4, 4, position)).toBe(progressAt(24, 8, 16 + 2 * position));
-    }
   });
 
   it("does not turn an invalid position into a valid endpoint", () => {

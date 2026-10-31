@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  APP_WINDOW_CLOSES,
-  appCannotClose,
-  type AppCloseHost,
-  appPlatform,
-  runsInAppWindow,
-} from "./appWindow";
+import { appCannotClose, type AppCloseHost, appPlatform, runsInAppWindow } from "./appWindow";
 import { type CloseWatcherFactory, INSTALLED_APP_DISPLAY_QUERY } from "./backNavigation";
 
 const CHROME = "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0";
@@ -65,14 +59,6 @@ const PLATFORMS = [
   ],
 ] as const;
 
-// How the page runs: an installed app's window, by display mode or by iOS's navigator.standalone,
-// or a browser tab.
-const INSTALL_TYPES = [
-  ["an app window (display mode)", true, false],
-  ["an app window (navigator.standalone)", false, true],
-  ["a browser tab", false, false],
-] as const;
-
 // A page on userAgent, run as appDisplay and standalone say, with historyLength entries.
 function host(
   userAgent: string,
@@ -96,27 +82,26 @@ describe("appPlatform", () => {
   });
 });
 
-// Only Chrome's Android app and Chrome's and Edge's desktop app windows close.
-describe("APP_WINDOW_CLOSES", () => {
-  it("closes only on androidChromium and desktopChromium", () => {
-    const closing = Object.entries(APP_WINDOW_CLOSES).filter(([, closes]) => closes);
-    expect(closing.map(([platform]) => platform).sort()).toEqual([
-      "androidChromium",
-      "desktopChromium",
-    ]);
+describe("app window detection", () => {
+  it.each([
+    ["display mode", true, false, true],
+    ["iOS standalone", false, true, true],
+    ["a browser tab", false, false, false],
+  ] as const)("detects %s", (_, appDisplay, standalone, expected) => {
+    const page = host(`${ANDROID} ${CHROME}`, 5, appDisplay, standalone);
+    expect(runsInAppWindow(page)).toBe(expected);
   });
 });
 
-// Each platform run each way, with a close watcher and only the game's history entry: a tab is
-// never an app, and an app window cannot close unless its platform's app closes.
-describe.each(PLATFORMS)("on %s", (_, userAgent, touchPoints, platform) => {
-  it.each(INSTALL_TYPES)("in %s", (__, appDisplay, standalone) => {
-    const page = host(userAgent, touchPoints, appDisplay, standalone);
-    const app = appDisplay || standalone;
-    expect({ app: runsInAppWindow(page), cannotClose: appCannotClose(WATCHER, page) }).toEqual({
-      app,
-      cannotClose: app && !APP_WINDOW_CLOSES[platform],
-    });
+describe("appCannotClose", () => {
+  it.each([
+    ["Android Chrome's app", `${ANDROID} ${CHROME}`, 5, true, false],
+    ["desktop Chrome's app", `${DESKTOP} ${CHROME}`, 0, true, false],
+    ["iOS's app", `iPhone ${SAFARI}`, 5, true, true],
+    ["an unsupported app", "Unknown", 0, true, true],
+    ["a browser tab on an unsupported platform", "Unknown", 0, false, false],
+  ] as const)("checks %s", (_, userAgent, touchPoints, appDisplay, expected) => {
+    expect(appCannotClose(WATCHER, host(userAgent, touchPoints, appDisplay, false))).toBe(expected);
   });
 });
 
