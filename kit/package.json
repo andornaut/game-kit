@@ -7,7 +7,38 @@
   "type": "module",
   "peerDependencies": {
     "@jsquash/webp": "1.5.0",
+    "@types/node": "^24.19.2",
+    "@types/pngjs": "6.0.5",
     "phaser": "^4.2.1",
-    "pngjs": "7.0.0"
+    "pngjs": "7.0.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  },
+  "peerDependenciesMeta": {
+    "@jsquash/webp": {
+      "optional": true
+    },
+    "@types/node": {
+      "optional": true
+    },
+    "@types/pngjs": {
+      "optional": true
+    },
+    "phaser": {
+      "optional": true
+    },
+    "pngjs": {
+      "optional": true
+    },
+    "typescript": {
+      "optional": true
+    },
+    "vite": {
+      "optional": true
+    },
+    "vitest": {
+      "optional": true
+    }
   }
 }

@@ -1,21 +1,34 @@
 # game-kit
 
-The home of `@andornaut/game-kit`, game-agnostic TypeScript helpers for Phaser games. The kit itself is in [`kit/`](kit/README.md); this level holds its gate and the script that copies it into a game.
+The home of `@andornaut/game-kit`, game-independent TypeScript mechanisms, browser and Phaser adapters, and build tools. The kit itself is in [`kit/`](kit/README.md); this level holds its gate and the script that copies it into a game.
 
 ## Gate
 
-Requires Node 24 (`.nvmrc`). Run `npm install`, then:
+Run the isolated gate from the repository root:
 
-| Command          | Does                                    |
-| ---------------- | --------------------------------------- |
-| `npm run check`  | Type check `kit/src/` with tsc          |
-| `npm run format` | Rewrite files with Prettier and ESLint  |
-| `npm run lint`   | Prettier check, ESLint and markdownlint |
-| `npm test`       | Run the kit's unit tests with Vitest    |
+```bash
+bash scripts/check.sh
+```
 
-ESLint holds the kit's boundary: `kit/src/` imports nothing from a game and its own modules by relative path, only `phaser/` folders import Phaser, and only `vite/` folders import Vite.
+Requires Bash, Git, Docker with a running daemon, and standard Linux coreutils, awk and uptime. No host Node or npm installation is needed. Keep the checkout unchanged during the run and start below one-minute load 24.
+
+The script uses Node 24.21.0 with at most four CPUs and four Vitest workers. An installation container populates the repository-local `.claude/npm-cache`; a second container runs type checking, lint and tests sequentially without network access. The checkout is read-only; only scratch space and the npm cache are writable. CI runs the same script. `npm run verify` invokes it when host npm is available.
+
+The underlying commands remain available inside the container:
+
+| Command                      | Does                                    |
+| ---------------------------- | --------------------------------------- |
+| `npm run check`              | Type check `kit/src/` with tsc          |
+| `npm run lint`               | Check Prettier, ESLint and markdownlint |
+| `npm test -- --maxWorkers=4` | Run the kit's unit tests                |
+
+`npm run format` rewrites files with Prettier and ESLint and requires a writable checkout.
+
+ESLint enforces relative internal imports and prevents game imports. Only `phaser/` folders import Phaser, and only `vite/` folders import Vite. Pure mechanisms, DOM adapters and Node tooling are identified in the [module reference](kit/README.md#modules-and-environments).
 
 ## Including the kit in a game
+
+This is exact-commit source vendoring, not a registry installation. The copied [module reference](kit/README.md) lists environments, external dependencies and integration contracts; [kit/package.json](kit/package.json) records supported peer versions. Install only the dependencies needed by imported modules, or all applicable peers when checking the entire copied source and tests.
 
 Each game holds a committed copy in `vendor/game-kit/`, which `scripts/sync-into.sh` writes:
 
