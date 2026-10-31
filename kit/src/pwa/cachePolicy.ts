@@ -72,8 +72,12 @@ export function installPlan(
   previouslyCached: ReadonlySet<string>,
   urls: readonly string[],
 ): { copy: string[]; fetch: string[] } {
-  const copied = (url: string) => isHashedAssetUrl(policy, url) && previouslyCached.has(url);
-  return { copy: urls.filter(copied), fetch: urls.filter((url) => !copied(url)) };
+  const copy: string[] = [];
+  const fetch: string[] = [];
+  for (const url of urls) {
+    (isHashedAssetUrl(policy, url) && previouslyCached.has(url) ? copy : fetch).push(url);
+  }
+  return { copy, fetch };
 }
 
 // The URLs the service worker answers from its cache: the precache list and every sound file.

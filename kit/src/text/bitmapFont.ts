@@ -135,9 +135,13 @@ export function laidGlyphs(font: BitmapFont, scale: number, line: string): LaidG
 // first glyph's left side bearing and its last glyph's right one left out. 0 for a line that
 // inks nothing.
 export function inkWidth(font: BitmapFont, scale: number, line: string): number {
-  const spans = laidGlyphs(font, scale, line).flatMap((glyph) => glyph.ink ?? []);
-  if (spans.length === 0) {
-    return 0;
+  let left: number | undefined;
+  let right = -Infinity;
+  for (const { ink } of laidGlyphs(font, scale, line)) {
+    if (ink !== null) {
+      left = Math.min(left ?? Infinity, ink.left);
+      right = Math.max(right, ink.right);
+    }
   }
-  return Math.max(...spans.map((span) => span.right)) - Math.min(...spans.map((span) => span.left));
+  return left === undefined ? 0 : right - left;
 }
