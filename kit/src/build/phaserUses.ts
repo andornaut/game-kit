@@ -24,8 +24,8 @@ export interface LackingNames {
   readonly imports: ReadonlySet<string>;
   // Loader file types, reached as load.<name>.
   readonly loaders: ReadonlySet<string>;
-  // Scene plugins, reached as any property or config key <name>. `physics` is the name a scene
-  // reaches its default physics system by.
+  // Scene plugins, reached on scene receivers or in a Phaser game config. `physics` is the
+  // name a scene reaches its default physics system by.
   readonly plugins: ReadonlySet<string>;
   // Game systems, reached as <name> on this, a game, a scene or a scene's sys: this.sound,
   // game.sound.
@@ -152,6 +152,113 @@ export function phaserUses(names: LackingNames, text: string): string[] {
   const nameOf = (node: ts.Expression) =>
     ts.isIdentifier(node) ? node.text : ts.isPropertyAccessExpression(node) ? node.name.text : "";
   const named = (node: ts.Expression, wanted: ReadonlySet<string>) => wanted.has(nameOf(node));
+  // Bounded local receiver recognition, without resolving the game's imports or dependencies.
+  const sceneTypes = new Set(["Scene"]);
+  const gameTypes = new Set(["Game"]);
+  const sceneReceivers = new Set(["scene", "sys"]);
+  const classes: ts.ClassLikeDeclaration[] = [];
+  const declarations: (
+    ts.ParameterDeclaration | ts.VariableDeclaration | ts.PropertyDeclaration
+  )[] = [];
+  const collect = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) && isPhaser(node.moduleSpecifier)) {
+      const bindings = node.importClause?.namedBindings;
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) {
+          const name = (element.propertyName ?? element.name).text;
+          if (name === "Scene") {
+            sceneTypes.add(element.name.text);
+          }
+          if (name === "Game") {
+            gameTypes.add(element.name.text);
+          }
+        }
+      }
+    }
+    if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+      classes.push(node);
+    }
+    if (ts.isParameter(node) || ts.isVariableDeclaration(node) || ts.isPropertyDeclaration(node)) {
+      declarations.push(node);
+    }
+    ts.forEachChild(node, collect);
+  };
+  collect(source);
+  const extendsScene = (node: ts.ClassLikeDeclaration) =>
+    node.heritageClauses?.some(
+      (clause) =>
+        clause.token === ts.SyntaxKind.ExtendsKeyword &&
+        clause.types.some(({ expression }) => named(expression, sceneTypes)),
+    ) ?? false;
+  for (let pass = 0; pass < classes.length; pass++) {
+    for (const node of classes) {
+      if (node.name && extendsScene(node)) {
+        sceneTypes.add(node.name.text);
+      }
+    }
+  }
+  const typeName = (node: ts.TypeNode | undefined): string =>
+    node && ts.isTypeReferenceNode(node)
+      ? ts.isIdentifier(node.typeName)
+        ? node.typeName.text
+        : node.typeName.right.text
+      : "";
+  for (const node of declarations) {
+    if (ts.isIdentifier(node.name) && sceneTypes.has(typeName(node.type))) {
+      sceneReceivers.add(node.name.text);
+    }
+  }
+  const sceneHolder = (node: ts.Expression): boolean => {
+    if (ts.isParenthesizedExpression(node)) {
+      return sceneHolder(node.expression);
+    }
+    if (ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)) {
+      return sceneTypes.has(typeName(node.type));
+    }
+    if (node.kind === ts.SyntaxKind.ThisKeyword) {
+      for (let parent: ts.Node | undefined = node.parent; parent; parent = parent.parent) {
+        if (ts.isClassDeclaration(parent) || ts.isClassExpression(parent)) {
+          return extendsScene(parent);
+        }
+      }
+      return true;
+    }
+    return named(node, sceneReceivers);
+  };
+  const gameConfigs = new Set<string>();
+  const collectConfigs = (node: ts.Node): void => {
+    if (ts.isNewExpression(node) && named(node.expression, gameTypes)) {
+      for (const argument of node.arguments ?? []) {
+        if (ts.isIdentifier(argument)) {
+          gameConfigs.add(argument.text);
+        }
+      }
+    }
+    ts.forEachChild(node, collectConfigs);
+  };
+  collectConfigs(source);
+  const gameConfig = (object: ts.ObjectLiteralExpression): boolean => {
+    let node: ts.Node = object;
+    while (node.parent) {
+      const parent = node.parent;
+      if (ts.isParenthesizedExpression(parent)) {
+        node = parent;
+      } else if (ts.isAsExpression(parent) || ts.isSatisfiesExpression(parent)) {
+        if (typeName(parent.type) === "GameConfig") {
+          return true;
+        }
+        node = parent;
+      } else {
+        return (
+          (ts.isNewExpression(parent) && named(parent.expression, gameTypes)) ||
+          ((ts.isVariableDeclaration(parent) || ts.isPropertyDeclaration(parent)) &&
+            (typeName(parent.type) === "GameConfig" ||
+              (ts.isIdentifier(parent.name) && gameConfigs.has(parent.name.text))))
+        );
+      }
+    }
+    return false;
+  };
   const visit = (node: ts.Node): void => {
     if (ts.isImportDeclaration(node) && isPhaser(node.moduleSpecifier)) {
       const clause = node.importClause;
@@ -191,13 +298,15 @@ export function phaserUses(names: LackingNames, text: string): string[] {
         (holder.kind === ts.SyntaxKind.ThisKeyword || named(holder, SYSTEM_HOLDERS))
       ) {
         uses.push(name);
-      } else if (names.plugins.has(name)) {
+      } else if (names.plugins.has(name) && sceneHolder(holder)) {
         uses.push(name);
       }
     } else if (
       ts.isPropertyAssignment(node) &&
       ts.isIdentifier(node.name) &&
-      names.plugins.has(node.name.text)
+      names.plugins.has(node.name.text) &&
+      ts.isObjectLiteralExpression(node.parent) &&
+      gameConfig(node.parent)
     ) {
       uses.push(node.name.text);
     }
