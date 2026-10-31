@@ -3,6 +3,7 @@ import {
   createUpdateFlow,
   registerWhenDue,
   type RegistrationLike,
+  type ServiceWorkerLike,
   type UpdateFlow,
 } from "./updateReady";
 import { watchVisibility } from "./visibility";
@@ -11,10 +12,16 @@ import type { VisibilitySource } from "./wakeLock";
 // Input that counts as the player interacting, after which the page never reloads on its own.
 export const INTERACTION_EVENTS = ["keydown", "pointerdown"] as const;
 
+export type OfflineActivity = "idle" | "installing" | "registering";
+
 export interface OfflinePlayOptions {
   // How long a fresh load holds the first screen and the save for a newer version to be checked
   // for and installed, so it reloads into that version before the first screen draws.
   readonly bootWaitMs: number;
+  // Registration requests and observed worker installation, with no byte or percentage claim.
+  // Reports idle immediately and when registration fails or installation finishes. This never
+  // changes when registration, update checks or play are allowed.
+  readonly onOfflineActivity?: (activity: OfflineActivity) => void;
   // Called with whether the game offers the update, on each change (createUpdateFlow's show).
   readonly onUpdateShown: (shown: boolean) => void;
   // The service worker's URL (serviceWorkerUrl's), registered with scope "/".
@@ -71,6 +78,33 @@ export function browserOfflinePage(): OfflinePage | undefined {
 // registers when due (registerWhenDue). A failed registration leaves the game running online.
 export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage): OfflinePlay {
   const { container, eventTarget } = page;
+  let activity: OfflineActivity | undefined;
+  const reportActivity = (next: OfflineActivity) => {
+    if (activity === next) {
+      return;
+    }
+    activity = next;
+    try {
+      options.onOfflineActivity?.(next);
+    } catch (error) {
+      console.error("Offline activity callback failed.", error);
+    }
+  };
+  reportActivity("idle");
+  const watchInstallation = (registration: RegistrationLike) => {
+    const watched = new WeakSet<ServiceWorkerLike>();
+    const read = () => {
+      const worker = registration.installing;
+      if (worker !== null && !watched.has(worker)) {
+        watched.add(worker);
+        worker.addEventListener("statechange", read);
+      }
+      reportActivity(worker?.state === "installing" ? "installing" : "idle");
+    };
+    registration.addEventListener("updatefound", read);
+    read();
+    return registration;
+  };
   const flow = createUpdateFlow(
     container,
     () => page.now(),
@@ -86,11 +120,16 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
   }
   watchVisibility((visible) => flow.setVisible(visible), eventTarget, page.visibilitySource);
   page.setTimeout(() => flow.endBootWait(), options.bootWaitMs);
-  const setOnHome = registerWhenDue(container, flow, () =>
-    container.register(options.serviceWorkerUrl, { scope: "/" }).catch((error: unknown) => {
-      console.warn("Service worker registration failed; the game will not work offline.", error);
-      throw error;
-    }),
-  );
+  const setOnHome = registerWhenDue(container, flow, () => {
+    reportActivity("registering");
+    return container
+      .register(options.serviceWorkerUrl, { scope: "/" })
+      .then(watchInstallation)
+      .catch((error: unknown) => {
+        reportActivity("idle");
+        console.warn("Service worker registration failed; the game will not work offline.", error);
+        throw error;
+      });
+  });
   return { bootable: flow.bootable, flow, setOnHome };
 }

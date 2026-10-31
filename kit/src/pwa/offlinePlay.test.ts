@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   INTERACTION_EVENTS,
+  type OfflineActivity,
   type OfflinePage,
   type RegisteringContainer,
   startOfflinePlay,
@@ -80,7 +81,11 @@ const settle = () =>
 
 // A page a version controls (controlled) or a first visit, whose registration finds deployed, or
 // fails.
-function openPage(controlled: boolean, deployed: Deployed | "fails") {
+function openPage(
+  controlled: boolean,
+  deployed: Deployed | "fails",
+  onOfflineActivity?: (activity: OfflineActivity) => void,
+) {
   const registration = deployed === "fails" ? undefined : new FakeRegistration(deployed);
   const container = new FakeContainer(
     controlled ? {} : null,
@@ -102,7 +107,11 @@ function openPage(controlled: boolean, deployed: Deployed | "fails") {
     visibilitySource,
   };
   const play = startOfflinePlay(
-    { ...OPTIONS, onUpdateShown: (visible) => shown.push(visible) },
+    {
+      ...OPTIONS,
+      ...(onOfflineActivity === undefined ? {} : { onOfflineActivity }),
+      onUpdateShown: (visible) => shown.push(visible),
+    },
     page,
   );
   return { clock, container, page, play, registration, shown, timers, visibilitySource };
@@ -113,6 +122,63 @@ afterEach(() => {
 });
 
 describe("startOfflinePlay", () => {
+  it("observes first registration and an in-flight install only after home without holding play", async () => {
+    const activities: OfflineActivity[] = [];
+    const { play, registration } = openPage(false, "installing", (activity) =>
+      activities.push(activity),
+    );
+    if (registration?.installing === null || registration?.installing === undefined) {
+      throw new Error("Missing test installer");
+    }
+    const worker = registration.installing;
+    worker.state = "installing";
+    await expect(play.bootable).resolves.toBeUndefined();
+    expect(activities).toEqual(["idle"]);
+    play.setOnHome(true);
+    expect(activities).toEqual(["idle", "registering"]);
+    await settle();
+    expect(activities.at(-1)).toBe("installing");
+    worker.state = "installed";
+    worker.dispatchEvent(new Event("statechange"));
+    expect(activities.at(-1)).toBe("idle");
+  });
+
+  it("observes a later install and clears activity when that worker becomes redundant", async () => {
+    const activities: OfflineActivity[] = [];
+    const { play, registration } = openPage(false, "none", (activity) => activities.push(activity));
+    play.setOnHome(true);
+    await settle();
+    if (registration === undefined) {
+      throw new Error("Missing test registration");
+    }
+    const worker = new FakeWorker();
+    worker.state = "installing";
+    registration.installing = worker;
+    registration.dispatchEvent(new Event("updatefound"));
+    registration.dispatchEvent(new Event("updatefound"));
+    expect(activities).toEqual(["idle", "registering", "idle", "installing"]);
+    worker.state = "redundant";
+    worker.dispatchEvent(new Event("statechange"));
+    expect(activities.at(-1)).toBe("idle");
+  });
+
+  it("settles a failed registration and isolates observer errors from registration and boot", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const activities: OfflineActivity[] = [];
+    const failed = openPage(false, "fails", (activity) => activities.push(activity));
+    failed.play.setOnHome(true);
+    await settle();
+    expect(activities).toEqual(["idle", "registering", "idle"]);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const observed = openPage(false, "none", () => {
+      throw new Error("observer");
+    });
+    observed.play.setOnHome(true);
+    await settle();
+    expect(observed.container.registered).toHaveLength(1);
+    await expect(observed.play.bootable).resolves.toBeUndefined();
+    expect(errors).toHaveBeenCalled();
+  });
   // Each step is true for the home screen in front, false for it hidden.
   it.each<[string, boolean, boolean[], number]>([
     ["registers a controlled page at once", true, [], 1],
