@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { parseBitmapFont } from "../bitmapFont";
-import { phaserBitmapFont, type PhaserFontData } from "./phaserBitmapFont";
+import { parseBitmapFont } from "../bitmapFont.ts";
+import { phaserBitmapFont, type PhaserFontData } from "./phaserBitmapFont.ts";
 
 // A space, an H, and a g kerned a column closer after an H.
 const FNT = `<font><common lineHeight="11"/>

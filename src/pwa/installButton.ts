@@ -1,5 +1,5 @@
-import type { InstallFlow } from "./installFlow";
-import { type MenuInstallBrowser, offersInstall } from "./installState";
+import type { InstallFlow } from "./installFlow.ts";
+import { type MenuInstallBrowser, offersInstall } from "./installState.ts";
 
 // Shows only the browser's section of the steps and names the dialog by its title.
 function showSteps(browser: MenuInstallBrowser, dialog: HTMLDialogElement): void {

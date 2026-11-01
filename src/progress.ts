@@ -1,5 +1,5 @@
-import { clamp01 } from "./numbers";
-import type { Rect } from "./rect";
+import { clamp01 } from "./numbers.ts";
+import type { Rect } from "./rect.ts";
 
 // Undefined means work whose total is unknown, rather than a measured percentage.
 export type ProgressValue = number | undefined;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { serviceWorkerUrl } from "./serviceWorkerUrl";
+import { serviceWorkerUrl } from "./serviceWorkerUrl.ts";
 
 describe("serviceWorkerUrl", () => {
   // The page's sound format for the worker to precache, or none when the browser plays neither.

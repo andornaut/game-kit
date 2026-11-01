@@ -1,7 +1,7 @@
 import type { GameObjects } from "phaser";
 
-import { progressBarLayout, type ProgressBarStyle, type ProgressValue } from "../../progress";
-import type { Rect } from "../../rect";
+import { progressBarLayout, type ProgressBarStyle, type ProgressValue } from "../../progress.ts";
+import type { Rect } from "../../rect.ts";
 
 // The caller clears its graphics when needed; this draws no animation and owns no clock.
 export function drawProgressBar(

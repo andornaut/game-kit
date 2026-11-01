@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getOrInsertComputed } from "./maps";
+import { getOrInsertComputed } from "./maps.ts";
 
 describe("getOrInsertComputed", () => {
   it("makes a key's value once and returns the stored one after", () => {

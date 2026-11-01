@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { SETTLE_FRAMES, settleFit } from "./settleFit";
+import { SETTLE_FRAMES, settleFit } from "./settleFit.ts";
 
 // Runs settleFit with measurements given frame by frame, the last repeated, and counts refits.
 function run(measures: readonly string[]): { frames: number; refits: number } {

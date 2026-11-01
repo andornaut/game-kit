@@ -1,4 +1,4 @@
-import type { FrameTurn } from "./pagePoint";
+import type { FrameTurn } from "./pagePoint.ts";
 
 // Turning the page's game frame on its side where the screen shows the other orientation than the
 // game's, so a game drawn for landscape plays on a phone kept in portrait, and one drawn for

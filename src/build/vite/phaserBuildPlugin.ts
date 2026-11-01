@@ -10,7 +10,7 @@ import {
   phaserFlags,
   phaserSourceDir,
   replacePhaserFlags,
-} from "../phaserBuild";
+} from "../phaserBuild.ts";
 
 // The production build only: resolves `phaser` to an entry built from Phaser's source without
 // build's omitted namespaces, and replaces the feature flags in Phaser's source with build's

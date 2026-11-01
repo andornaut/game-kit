@@ -1,4 +1,4 @@
-import { type AppWindowHost, runsInAppWindow } from "./appWindow";
+import { type AppWindowHost, runsInAppWindow } from "./appWindow.ts";
 
 // The site's home page, where leaving from a browser tab goes.
 export const HOME_URL = "/";

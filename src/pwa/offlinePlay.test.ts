@@ -6,14 +6,14 @@ import {
   type OfflinePage,
   type RegisteringContainer,
   startOfflinePlay,
-} from "./offlinePlay";
+} from "./offlinePlay.ts";
 import {
   type RegistrationLike,
   RESUME_CHECK_MS,
   type ServiceWorkerLike,
   SKIP_WAITING_MESSAGE,
-} from "./updateReady";
-import type { VisibilitySource } from "./wakeLock";
+} from "./updateReady.ts";
+import type { VisibilitySource } from "./wakeLock.ts";
 
 class FakeDocument extends EventTarget implements VisibilitySource {
   visibilityState: DocumentVisibilityState = "visible";

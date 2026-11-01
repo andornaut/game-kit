@@ -1,4 +1,4 @@
-import { containsPoint, type Point, type Rect } from "../rect";
+import { containsPoint, type Point, type Rect } from "../rect.ts";
 
 // A tap outside an open panel closes it, as its close control does: a press that lands in
 // bounds, off the panel and every rect covered lists (the panel, controls drawn outside it and

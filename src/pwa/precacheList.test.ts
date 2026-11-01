@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import type { CachePolicy } from "./cachePolicy";
+import type { CachePolicy } from "./cachePolicy.ts";
 import {
   bundleDependencies,
   type BundleFile,
   precacheFingerprint,
   rootRelativeUrls,
   webManifestIconUrls,
-} from "./precacheList";
+} from "./precacheList.ts";
 
 describe("rootRelativeUrls", () => {
   it("reads each case", () => {

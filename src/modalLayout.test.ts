@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { modalWidth } from "./modalLayout";
+import { modalWidth } from "./modalLayout.ts";
 
 describe("modalWidth", () => {
   it.each([

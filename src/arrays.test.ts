@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { partitionPoint } from "./arrays";
+import { partitionPoint } from "./arrays.ts";
 
 describe("partitionPoint", () => {
   it.each([

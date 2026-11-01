@@ -1,4 +1,4 @@
-import type { Point, Rect } from "../rect";
+import type { Point, Rect } from "../rect.ts";
 
 // How far the page's game frame is turned clockwise on the screen: 0, or 90 or -90 where the game
 // is drawn on its side, such as a landscape game on a phone held in portrait (frameTurn.ts).

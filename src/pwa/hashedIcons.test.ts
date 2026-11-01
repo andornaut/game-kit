@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { hashedIconUrl, hashIcons } from "./hashedIcons";
+import { hashedIconUrl, hashIcons } from "./hashedIcons.ts";
 
 // A stand-in hash: the bytes' sum, so each content gets its own name.
 const sumHash = (bytes: Uint8Array) => `h${bytes.reduce((sum, byte) => sum + byte, 0)}`;

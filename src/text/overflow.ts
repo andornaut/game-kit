@@ -4,7 +4,7 @@ import {
   type TextFitStyle,
   type TextMeasure,
   widestLine,
-} from "./textFit";
+} from "./textFit.ts";
 
 // How text set on lines lines, its widest line widest screen pixels, misses most lines no
 // wider than room, such as "4 lines of 3, 530px wide in 488px"; "" where it fits.

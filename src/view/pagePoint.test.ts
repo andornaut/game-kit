@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { clampInto, type Point } from "../rect";
-import { type FrameTurn, pageToGame } from "./pagePoint";
+import { clampInto, type Point } from "../rect.ts";
+import { type FrameTurn, pageToGame } from "./pagePoint.ts";
 
 // A 648x360 game drawn at 720x400 (10/9 scale) with 140 px bars either side, unturned; turned,
 // the same canvas on its side, its box 400 wide and 720 tall with 140 px bars above and below, so

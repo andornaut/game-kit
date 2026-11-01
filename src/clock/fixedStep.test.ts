@@ -6,7 +6,7 @@ import {
   holdStepClock,
   startStepClock,
   type StepClock,
-} from "./fixedStep";
+} from "./fixedStep.ts";
 
 const LIMITS = { maxFrameMs: 250, stepMs: 1000 / 60 };
 

@@ -4,8 +4,8 @@ import { join } from "node:path";
 
 import { afterAll, describe, expect, it } from "vitest";
 
-import type { PhaserBuild } from "./phaserBuild";
-import { flagBlocks, type LackingNames, phaserBuildProblems, phaserUses } from "./phaserUses";
+import type { PhaserBuild } from "./phaserBuild.ts";
+import { flagBlocks, type LackingNames, phaserBuildProblems, phaserUses } from "./phaserUses.ts";
 
 describe("phaserUses", () => {
   const names: LackingNames = {

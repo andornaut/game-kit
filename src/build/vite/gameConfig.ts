@@ -16,8 +16,8 @@ import { resolve } from "node:path";
 import { type PluginOption, runnerImport } from "vite";
 import type { ViteUserConfig } from "vitest/config";
 
-import { gitHead, shortCommit } from "../buildVersion";
-import { PHASER_ENTRY_ID } from "../phaserBuild";
+import { gitHead, shortCommit } from "../buildVersion.ts";
+import { PHASER_ENTRY_ID } from "../phaserBuild.ts";
 
 export interface GameViteOptions<Modules> {
   // The size in kB past which the build warns about a chunk: just above the largest, so growth

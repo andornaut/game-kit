@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CI_COMMIT_VARIABLE, shortCommit, UNKNOWN_COMMIT } from "./buildVersion";
+import { CI_COMMIT_VARIABLE, shortCommit, UNKNOWN_COMMIT } from "./buildVersion.ts";
 
 const CI_SHA = "16d17c38a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const HEAD_SHA = "0123456789abcdef0123456789abcdef01234567";

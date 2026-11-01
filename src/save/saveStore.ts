@@ -1,5 +1,5 @@
-import type { SaveStorage } from "./contracts";
-import { encodeSave, loadSave, type SaveFormat } from "./versionedSave";
+import type { SaveStorage } from "./contracts.ts";
+import { encodeSave, loadSave, type SaveFormat } from "./versionedSave.ts";
 
 // Where a game keeps its save, and where a save it could not read is copied before the next
 // write replaces it.

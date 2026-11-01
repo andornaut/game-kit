@@ -5,7 +5,7 @@ import {
   type VisibilitySource,
   type WakeLockLike,
   type WakeLockSentinelLike,
-} from "./wakeLock";
+} from "./wakeLock.ts";
 
 class FakeDocument extends EventTarget implements VisibilitySource {
   visibilityState: DocumentVisibilityState = "visible";

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { fitOverflow, overflowingTexts, overflowOf, type TextRole } from "./overflow";
-import type { FittedText, TextMeasure } from "./textFit";
+import { fitOverflow, overflowingTexts, overflowOf, type TextRole } from "./overflow.ts";
+import type { FittedText, TextMeasure } from "./textFit.ts";
 
 // Every character 4 font pixels wide, at the style's scale.
 const measure: TextMeasure = (style, line) => line.length * 4 * style.scale;

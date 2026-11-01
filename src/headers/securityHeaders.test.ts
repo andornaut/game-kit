@@ -10,7 +10,7 @@ import {
   renderPolicy,
   servedPath,
   unhashedAssets,
-} from "./securityHeaders";
+} from "./securityHeaders.ts";
 
 describe("cspHash", () => {
   it("hashes the CSP specification's example, as a browser does", async () => {

@@ -12,8 +12,8 @@ import {
   lockGameOrientation,
   turnedFrameQuery,
   watchFrameTurn,
-} from "./frameTurn";
-import type { FrameTurn } from "./pagePoint";
+} from "./frameTurn.ts";
+import type { FrameTurn } from "./pagePoint.ts";
 
 describe("turnedFrameQuery", () => {
   it.each<[GameOrientation, string]>([

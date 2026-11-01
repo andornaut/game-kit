@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { guardPassed } from "./tapGuard";
+import { guardPassed } from "./tapGuard.ts";
 
 const GUARD_MS = 400;
 const DRAWN_MS = 5_000;

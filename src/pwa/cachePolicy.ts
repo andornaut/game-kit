@@ -1,4 +1,4 @@
-import type { PrecacheManifest } from "./precacheList";
+import type { PrecacheManifest } from "./precacheList.ts";
 
 // How the service worker answers a same-origin GET.
 // network-first: pages and the policy's revalidated URLs (unhashed files such as manifests, whose

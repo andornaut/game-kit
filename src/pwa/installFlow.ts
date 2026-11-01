@@ -6,7 +6,7 @@ import {
   type MenuInstallBrowser,
   menuInstallBrowser,
   runsAsApp,
-} from "./installState";
+} from "./installState.ts";
 
 // Chromium's beforeinstallprompt event, which no TypeScript lib types.
 export interface InstallPromptEvent extends Event {

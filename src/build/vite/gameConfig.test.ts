@@ -6,8 +6,8 @@ import type { PluginOption } from "vite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ViteUserConfig } from "vitest/config";
 
-import { PHASER_ENTRY_ID } from "../phaserBuild";
-import { gameViteConfig } from "./gameConfig";
+import { PHASER_ENTRY_ID } from "../phaserBuild.ts";
+import { gameViteConfig } from "./gameConfig.ts";
 
 // A game's repository, laid out as gameViteConfig expects, whose config module imports the kit
 // through its package exports.

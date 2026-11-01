@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { Rect } from "../rect";
-import { blankImage, blitExtruded, type RgbaImage } from "./rgbaImage";
+import type { Rect } from "../rect.ts";
+import { blankImage, blitExtruded, type RgbaImage } from "./rgbaImage.ts";
 
 // A grey image whose pixel at (x, y) is the single byte value 10 * y + x, opaque.
 function numbered(width: number, height: number): RgbaImage {

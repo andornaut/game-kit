@@ -14,7 +14,7 @@ import {
   SKIP_WAITING_MESSAGE,
   updateAction,
   type UpdateState,
-} from "./updateReady";
+} from "./updateReady.ts";
 
 class FakeWorker extends EventTarget implements ServiceWorkerLike {
   readonly messages: unknown[] = [];

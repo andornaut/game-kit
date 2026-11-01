@@ -1,5 +1,5 @@
-import { type CloseWatcherFactory, INSTALLED_APP_DISPLAY_QUERY } from "./backNavigation";
-import { isFirefoxAndroid, isIosDevice } from "./installState";
+import { type CloseWatcherFactory, INSTALLED_APP_DISPLAY_QUERY } from "./backNavigation.ts";
+import { isFirefoxAndroid, isIosDevice } from "./installState.ts";
 
 // The parts of window these read, so tests can pass a fake.
 export interface AppWindowHost {

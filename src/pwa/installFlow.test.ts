@@ -6,8 +6,8 @@ import {
   type InstallPromptEvent,
   type MediaQueryLike,
   watchInstall,
-} from "./installFlow";
-import type { InstallState, MenuInstallBrowser } from "./installState";
+} from "./installFlow.ts";
+import type { InstallState, MenuInstallBrowser } from "./installState.ts";
 
 const ANDROID = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 Chrome/140.0";
 const FIREFOX_ANDROID = "Mozilla/5.0 (Android 15; Mobile; rv:144.0) Gecko/144.0 Firefox/144.0";

@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { drawProgressBar } from "./drawProgressBar";
+import { drawProgressBar } from "./drawProgressBar.ts";
 
 it("draws the border, track and ordered fill bands without clearing other graphics", () => {
   const drawn: unknown[] = [];

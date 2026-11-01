@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { saveStore } from "./saveStore";
-import { browserStorage, lazyStorage, memoryStorage, type SaveStorage } from "./storage";
-import type { SaveFormat } from "./versionedSave";
+import { saveStore } from "./saveStore.ts";
+import { browserStorage, lazyStorage, memoryStorage, type SaveStorage } from "./storage.ts";
+import type { SaveFormat } from "./versionedSave.ts";
 
 // A save of a count of coins at version 1, which refuses a negative count.
 const FORMAT: SaveFormat<number> = {

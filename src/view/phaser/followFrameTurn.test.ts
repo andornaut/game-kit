@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import type { Game } from "phaser";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { FIT_CHECK_MS, followFrameTurn } from "./followFrameTurn";
+import { FIT_CHECK_MS, followFrameTurn } from "./followFrameTurn.ts";
 
 function setup() {
   vi.useFakeTimers();

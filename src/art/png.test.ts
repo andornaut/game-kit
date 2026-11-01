@@ -1,7 +1,7 @@
 import { PNG } from "pngjs";
 import { describe, expect, it } from "vitest";
 
-import { decodePng } from "./png";
+import { decodePng } from "./png.ts";
 
 // A 2x1 PNG of the given RGBA bytes, written in a PNG colour type: 2 is RGB, 6 is RGBA.
 function png(colorType: 2 | 6, rgba: number[]): Uint8Array {

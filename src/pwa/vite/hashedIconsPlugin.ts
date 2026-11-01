@@ -1,7 +1,7 @@
 import type { Plugin } from "vite";
 
-import { contentHash } from "../../build/contentHash";
-import { hashIcons } from "../hashedIcons";
+import { contentHash } from "../../build/contentHash.ts";
+import { hashIcons } from "../hashedIcons.ts";
 
 export interface HashedIconsPluginOptions {
   // The icons to hash, as root-relative URLs of files in the public directory, e.g.

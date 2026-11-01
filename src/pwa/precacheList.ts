@@ -1,4 +1,4 @@
-import { type CachePolicy, isHashedAssetUrl } from "./cachePolicy";
+import { type CachePolicy, isHashedAssetUrl } from "./cachePolicy.ts";
 
 // The service worker's precache: every URL the game needs to boot offline, each sound file by
 // format (the worker stores the one format the page plays, named on its URL by

@@ -10,8 +10,8 @@ import {
   precacheFetchOptions,
   staleCacheNames,
   strategyFor,
-} from "./cachePolicy";
-import type { PrecacheManifest } from "./precacheList";
+} from "./cachePolicy.ts";
+import type { PrecacheManifest } from "./precacheList.ts";
 
 const POLICY: CachePolicy = {
   cacheNamePrefix: "game-",

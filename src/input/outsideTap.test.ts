@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import type { Point } from "../rect";
+import type { Point } from "../rect.ts";
 import {
   isOutside,
   type OutsideArea,
   outsidePressDown,
   outsidePressMove,
   outsideTapped,
-} from "./outsideTap";
+} from "./outsideTap.ts";
 
 // A 100x100 screen with a panel in its middle and a top bar button in its top-right corner.
 const AREA: OutsideArea = {

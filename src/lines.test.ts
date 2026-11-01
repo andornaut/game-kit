@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { type FieldTable, fillLine, sentences, strayNames, wrapWords } from "./lines";
+import { type FieldTable, fillLine, sentences, strayNames, wrapWords } from "./lines.ts";
 
 describe("strayNames", () => {
   it("reports each name a line uses that its table does not list", () => {

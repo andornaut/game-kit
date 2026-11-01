@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { decodeWebp, encodeLosslessWebp, type RgbaImage, sameRgba, webpDecodesTo } from "./webp";
+import { decodeWebp, encodeLosslessWebp, type RgbaImage, sameRgba, webpDecodesTo } from "./webp.ts";
 
 // A width x height image whose every byte differs, with clear pixels that still carry colour.
 function numbered(width: number, height: number): RgbaImage {

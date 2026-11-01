@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { probability } from "./units";
+import { probability } from "./units.ts";
 
 describe("units", () => {
   it("rejects a probability outside 0 to 1", () => {

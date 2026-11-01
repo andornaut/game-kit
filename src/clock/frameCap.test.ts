@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { type FrameGate, framesPerDraw, gateFrame, MENU_FPS, OPEN_GATE } from "./frameCap";
+import { type FrameGate, framesPerDraw, gateFrame, MENU_FPS, OPEN_GATE } from "./frameCap.ts";
 
 const hz = (rate: number) => 1000 / rate;
 

@@ -1,6 +1,6 @@
 import type { Plugin } from "vite";
 
-import { cacheKeyFor, type CachePolicy } from "../cachePolicy";
+import { cacheKeyFor, type CachePolicy } from "../cachePolicy.ts";
 import {
   bundleDependencies,
   type BundleFile,
@@ -9,7 +9,7 @@ import {
   type PrecacheManifest,
   rootRelativeUrls,
   webManifestIconUrls,
-} from "../precacheList";
+} from "../precacheList.ts";
 
 // Hashed files the page loads at runtime rather than links, such as a game's art: the URLs to
 // precache, and sound files by format, for the worker to store the format the page plays.

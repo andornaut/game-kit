@@ -1,4 +1,4 @@
-import { isFirefoxAndroid } from "./installState";
+import { isFirefoxAndroid } from "./installState.ts";
 
 export interface HistoryLike {
   // How many entries the window's session history holds, before and after the current one.

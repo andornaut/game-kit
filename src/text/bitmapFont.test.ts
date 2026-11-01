@@ -8,7 +8,7 @@ import {
   laidGlyphs,
   leftBearing,
   parseBitmapFont,
-} from "./bitmapFont";
+} from "./bitmapFont.ts";
 
 // A font with a capital H on rows 2 to 7, a d's ascender from row 1 inking a column right of its
 // pen, a g reaching row 9 inking a column left of its pen, a backtick from row 0, a space, and H

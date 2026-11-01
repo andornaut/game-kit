@@ -1,5 +1,5 @@
-import { wrapWords } from "../lines";
-import { type BitmapFont, inkWidth } from "./bitmapFont";
+import { wrapWords } from "../lines.ts";
+import { type BitmapFont, inkWidth } from "./bitmapFont.ts";
 
 // Text is set at one fixed size per style and never shrinks to fit its room: text that would
 // not fit wraps onto more lines, or overflows, which fitsRoom and text/overflow tell.

@@ -7,7 +7,7 @@ import {
   onPageControl,
   PAGE_CONTROLS,
   type PagePointerEvent,
-} from "./pagePresses";
+} from "./pagePresses.ts";
 
 type PointerType = "pointercancel" | "pointerdown" | "pointermove" | "pointerup";
 

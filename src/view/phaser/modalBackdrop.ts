@@ -1,7 +1,7 @@
 import type { GameObjects, Scene } from "phaser";
 
-import type { Rect } from "../../rect";
-import { snapshotRemapped } from "./snapshotRemap";
+import type { Rect } from "../../rect.ts";
+import { snapshotRemapped } from "./snapshotRemap.ts";
 
 export interface ModalBackdropContext {
   readonly depth: number;

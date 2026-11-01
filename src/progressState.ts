@@ -1,5 +1,5 @@
-import { clamp01 } from "./numbers";
-import type { ProgressValue } from "./progress";
+import { clamp01 } from "./numbers.ts";
+import type { ProgressValue } from "./progress.ts";
 
 export interface ProgressSnapshot {
   readonly active: boolean;

@@ -3,7 +3,7 @@
 // package.json names it as a peer dependency.
 import { PNG } from "pngjs";
 
-import type { RgbaImage } from "./rgbaImage";
+import type { RgbaImage } from "./rgbaImage.ts";
 
 // A PNG's pixels, whatever its colour type, as 8-bit RGBA.
 export function decodePng(bytes: Uint8Array): RgbaImage {

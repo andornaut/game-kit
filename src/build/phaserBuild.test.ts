@@ -10,7 +10,7 @@ import {
   phaserFlags,
   phaserSourceDir,
   replacePhaserFlags,
-} from "./phaserBuild";
+} from "./phaserBuild.ts";
 
 const SOURCE_DIR = phaserSourceDir();
 const ESM_ENTRY = readFileSync(join(SOURCE_DIR, "phaser-esm.js"), "utf8");

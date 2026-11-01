@@ -1,4 +1,4 @@
-import type { Point } from "../rect";
+import type { Point } from "../rect.ts";
 
 // The parts of a PointerEvent that the listener and its callers read.
 export interface PagePointerEvent {

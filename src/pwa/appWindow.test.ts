@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { appCannotClose, type AppCloseHost, appPlatform, runsInAppWindow } from "./appWindow";
-import { type CloseWatcherFactory, INSTALLED_APP_DISPLAY_QUERY } from "./backNavigation";
+import { appCannotClose, type AppCloseHost, appPlatform, runsInAppWindow } from "./appWindow.ts";
+import { type CloseWatcherFactory, INSTALLED_APP_DISPLAY_QUERY } from "./backNavigation.ts";
 
 const CHROME = "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0";
 const ANDROID = "Mozilla/5.0 (Linux; Android 15; Pixel 9)";

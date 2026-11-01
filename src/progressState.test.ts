@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createProgressState, type ProgressSnapshot } from "./progressState";
+import { createProgressState, type ProgressSnapshot } from "./progressState.ts";
 
 describe("createProgressState", () => {
   it("ignores stale progress and completion after another operation starts", () => {

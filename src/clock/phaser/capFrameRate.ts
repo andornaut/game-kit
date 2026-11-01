@@ -1,6 +1,6 @@
 import { Core, type Game } from "phaser";
 
-import { type FrameGate, gateFrame, OPEN_GATE } from "../frameCap";
+import { type FrameGate, gateFrame, OPEN_GATE } from "../frameCap.ts";
 
 // Caps the frame rate at capFps whenever playing() is false. Phaser's loop calls its step on every
 // display frame; this passes on only the frames gateFrame draws, each with the time of the frames

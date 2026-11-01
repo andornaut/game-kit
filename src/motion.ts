@@ -1,7 +1,7 @@
-import { clamp01 } from "./numbers";
-import type { Point } from "./rect";
+import { clamp01 } from "./numbers.ts";
+import type { Point } from "./rect.ts";
 
-export type { Point } from "./rect";
+export type { Point } from "./rect.ts";
 
 export type Easing = "linear" | "sineInOut";
 

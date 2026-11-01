@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import { contentHash, HASH_LENGTH } from "./contentHash";
+import { contentHash, HASH_LENGTH } from "./contentHash.ts";
 
 describe("contentHash", () => {
   it.each([

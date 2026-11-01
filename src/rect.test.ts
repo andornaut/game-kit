@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { clampInto, containsPoint, insetRect, rectAboveIn, rectsOverlap } from "./rect";
+import { clampInto, containsPoint, insetRect, rectAboveIn, rectsOverlap } from "./rect.ts";
 
 describe("containsPoint", () => {
   const rect = { height: 20, width: 10, x: 5, y: 40 };

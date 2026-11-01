@@ -8,7 +8,7 @@ import {
   seededRandom,
   shuffled,
   weightedPick,
-} from "./random";
+} from "./random.ts";
 
 const take = (count: number, random: () => number) => Array.from({ length: count }, random);
 

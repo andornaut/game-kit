@@ -9,7 +9,7 @@ import {
   type CrashWords,
   reportFromErrorEvent,
   reportFromRejection,
-} from "./crashModel";
+} from "./crashModel.ts";
 
 // The screen's colours, as CSS colours: the page behind the panel, the text and the panel's
 // border, a button's face and the lip under it (its pressed edge), and the darkest colour, for

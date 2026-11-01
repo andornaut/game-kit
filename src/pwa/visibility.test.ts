@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { watchVisibility } from "./visibility";
-import type { VisibilitySource } from "./wakeLock";
+import { watchVisibility } from "./visibility.ts";
+import type { VisibilitySource } from "./wakeLock.ts";
 
 class FakeDocument extends EventTarget implements VisibilitySource {
   visibilityState: DocumentVisibilityState = "visible";

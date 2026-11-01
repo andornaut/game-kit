@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { progressBarLayout, type ProgressBarStyle } from "./progress";
+import { progressBarLayout, type ProgressBarStyle } from "./progress.ts";
 
 const style: ProgressBarStyle = {
   border: 1,

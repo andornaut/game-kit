@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { createDomProgressBar } from "./progressBar";
+import { createDomProgressBar } from "./progressBar.ts";
 
 class Element {
   readonly attributes = new Map<string, string>();

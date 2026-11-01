@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseBitmapFont } from "./bitmapFont";
+import { parseBitmapFont } from "./bitmapFont.ts";
 import {
   bitmapMeasure,
   fitsRoom,
@@ -8,7 +8,7 @@ import {
   type TextFitStyle,
   type TextMeasure,
   widestLine,
-} from "./textFit";
+} from "./textFit.ts";
 
 // Every character 4 font pixels wide, at the style's scale.
 const measure: TextMeasure = (style, line) => line.length * 4 * style.scale;

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   cpSync,
   existsSync,
@@ -12,14 +13,13 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { runnerImport } from "vite";
 import { expect, it } from "vitest";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 it.each([false, true])(
   "loads an isolated source-package client with PNG peer installed=%s",
-  async (png) => {
+  (png) => {
     const client = mkdtempSync(join(tmpdir(), "kit-minimal-"));
     const kit = join(client, "vendor/game-kit");
     mkdirSync(join(client, "node_modules/@andornaut"), { recursive: true });
@@ -37,14 +37,16 @@ it.each([false, true])(
     }
     const source = png
       ? 'import { decodePng } from "@andornaut/game-kit/art/png"; export const loaded = typeof decodePng;'
-      : 'import { seededRandom } from "@andornaut/game-kit/random"; export const loaded = typeof seededRandom;';
+      : [
+          'import { seededRandom } from "@andornaut/game-kit/random";',
+          'import { createProgressState } from "@andornaut/game-kit/progressState";',
+          "createProgressState().begin().finish();",
+          "export const loaded = typeof seededRandom;",
+        ].join("\n");
     const entry = join(client, "entry.ts");
-    writeFileSync(entry, source);
-    const { module } = await runnerImport<{ loaded: string }>(entry, {
-      configFile: false,
-      root: client,
-    });
-    expect(module.loaded).toBe("function");
+    writeFileSync(entry, `${source}\nconsole.log(loaded);`);
+    const loaded = execFileSync(process.execPath, [entry], { cwd: client, encoding: "utf8" });
+    expect(loaded.trim()).toBe("function");
     expect(existsSync(join(client, "node_modules/phaser"))).toBe(false);
     const require = createRequire(join(client, "package.json"));
     expect(require.resolve("@andornaut/game-kit/view/frameTurnPortraitGame.css")).toBe(
@@ -55,7 +57,9 @@ it.each([false, true])(
     if (!png) {
       const missing = join(client, "missing-peer.ts");
       writeFileSync(missing, 'export { decodePng } from "@andornaut/game-kit/art/png";');
-      await expect(runnerImport(missing, { configFile: false, root: client })).rejects.toThrow();
+      expect(() =>
+        execFileSync(process.execPath, [missing], { cwd: client, stdio: "pipe" }),
+      ).toThrow();
     }
   },
 );

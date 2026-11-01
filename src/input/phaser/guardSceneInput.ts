@@ -1,6 +1,6 @@
 import { type Scene, Scenes } from "phaser";
 
-import { guardPassed } from "../tapGuard";
+import { guardPassed } from "../tapGuard.ts";
 
 // Turns the scene's pointer and keyboard input off until guardMs has passed since the frame
 // drawn() is called on, its first drawn frame (tapGuard). A press that lands during the guard

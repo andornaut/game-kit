@@ -4,7 +4,7 @@ import {
   requestPersistentStorage,
   type StorageManagerLike,
   type StoragePersistence,
-} from "./storagePersistence";
+} from "./storagePersistence.ts";
 
 const fails = () => Promise.reject(new Error("refused"));
 const throws = () => {

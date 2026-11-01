@@ -1,4 +1,4 @@
-import type { VisibilitySource } from "./wakeLock";
+import type { VisibilitySource } from "./wakeLock.ts";
 
 // Calls onChange with whether the page is visible, once per change. pagehide counts as hidden and
 // pageshow rechecks, for a page leaving or returning from the back-forward cache without a

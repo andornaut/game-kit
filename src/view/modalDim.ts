@@ -1,4 +1,4 @@
-import { rampDown } from "../rgba";
+import { rampDown } from "../rgba.ts";
 
 // Modal snapshots stay on the supplied palette ramps. The alpha is for an existing ink-layer
 // fallback only; a palette-remapped image never receives an additional alpha shade.

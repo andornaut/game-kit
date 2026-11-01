@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { easeProgress, progressAt, type Segment, segmentAt } from "./motion";
+import { easeProgress, progressAt, type Segment, segmentAt } from "./motion.ts";
 
 describe("progressAt", () => {
   it.each([

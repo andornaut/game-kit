@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { FIT_TOLERANCE, needsRefit } from "./fitCheck";
+import { FIT_TOLERANCE, needsRefit } from "./fitCheck.ts";
 
 // A landscape phone's visible area, a canvas fitted inside it, and the play area the fit used.
 const VISIBLE = { height: 390, width: 844, x: 0, y: 0 };

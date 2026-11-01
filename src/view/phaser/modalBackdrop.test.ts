@@ -1,8 +1,8 @@
 import type { Scene } from "phaser";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { mountModalBackdrop } from "./modalBackdrop";
-import { snapshotRemapped } from "./snapshotRemap";
+import { mountModalBackdrop } from "./modalBackdrop.ts";
+import { snapshotRemapped } from "./snapshotRemap.ts";
 
 vi.mock("./snapshotRemap", () => ({ snapshotRemapped: vi.fn() }));
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { type Checked, encodeSave, loadSave, type SaveFormat } from "./versionedSave";
+import { type Checked, encodeSave, loadSave, type SaveFormat } from "./versionedSave.ts";
 
 // A type, not an interface, so it is a StoredObject.
 type Coins = {

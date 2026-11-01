@@ -8,7 +8,7 @@ import {
   menuInstallBrowser,
   offersInstall,
   runsAsApp,
-} from "./installState";
+} from "./installState.ts";
 
 const NONE: InstallFacts = {
   appInstalled: false,

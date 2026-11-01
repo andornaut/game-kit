@@ -1,5 +1,5 @@
-import { progressBarLayout, type ProgressBarStyle, type ProgressValue } from "../../progress";
-import type { Rect } from "../../rect";
+import { progressBarLayout, type ProgressBarStyle, type ProgressValue } from "../../progress.ts";
+import type { Rect } from "../../rect.ts";
 
 const cssColour = (colour: number) => `#${colour.toString(16).padStart(6, "0")}`;
 

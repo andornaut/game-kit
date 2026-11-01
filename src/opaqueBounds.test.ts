@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { opaqueBounds, opaqueBoundsOfRgba } from "./opaqueBounds";
+import { opaqueBounds, opaqueBoundsOfRgba } from "./opaqueBounds.ts";
 
 describe("opaqueBounds", () => {
   it("boxes the opaque pixels, right and bottom one past them, and is undefined for a clear image", () => {

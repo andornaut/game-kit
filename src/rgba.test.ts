@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { rampDown, remapRgb } from "./rgba";
+import { rampDown, remapRgb } from "./rgba.ts";
 
 const WHITE = 0xffffff;
 const CREAM = 0xf0e0c0;

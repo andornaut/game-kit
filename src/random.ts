@@ -1,4 +1,4 @@
-import { itemAt } from "./arrays";
+import { itemAt } from "./arrays.ts";
 
 // A source of floats in [0, 1). Everything random takes one, so a seed reproduces a run.
 export type Random = () => number;

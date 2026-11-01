@@ -1,4 +1,4 @@
-import type { Rect } from "../rect";
+import type { Rect } from "../rect.ts";
 
 type Size = Pick<Rect, "height" | "width">;
 

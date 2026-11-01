@@ -5,9 +5,9 @@ import {
   type RegistrationLike,
   type ServiceWorkerLike,
   type UpdateFlow,
-} from "./updateReady";
-import { watchVisibility } from "./visibility";
-import type { VisibilitySource } from "./wakeLock";
+} from "./updateReady.ts";
+import { watchVisibility } from "./visibility.ts";
+import type { VisibilitySource } from "./wakeLock.ts";
 
 // Input that counts as the player interacting, after which the page never reloads on its own.
 export const INTERACTION_EVENTS = ["keydown", "pointerdown"] as const;

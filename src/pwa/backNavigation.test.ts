@@ -11,7 +11,7 @@ import {
   INSTALLED_APP_DISPLAY_QUERY,
   isFirefoxAndroidApp,
   type TimerHost,
-} from "./backNavigation";
+} from "./backNavigation.ts";
 // The guard entry's state key, and what seen records for each back the guard keeps on the game.
 const STATE_KEY = "testGameBackGuard";
 const BACK = "back";

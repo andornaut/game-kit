@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type { AppWindowHost } from "./appWindow";
-import { INSTALLED_APP_DISPLAY_QUERY } from "./backNavigation";
-import { exitApp, type ExitPage, HOME_URL } from "./exitApp";
+import type { AppWindowHost } from "./appWindow.ts";
+import { INSTALLED_APP_DISPLAY_QUERY } from "./backNavigation.ts";
+import { exitApp, type ExitPage, HOME_URL } from "./exitApp.ts";
 
 const CHROME = "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0";
 const ANDROID = "Mozilla/5.0 (Linux; Android 15; Pixel 9)";

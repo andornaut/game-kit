@@ -1,7 +1,7 @@
 import type { Scene } from "phaser";
 
-import type { Rect } from "../../rect";
-import { remapRgb } from "../../rgba";
+import type { Rect } from "../../rect.ts";
+import { remapRgb } from "../../rgba.ts";
 
 // Reads area of the game's canvas back from the next frame Phaser renders and draws it, each
 // pixel's colour remapped (rampDown dims it down the palette's ramps), into a canvas texture

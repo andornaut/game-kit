@@ -7,7 +7,7 @@ import {
   isCrash,
   reportFromErrorEvent,
   reportFromRejection,
-} from "./crashModel";
+} from "./crashModel.ts";
 
 const APP_URL = "https://game.test/assets/play-abc123.js";
 

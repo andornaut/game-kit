@@ -8,7 +8,7 @@ import {
   sheetTags,
   tagMs,
   tagRepeat,
-} from "./aseprite";
+} from "./aseprite.ts";
 
 const tag = (name: string, from: number, to: number, direction: AsepriteDirection = "forward") => ({
   direction,

@@ -1,7 +1,7 @@
 import type { Scene } from "phaser";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { snapshotRemapped } from "./snapshotRemap";
+import { snapshotRemapped } from "./snapshotRemap.ts";
 
 // The browser's image element, which Node lacks.
 class FakeImage {}

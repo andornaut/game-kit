@@ -12,7 +12,7 @@ import {
   pageRules,
   servedPath,
   unhashedAssets,
-} from "../securityHeaders";
+} from "../securityHeaders.ts";
 
 export interface SecurityHeadersOptions {
   // Every page's policy before its rule's sources and hashes are added.

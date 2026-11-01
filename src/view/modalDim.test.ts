@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 
-import { remapRgb } from "../rgba";
-import { modalDimmer } from "./modalDim";
+import { remapRgb } from "../rgba.ts";
+import { modalDimmer } from "./modalDim.ts";
 
 it("dims modal pixels through palette ramps without changing transparency or inventing colours", () => {
   const ramp = new Map([

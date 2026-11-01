@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createModalInputGate } from "./modalInput";
+import { createModalInputGate } from "./modalInput.ts";
 
 describe("createModalInputGate", () => {
   it("allows only the top modal and restores the previous owner after nested close", () => {

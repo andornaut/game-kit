@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { wireInstallButton } from "./installButton";
-import type { InstallFlow, InstallOutcome } from "./installFlow";
-import type { InstallState, MenuInstallBrowser } from "./installState";
+import { wireInstallButton } from "./installButton.ts";
+import type { InstallFlow, InstallOutcome } from "./installFlow.ts";
+import type { InstallState, MenuInstallBrowser } from "./installState.ts";
 
 const settle = () =>
   new Promise((resolve) => {

@@ -12,7 +12,7 @@ import {
   phaserExports,
   phaserFlags,
   phaserSourceDir,
-} from "./phaserBuild";
+} from "./phaserBuild.ts";
 
 // What a game's code may reach that the build's Phaser lacks, by how the code reaches it.
 export interface LackingNames {

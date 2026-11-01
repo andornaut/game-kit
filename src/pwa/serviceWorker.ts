@@ -14,10 +14,10 @@ import {
   precacheFetchOptions,
   staleCacheNames,
   strategyFor,
-} from "./cachePolicy";
-import type { PrecacheManifest } from "./precacheList";
-import type { SoundFormatParam } from "./serviceWorkerUrl";
-import type { SkipWaitingMessage } from "./updateReady";
+} from "./cachePolicy.ts";
+import type { PrecacheManifest } from "./precacheList.ts";
+import type { SoundFormatParam } from "./serviceWorkerUrl.ts";
+import type { SkipWaitingMessage } from "./updateReady.ts";
 
 interface LifecycleEvent extends Event {
   waitUntil(promise: Promise<unknown>): void;
