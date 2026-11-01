@@ -577,13 +577,16 @@ export function findTraversal<Id>(
   const seen = new Set([key(0, request.start)]);
   const distance = (node: Node) => {
     const b = box(context, node.state);
+    // Ascent can clear an obstruction before descending into the landing corridor.
+    // Zero vertical speed above that corridor also includes partial ledge contacts.
     return (
-      Math.abs(b.x + b.width / 2 - request.goal.x - request.goal.width / 2) +
-      Math.abs(b.y + b.height / 2 - request.goal.y - request.goal.height / 2)
+      Math.max(0, request.goal.x - b.x, b.x + b.width - request.goal.x - request.goal.width) +
+      Math.max(0, b.y + b.height - request.goal.y - request.goal.height) +
+      (node.state.vy === 0 ? Math.max(0, request.goal.y - b.y) : 0)
     );
   };
   while (frontier.length) {
-    frontier.sort((a, b) => distance(b) - distance(a) || b.depth - a.depth);
+    frontier.sort((a, b) => distance(b) - distance(a) || a.depth - b.depth);
     const node = frontier.pop()!;
     if (node.state.grounded && inside(request.goal, box(context, node.state), context.epsilon)) {
       // Validate even an empty witness against actual geometry and caller safety.

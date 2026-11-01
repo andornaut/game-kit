@@ -271,3 +271,185 @@ describe("terrain traversal", () => {
     expect(result.state.vy).toBeLessThan(0);
   });
 });
+
+it.each([
+  { corridor: 96, speed: 360, width: 60 },
+  { corridor: 72, speed: 336, width: 48 },
+])(
+  "orders a bounded full-body ground-corridor jump for width $width",
+  ({ corridor, speed, width }) => {
+    const ground = 0;
+    const block = { height: 168, width: 48, x: -48, y: -48 };
+    const landing = { height: 120, width: corridor, x: -48 - corridor, y: ground };
+    const floor = { height: 120, width: 144, x: 0, y: ground };
+    const ledge = { height: 12, width: 72, x: -144, y: -72 };
+    const solids = [
+      floor,
+      block,
+      landing,
+      { height: 192, width: 72, x: -48 - corridor - 72, y: -72 },
+    ];
+    const colliders = [
+      ...solids.map((rect) => ({
+        after: rect,
+        before: rect,
+        kind: "solid" as const,
+        supportId: rect,
+      })),
+      ...(width === 60
+        ? [{ after: ledge, before: ledge, kind: "ledge" as const, supportId: ledge }]
+        : []),
+    ];
+    const context: TraversalContext<object> = {
+      body: { height: 48, offset: { x: 0, y: 0 }, width },
+      bounds: { height: 720, width: 720, x: -240, y: -600 },
+      dtSeconds: 1 / 120,
+      epsilon: 1e-6,
+      maxCollisionSteps: 16,
+      maxDrop: 720,
+      profile: { gravity: 1780, jumpSpeed: 535, maxFallSpeed: 275, walkSpeed: speed },
+      safe: () => true,
+      sampleColliders: (_time, _dt, q) => ({
+        colliders: colliders.filter(
+          (c) =>
+            c.before.x <= q.x + q.width &&
+            c.before.x + c.before.width >= q.x &&
+            c.before.y <= q.y + q.height &&
+            c.before.y + c.before.height >= q.y,
+        ),
+        complete: true,
+      }),
+    };
+    const start: TraversalState<object> = {
+      fallFromY: 0,
+      grounded: true,
+      supportId: floor,
+      vy: 0,
+      x: 0,
+      y: -48,
+    };
+    const goal = { height: 48.000002, width: corridor, x: landing.x, y: -48.000001 };
+    const result = findTraversal(context, {
+      goal,
+      horizonSteps: 120,
+      maxStates: 256,
+      maxSteps: 4096,
+      start,
+      timeSeconds: 0,
+    });
+    expect(result.status).toBe("found");
+    if (result.status !== "found") {
+      return;
+    }
+    expect(result.work.states).toBeLessThanOrEqual(256);
+    expect(result.work.steps).toBeLessThanOrEqual(4096);
+    expect(result.inputs.length).toBeLessThanOrEqual(120);
+    let state = start;
+    for (const input of result.inputs) {
+      const step = stepTraversal(context, input, state);
+      expect(step.status).toBe("ok");
+      state = step.state;
+    }
+    expect(state).toEqual(result.state);
+    expect(state.grounded).toBe(true);
+    expect(state.y).toBeCloseTo(-48);
+    expect(state.x).toBeGreaterThanOrEqual(goal.x - context.epsilon);
+    expect(state.x + width).toBeLessThanOrEqual(goal.x + goal.width + context.epsilon);
+  },
+);
+
+it("retains waits at the same position until a moving wall opens", () => {
+  const floor = { height: 2, width: 40, x: -10, y: 10 };
+  const owner = {};
+  const wall = (time: number) => ({
+    height: 10,
+    width: 1,
+    x: 3,
+    y: -10 * Math.max(0, Math.min(1, (time - 0.3) / 0.1)),
+  });
+  const context: TraversalContext<object> = {
+    body: { height: 2, offset: { x: 0, y: 0 }, width: 2 },
+    bounds: { height: 32, width: 40, x: -10, y: -20 },
+    dtSeconds: 0.1,
+    epsilon: 1e-7,
+    maxCollisionSteps: 16,
+    maxDrop: 20,
+    profile: { gravity: 20, jumpSpeed: 0, maxFallSpeed: 20, walkSpeed: 10 },
+    safe: () => true,
+    sampleColliders: (t, dt) => ({
+      colliders: [
+        { after: floor, before: floor, kind: "solid", supportId: floor },
+        { after: wall(t + dt), before: wall(t), kind: "solid", supportId: owner },
+      ],
+      complete: true,
+    }),
+  };
+  const start: TraversalState<object> = {
+    fallFromY: 10,
+    grounded: true,
+    supportId: floor,
+    vy: 0,
+    x: 0,
+    y: 8,
+  };
+  const result = findTraversal(context, {
+    goal: { height: 2, width: 4, x: 5, y: 8 },
+    horizonSteps: 12,
+    maxStates: 256,
+    maxSteps: 4096,
+    start,
+    timeSeconds: 0,
+  });
+  expect(result.status).toBe("found");
+  if (result.status !== "found") {
+    return;
+  }
+  let state = start;
+  let repeats = 0;
+  for (const input of result.inputs) {
+    const step = stepTraversal(context, input, state);
+    expect(step.status).toBe("ok");
+    if (step.state.x === state.x && step.state.y === state.y) {
+      repeats++;
+    }
+    state = step.state;
+  }
+  expect(repeats).toBeGreaterThan(0);
+  expect(state).toEqual(result.state);
+  expect(result.inputs.length).toBeGreaterThan(5);
+});
+
+it("does not turn horizontal progress through a hazardous goal into a found witness", () => {
+  const floor = { height: 2, width: 40, x: -10, y: 10 };
+  const context: TraversalContext<object> = {
+    body: { height: 2, offset: { x: 0, y: 0 }, width: 2 },
+    bounds: { height: 12, width: 40, x: -10, y: 0 },
+    dtSeconds: 0.1,
+    epsilon: 1e-7,
+    maxCollisionSteps: 16,
+    maxDrop: 20,
+    profile: { gravity: 20, jumpSpeed: 0, maxFallSpeed: 20, walkSpeed: 10 },
+    safe: ({ from, to }) => Math.max(from.x + from.width, to.x + to.width) <= 3,
+    sampleColliders: () => ({
+      colliders: [{ after: floor, before: floor, kind: "solid", supportId: floor }],
+      complete: true,
+    }),
+  };
+  const start: TraversalState<object> = {
+    fallFromY: 10,
+    grounded: true,
+    supportId: floor,
+    vy: 0,
+    x: 0,
+    y: 8,
+  };
+  const result = findTraversal(context, {
+    goal: { height: 2, width: 4, x: 4, y: 8 },
+    horizonSteps: 3,
+    maxStates: 256,
+    maxSteps: 4096,
+    start,
+    timeSeconds: 0,
+  });
+  expect(result.status).toBe("unreachable");
+});
