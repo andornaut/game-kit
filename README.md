@@ -15,7 +15,7 @@ The final consumer distribution is the compiled GitHub release artifact describe
 
 ## Version and interface policy
 
-The source package is version `0.3.0`. `KIT_COMMIT` remains the exact source identity; a version never substitutes for the recorded revision. The explicit `exports` map and exported TypeScript declarations define the public interface. Deep `src/` paths, tests and standalone scripts are private. `build/buildInfo` exposes declarations only through the TypeScript `types` condition; it has no runtime entry.
+The source package is version `0.3.1`. `KIT_COMMIT` remains the exact source identity; a version never substitutes for the recorded revision. The explicit `exports` map and exported TypeScript declarations define the public interface. Deep `src/` paths, tests and standalone scripts are private. `build/buildInfo` exposes declarations only through the TypeScript `types` condition; it has no runtime entry.
 
 Use patch versions for compatible fixes, minor versions for additive public facilities, and a major version for incompatible changes after 1.0. Before 1.0, incompatible changes require a minor version bump and an explicit migration. Preserve existing subpaths with compatibility exports when practical. Update the manifest and root lockfile together; prove both clients against exact revisions before canonical integration. Documentation-only changes do not require a version bump.
 
@@ -204,12 +204,12 @@ The kit imports no game code and holds no player text. Only `phaser/` folders im
 
 ## Release artifacts
 
-The public source repository is [andornaut/game-kit](https://github.com/andornaut/game-kit). Version 0.3.0 uses the GitHub release asset `game-kit-0.3.0.tgz`, without npm registry publication. After publication, install the versioned artifact:
+The public source repository is [andornaut/game-kit](https://github.com/andornaut/game-kit). Version 0.3.1 uses the GitHub release asset `game-kit-0.3.1.tgz`, without npm registry publication. After publication, install the versioned artifact:
 
 ```json
 {
   "dependencies": {
-    "@andornaut/game-kit": "https://github.com/andornaut/game-kit/releases/download/v0.3.0/game-kit-0.3.0.tgz"
+    "@andornaut/game-kit": "https://github.com/andornaut/game-kit/releases/download/v0.3.1/game-kit-0.3.1.tgz"
   }
 }
 ```
