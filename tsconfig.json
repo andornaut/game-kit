@@ -17,5 +17,5 @@
     "resolveJsonModule": true,
     "skipLibCheck": true
   },
-  "include": ["kit/src", "*.ts"]
+  "include": ["src", "scripts/*.ts", "*.ts"]
 }

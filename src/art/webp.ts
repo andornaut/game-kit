@@ -1,7 +1,7 @@
 // Lossless WebP encoding and decoding for a game's build tools, in Node. libwebp built to
 // WebAssembly (@jsquash/webp, pinned at 1.5.0), so a build needs no native binary: the build
 // without SIMD, so every host writes the same bytes. A game that imports this module installs
-// @jsquash/webp 1.5.0 itself (its vendor/game-kit/ copy has no node_modules); kit/package.json
+// @jsquash/webp 1.5.0 itself (its vendor/game-kit/ copy has no node_modules); package.json
 // names it as a peer dependency. Each module loads once, on first use.
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";

@@ -6,15 +6,15 @@ import ts from "typescript-eslint";
 
 import { plugins, sourceRules, toolingRules } from "./eslint.config.base.mjs";
 
-const KIT_FILES = ["kit/src/**/*.ts"];
-const PHASER_FILES = ["kit/src/**/phaser/**"];
-const VITE_FILES = ["kit/src/**/vite/**"];
+const KIT_FILES = ["src/**/*.ts"];
+const PHASER_FILES = ["src/**/phaser/**"];
+const VITE_FILES = ["src/**/vite/**"];
 
-// A copy of the kit lives in each game, so it imports nothing from outside kit/src/ and its own
+// A copy of the kit lives in each game, so it imports nothing from outside src/ and its own
 // modules by relative path, which work without the game's alias.
 const OUTSIDE_KIT = {
   group: ["@andornaut/game-kit", "@andornaut/game-kit/*", "**/src", "**/src/*"],
-  message: "kit/src/ imports nothing from a game, and its own modules by relative path.",
+  message: "src/ imports nothing from a game, and its own modules by relative path.",
 };
 
 // Pure code runs in unit tests without a renderer: only phaser/ folders import Phaser or a

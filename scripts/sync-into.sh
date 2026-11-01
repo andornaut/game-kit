@@ -35,11 +35,16 @@ done
 kit_repo=$(cd "$(dirname "$0")/.." && pwd)
 vendor="$(cd "$game" && pwd)/vendor/game-kit"
 scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
+trap 'find "$scratch" -depth -delete' EXIT
 
-# The kit's tree at a commit in $scratch/kit/.
+# Export the package payload, including commits with the nested source layout.
 export_kit() {
-  git -C "$kit_repo" archive "$1" kit/ | tar -x -C "$scratch"
+  mkdir -p "$scratch/kit"
+  if git -C "$kit_repo" cat-file -e "$1:kit/package.json" 2>/dev/null; then
+    git -C "$kit_repo" archive "$1" kit/ | tar -x --strip-components=1 -C "$scratch/kit"
+  else
+    git -C "$kit_repo" archive "$1" src/ package.json README.md LICENSE | tar -x -C "$scratch/kit"
+  fi
 }
 
 if $check; then
@@ -63,15 +68,15 @@ if $check; then
   exit 0
 fi
 
-if [ -n "$(git -C "$kit_repo" status --porcelain -- kit)" ]; then
-  echo "kit/ has uncommitted changes; the sync copies HEAD, so commit them first." >&2
+if [ -n "$(git -C "$kit_repo" status --porcelain -- src package.json README.md LICENSE)" ]; then
+  echo "The package has uncommitted changes; the sync copies HEAD." >&2
 fi
 commit=$(git -C "$kit_repo" rev-parse HEAD)
 export_kit "$commit"
 mkdir -p "$vendor"
-# --checksum compares contents: by default rsync skips a file whose size and modification time
-# (to the second) match, which misses a same-size edit made in the same second. KIT_COMMIT is
-# excluded, which also keeps --delete off it, and written directly.
-rsync -a --checksum --delete --exclude=/KIT_COMMIT "$scratch/kit/" "$vendor/"
+# Replace only this package's payload, preserving its revision marker until copying succeeds.
+[ ! -L "$vendor" ] || { echo "Refusing a symlink vendor directory: $vendor" >&2; exit 1; }
+find "$vendor" -depth -mindepth 1 ! -path "$vendor/KIT_COMMIT" -delete
+cp -a "$scratch/kit/." "$vendor/"
 echo "$commit" >"$vendor/KIT_COMMIT"
 echo "Copied game-kit $commit into $vendor"

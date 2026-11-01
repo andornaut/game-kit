@@ -1,6 +1,6 @@
 // PNG decoding for a game's build tools and tests, in Node, with pngjs. A game that imports this
 // module installs pngjs 7.0.0 itself (its vendor/game-kit/ copy has no node_modules);
-// kit/package.json names it as a peer dependency.
+// package.json names it as a peer dependency.
 import { PNG } from "pngjs";
 
 import type { RgbaImage } from "./rgbaImage";
