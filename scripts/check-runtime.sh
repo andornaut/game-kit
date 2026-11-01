@@ -19,4 +19,3 @@ require_load() {
     exit 1
   fi
 }
-
