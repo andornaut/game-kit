@@ -19,7 +19,7 @@
     "@jsquash/webp": "1.5.0",
     "@types/node": "^24.19.2",
     "@types/pngjs": "6.0.5",
-    "eslint": "^10.13.0",
+    "eslint": "^10.14.0",
     "eslint-plugin-import-x": "4.17.1",
     "eslint-plugin-simple-import-sort": "^14.0.0",
     "eslint-plugin-sort-destructure-keys": "^3.0.0",
@@ -172,5 +172,25 @@
     "type": "git",
     "url": "https://github.com/andornaut/game-kit.git"
   },
-  "homepage": "https://github.com/andornaut/game-kit#readme"
+  "homepage": "https://github.com/andornaut/game-kit#readme",
+  "overrides": {
+    "@eslint/config-array": {
+      "minimatch": "11.0.3"
+    },
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "11.0.3"
+    },
+    "eslint": {
+      "minimatch": "11.0.3"
+    },
+    "eslint-plugin-import-x": {
+      "minimatch": "11.0.3"
+    },
+    "markdownlint": {
+      "re2js": "2.8.7"
+    },
+    "micromark-extension-math": {
+      "katex": "0.18.2"
+    }
+  }
 }

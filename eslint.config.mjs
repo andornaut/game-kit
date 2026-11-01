@@ -1,6 +1,7 @@
 import js from "@eslint/js";
 import { defineConfig } from "eslint/config";
-import { createNodeResolver, importX } from "eslint-plugin-import-x";
+import { createNodeResolver } from "eslint-plugin-import-x/node-resolver";
+import noCycle from "eslint-plugin-import-x/rules/no-cycle";
 import globals from "globals";
 import ts from "typescript-eslint";
 
@@ -65,7 +66,7 @@ export default defineConfig(
   // imports are erased at build time, so they never form one.
   {
     files: KIT_FILES,
-    plugins: { "import-x": importX },
+    plugins: { "import-x": { rules: { "no-cycle": noCycle } } },
     rules: { "import-x/no-cycle": "error" },
     settings: {
       "import-x/extensions": [".ts"],
