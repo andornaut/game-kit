@@ -44,8 +44,10 @@ it("assigns every public TypeScript source module to an explicit environment", (
       (name) => JSON.parse(readFileSync(join(root, `tsconfig.${name}.json`), "utf8")).files,
     ),
   );
-  for (const target of Object.values(manifest.exports) as string[]) {
-    if (target.endsWith(".ts"))
+  for (const entry of Object.values(manifest.exports) as (string | { types: string })[]) {
+    const target = typeof entry === "string" ? entry : entry.types;
+    if (target.endsWith(".ts")) {
       expect(declared.has(target.replace(/^\.\//, "")), target).toBe(true);
+    }
   }
 });

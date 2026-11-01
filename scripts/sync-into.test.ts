@@ -35,8 +35,9 @@ it("syncs committed root payloads, removes obsolete files and checks older neste
       "README.md": "# Package\n",
       LICENSE: "MIT\n",
       "src/value.ts": "export const value = 1;\n",
-    }))
+    })) {
       writeFileSync(join(repo, base, file), content);
+    }
     git("add", ".");
     git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "Fixture");
     if (base) {

@@ -11,7 +11,7 @@ const PHASER_FILES = ["src/**/phaser/**"];
 const VITE_FILES = ["src/**/vite/**"];
 
 // A copy of the kit lives in each game, so it imports nothing from outside src/ and its own
-// modules by relative path, which work without the game's alias.
+// modules by relative path, which resolve consistently in every client.
 const OUTSIDE_KIT = {
   group: ["@andornaut/game-kit", "@andornaut/game-kit/*", "**/src", "**/src/*"],
   message: "src/ imports nothing from a game, and its own modules by relative path.",
@@ -74,7 +74,7 @@ export default defineConfig(
   },
   // Config files: they produce what ships rather than being it.
   {
-    files: ["*.ts", "*.js", "*.mjs"],
+    files: ["*.ts", "*.js", "*.mjs", "scripts/**/*.ts", "scripts/**/*.mjs"],
     plugins,
     rules: toolingRules,
   },

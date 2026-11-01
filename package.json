@@ -34,7 +34,7 @@
     "vite": "^8.3.5",
     "vitest": "^5.0.5"
   },
-  "version": "0.1.0",
+  "version": "0.1.1",
   "peerDependencies": {
     "@jsquash/webp": "1.5.0",
     "@types/node": "^24.19.2",
@@ -83,7 +83,9 @@
     "./art/rgbaImage": "./src/art/rgbaImage.ts",
     "./art/webp": "./src/art/webp.ts",
     "./assertNever": "./src/assertNever.ts",
-    "./build/buildInfo": "./src/build/buildInfo.d.ts",
+    "./build/buildInfo": {
+      "types": "./src/build/buildInfo.d.ts"
+    },
     "./build/buildLabel": "./src/build/buildLabel.ts",
     "./build/buildVersion": "./src/build/buildVersion.ts",
     "./build/contentHash": "./src/build/contentHash.ts",

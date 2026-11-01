@@ -7,9 +7,9 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 import { runnerImport } from "vite";
@@ -30,10 +30,11 @@ it.each([false, true])(
     writeFileSync(join(kit, "package.json"), JSON.stringify(manifest));
     writeFileSync(join(client, "package.json"), '{"type":"module"}');
     symlinkSync("../../vendor/game-kit", join(client, "node_modules/@andornaut/game-kit"));
-    if (png)
+    if (png) {
       cpSync(join(root, "node_modules/pngjs"), join(client, "node_modules/pngjs"), {
         recursive: true,
       });
+    }
     const source = png
       ? 'import { decodePng } from "@andornaut/game-kit/art/png"; export const loaded = typeof decodePng;'
       : 'import { seededRandom } from "@andornaut/game-kit/random"; export const loaded = typeof seededRandom;';
@@ -50,5 +51,11 @@ it.each([false, true])(
       join(kit, "src/view/frameTurnPortraitGame.css"),
     );
     expect(() => require.resolve("@andornaut/game-kit/src/random.ts")).toThrow();
+    expect(() => require.resolve("@andornaut/game-kit/build/buildInfo")).toThrow();
+    if (!png) {
+      const missing = join(client, "missing-peer.ts");
+      writeFileSync(missing, 'export { decodePng } from "@andornaut/game-kit/art/png";');
+      await expect(runnerImport(missing, { configFile: false, root: client })).rejects.toThrow();
+    }
   },
 );
