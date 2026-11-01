@@ -14,6 +14,98 @@ const policy: AtlasPolicy<string> = {
 };
 
 describe("packAtlas", () => {
+  it.each<[string, [number, number][], number, number]>([
+    ["one rectangle", [[24, 24]], 2048, 1],
+    [
+      "wide strips",
+      [
+        [672, 42],
+        [384, 80],
+        [300, 36],
+        [250, 26],
+      ],
+      2048,
+      1,
+    ],
+    [
+      "tall and wide rectangles",
+      [
+        [48, 720],
+        [640, 96],
+        [336, 272],
+        [96, 204],
+      ],
+      2048,
+      1,
+    ],
+    [
+      "page spill",
+      [
+        [60, 60],
+        [60, 60],
+        [60, 60],
+        [60, 60],
+        [60, 60],
+      ],
+      128,
+      2,
+    ],
+  ])(
+    "packs %s once each with bounded, nonoverlapping extruded cells",
+    (_, sizes, maxSize, pages) => {
+      const items = sizes.map((size, index) => item(String(index), size));
+      const extrude = 1;
+      const layout = packAtlas(
+        {
+          compare: (a, b) =>
+            (b.rectangles[0]?.height ?? 0) - (a.rectangles[0]?.height ?? 0) ||
+            (b.rectangles[0]?.width ?? 0) - (a.rectangles[0]?.width ?? 0) ||
+            (a.value < b.value ? -1 : 1),
+          extrude,
+          maxSize,
+          widths: [...[256, 512, 1024, 2048].filter((width) => width < maxSize), maxSize],
+        },
+        items,
+      );
+      expect(layout?.pages).toHaveLength(pages);
+      const cells =
+        layout?.pages.flatMap((page, pageIndex) =>
+          page.placed.flatMap(({ at, item }) => {
+            expect(at).toHaveLength(item.rectangles.length);
+            return item.rectangles.map(({ height, width }, index) => {
+              const point = at[index];
+              expect(point).toBeDefined();
+              const left = (point?.x ?? NaN) - extrude;
+              const top = (point?.y ?? NaN) - extrude;
+              const right = left + width + 2 * extrude;
+              const bottom = top + height + 2 * extrude;
+              expect(page.width).toBeLessThanOrEqual(maxSize);
+              expect(page.height).toBeLessThanOrEqual(maxSize);
+              expect(left).toBeGreaterThanOrEqual(0);
+              expect(top).toBeGreaterThanOrEqual(0);
+              expect(right).toBeLessThanOrEqual(page.width);
+              expect(bottom).toBeLessThanOrEqual(page.height);
+              return { bottom, key: item.value, left, pageIndex, right, top };
+            });
+          }),
+        ) ?? [];
+      expect(cells.map(({ key }) => key).sort()).toEqual(items.map(({ value }) => value).sort());
+      for (const cell of cells) {
+        expect(
+          cells.filter(
+            (other) =>
+              other !== cell &&
+              other.pageIndex === cell.pageIndex &&
+              other.left < cell.right &&
+              cell.left < other.right &&
+              other.top < cell.bottom &&
+              cell.top < other.bottom,
+          ),
+        ).toEqual([]);
+      }
+    },
+  );
+
   it("rolls back a partial atomic item and retries all its rectangles on a new page", () => {
     const first = item("first", [4, 4]);
     const frames = item("frames", [2, 2], [4, 4]);
