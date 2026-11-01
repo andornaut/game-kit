@@ -11,7 +11,21 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - name: Verify in isolated containers
         run: bash scripts/check.sh
+      - name: Build committed release artifacts offline
+        run: bash scripts/pack.sh .claude/release-output
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: game-kit-${{ github.sha }}
+          path: |
+            .claude/release-output/game-kit-*.tgz
+            .claude/release-output/SHA256SUMS
+            .claude/release-output/SOURCE_COMMIT
+          if-no-files-found: error
+          include-hidden-files: true

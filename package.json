@@ -2,7 +2,6 @@
   "name": "@andornaut/game-kit",
   "description": "Game-independent TypeScript mechanisms, browser and Phaser adapters, and build tools.",
   "license": "MIT",
-  "private": true,
   "type": "module",
   "engines": {
     "node": ">=24.21.0"
@@ -34,7 +33,7 @@
     "vite": "^8.3.5",
     "vitest": "^5.0.5"
   },
-  "version": "0.2.3",
+  "version": "0.0.1",
   "peerDependencies": {
     "@jsquash/webp": "1.5.0",
     "@types/node": "^24.19.2",
@@ -74,7 +73,8 @@
   "files": [
     "src",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "SOURCE_COMMIT"
   ],
   "exports": {
     "./arrays": "./src/arrays.ts",
@@ -160,5 +160,10 @@
     "./view/phaser/modalBackdrop": "./src/view/phaser/modalBackdrop.ts",
     "./view/phaser/snapshotRemap": "./src/view/phaser/snapshotRemap.ts",
     "./view/settleFit": "./src/view/settleFit.ts"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/andornaut/game-kit.git"
+  },
+  "homepage": "https://github.com/andornaut/game-kit#readme"
 }

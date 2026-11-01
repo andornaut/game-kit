@@ -110,6 +110,22 @@ export interface LaidGlyph {
   readonly ink: { readonly left: number; readonly right: number } | null;
 }
 
+// The pen advance at scale, including trailing whitespace and excluding ink bearings.
+// Missing glyphs leave the previous known glyph in place for the next kerning pair.
+export function advanceWidth(font: BitmapFont, scale: number, line: string): number {
+  let width = 0;
+  let previous: string | null = null;
+  for (const char of line) {
+    const glyph = font.glyphs.get(char);
+    if (glyph === undefined) {
+      continue;
+    }
+    width += glyph.advance + (previous === null ? 0 : (font.kernings.get(previous + char) ?? 0));
+    previous = char;
+  }
+  return width * scale;
+}
+
 // Each character of line the font has, laid out at scale as Phaser's BitmapText lays it out:
 // the pen moves by each glyph's advance and the kerning between it and the glyph before, both in
 // font pixels before scale. A character the font lacks is skipped, as Phaser skips it.

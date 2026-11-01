@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  advanceWidth,
   fontMetrics,
   inkRowsFromCapTop,
   inkRowsOfLines,
@@ -113,5 +114,24 @@ describe("inkWidth", () => {
     ["no text", 2, "", 0],
   ])("measures %s", (_case, scale, line, width) => {
     expect(inkWidth(FONT, scale, line)).toBe(width);
+  });
+});
+
+describe("advanceWidth", () => {
+  it.each([
+    ["", 2, 0],
+    ["H", 2, 10],
+    ["Hg", 1, 8],
+    ["Hg", 2, 16],
+    ["gH", 2, 18],
+    ["H?", 2, 10],
+  ])("advances the pen for %j at %j scale", (line, scale, expected) => {
+    expect(advanceWidth(FONT, scale, line)).toBe(expected);
+  });
+
+  it("retains kerning across missing glyphs and counts trailing whitespace without ink bearings", () => {
+    expect(advanceWidth(FONT, 1, "H?g")).toBe(8);
+    expect(advanceWidth(FONT, 1, "d ")).toBe(6);
+    expect(inkWidth(FONT, 1, "d ")).toBe(3);
   });
 });
