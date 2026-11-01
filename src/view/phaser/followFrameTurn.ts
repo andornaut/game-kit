@@ -38,17 +38,20 @@ function visibleArea(): Rect {
 // resize, the visual viewport, the phone turning, fullscreen, a return from the background or
 // the back-forward cache, or focus) rechecks the turn and refits until the sizes settle
 // (settleFit). While the page is visible, a check every FIT_CHECK_MS rechecks the turn and does
-// the same for a fit gone stale with no signal at all (needsRefit).
+// the same for a fit gone stale with no signal at all (needsRefit). The returned disposer and
+// game destruction release this installation; the page retains its CSS property ownership.
 export function followFrameTurn(
   game: Game,
   parent: HTMLElement,
   watch: Pick<FrameTurnWatch, "onChange" | "recheck" | "turn">,
   gameSize: Pick<Rect, "height" | "width">,
-): void {
+): () => void {
+  let disposed = false;
   const scale = game.scale;
-  const measureParent = scale.getParentBounds.bind(scale);
-  scale.getParentBounds = () => {
-    if (watch.turn() === 0) {
+  const originalBounds = scale.getParentBounds;
+  const measureParent = originalBounds.bind(scale);
+  const wrappedBounds = () => {
+    if (disposed || watch.turn() === 0) {
       return measureParent();
     }
     const { offsetHeight: height, offsetWidth: width } = parent;
@@ -58,19 +61,28 @@ export function followFrameTurn(
     scale.parentSize.setSize(width, height);
     return true;
   };
-  const centre = scale.updateCenter.bind(scale);
-  scale.updateCenter = () => {
-    if (watch.turn() === 0) {
+  scale.getParentBounds = wrappedBounds;
+  const originalCentre = scale.updateCenter;
+  const centre = originalCentre.bind(scale);
+  const wrappedCentre = () => {
+    if (disposed || watch.turn() === 0) {
       centre();
       return;
     }
     game.canvas.style.marginLeft = "";
     game.canvas.style.marginTop = "";
   };
+  scale.updateCenter = wrappedCentre;
   const input = game.input;
-  const transform = input.transformPointer.bind(input);
-  input.transformPointer = (pointer: Input.Pointer, pageX: number, pageY: number, wasMove) => {
-    const now = watch.turn();
+  const originalTransform = input.transformPointer;
+  const transform = originalTransform.bind(input);
+  const wrappedTransform: typeof input.transformPointer = (
+    pointer: Input.Pointer,
+    pageX: number,
+    pageY: number,
+    wasMove,
+  ) => {
+    const now = disposed ? 0 : watch.turn();
     if (now === 0) {
       transform(pointer, pageX, pageY, wasMove);
       return;
@@ -81,6 +93,7 @@ export function followFrameTurn(
     pointer.position.set(point.x, point.y);
   };
 
+  input.transformPointer = wrappedTransform;
   const root = document.documentElement.style;
   const publish = () => {
     const value = `${visibleArea().height}px`;
@@ -89,6 +102,9 @@ export function followFrameTurn(
     }
   };
   const refit = () => {
+    if (disposed) {
+      return;
+    }
     publish();
     scale.getParentBounds();
     scale.refresh();
@@ -99,23 +115,35 @@ export function followFrameTurn(
   };
   let stopSettling: () => void = () => undefined;
   const settle = () => {
+    if (disposed) {
+      return;
+    }
     stopSettling();
     stopSettling = settleFit((callback) => requestAnimationFrame(callback), measure, refit);
   };
   const onSignal = () => {
+    if (disposed) {
+      return;
+    }
     watch.recheck();
     settle();
   };
-  watch.onChange(settle);
-  new ResizeObserver(refit).observe(parent);
-  for (const type of ["resize", "orientationchange", "pageshow", "focus"]) {
+  const stopWatching = watch.onChange(settle);
+  const observer = new ResizeObserver(refit);
+  observer.observe(parent);
+  const signals = ["resize", "orientationchange", "pageshow", "focus"] as const;
+  for (const type of signals) {
     window.addEventListener(type, onSignal);
   }
   document.addEventListener("fullscreenchange", onSignal);
-  window.visualViewport?.addEventListener("resize", onSignal);
-  window.visualViewport?.addEventListener("scroll", onSignal);
+  const viewport = window.visualViewport;
+  viewport?.addEventListener("resize", onSignal);
+  viewport?.addEventListener("scroll", onSignal);
 
   const check = () => {
+    if (disposed) {
+      return;
+    }
     watch.recheck();
     publish();
     const canvas = game.canvas.getBoundingClientRect();
@@ -126,6 +154,9 @@ export function followFrameTurn(
   };
   let timer: ReturnType<typeof setInterval> | undefined;
   const followVisibility = () => {
+    if (disposed) {
+      return;
+    }
     const visible = document.visibilityState === "visible";
     if (visible && timer === undefined) {
       timer = setInterval(check, FIT_CHECK_MS);
@@ -134,10 +165,44 @@ export function followFrameTurn(
       timer = undefined;
     }
   };
-  document.addEventListener("visibilitychange", () => {
+  const onVisibility = () => {
     followVisibility();
     onSignal();
-  });
+  };
+  document.addEventListener("visibilitychange", onVisibility);
+  // Release only the callbacks and method wrappers owned by this installation.
+  const dispose = () => {
+    if (disposed) {
+      return;
+    }
+    disposed = true;
+    stopSettling();
+    stopWatching();
+    observer.disconnect();
+    if (timer !== undefined) {
+      clearInterval(timer);
+      timer = undefined;
+    }
+    for (const type of signals) {
+      window.removeEventListener(type, onSignal);
+    }
+    document.removeEventListener("fullscreenchange", onSignal);
+    document.removeEventListener("visibilitychange", onVisibility);
+    viewport?.removeEventListener("resize", onSignal);
+    viewport?.removeEventListener("scroll", onSignal);
+    game.events.off("destroy", dispose);
+    if (scale.getParentBounds === wrappedBounds) {
+      scale.getParentBounds = originalBounds;
+    }
+    if (scale.updateCenter === wrappedCentre) {
+      scale.updateCenter = originalCentre;
+    }
+    if (input.transformPointer === wrappedTransform) {
+      input.transformPointer = originalTransform;
+    }
+  };
+  game.events.once("destroy", dispose);
   followVisibility();
   publish();
+  return dispose;
 }

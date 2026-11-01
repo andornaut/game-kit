@@ -15,7 +15,7 @@ This is one source package at the repository root, not a compiled distribution. 
 
 ## Version and interface policy
 
-The source package is version `0.1.1`. `KIT_COMMIT` remains the exact source identity; a version never substitutes for the recorded revision. The explicit `exports` map and exported TypeScript declarations define the public interface. Deep `src/` paths, tests and standalone scripts are private. `build/buildInfo` exposes declarations only through the TypeScript `types` condition; it has no runtime entry.
+The source package is version `0.2.0`. `KIT_COMMIT` remains the exact source identity; a version never substitutes for the recorded revision. The explicit `exports` map and exported TypeScript declarations define the public interface. Deep `src/` paths, tests and standalone scripts are private. `build/buildInfo` exposes declarations only through the TypeScript `types` condition; it has no runtime entry.
 
 Use patch versions for compatible fixes, minor versions for additive public facilities, and a major version for incompatible changes after 1.0. Before 1.0, incompatible changes require a minor version bump and an explicit migration. Preserve existing subpaths with compatibility exports when practical. Update the manifest and root lockfile together; prove both clients against exact revisions before canonical integration. Documentation-only changes do not require a version bump.
 
@@ -137,7 +137,7 @@ Node tooling and the standalone gate target Node 24.21.0. Browser modules need D
 
 ## Engine and client contract
 
-The kit provides mechanisms, not game policy. Clients own scene creation, clocks, content, strings, palettes, dimensions, schemas, tuning, randomness, physics, collisions and persistence keys. Pure modules accept explicit data and return values; browser and renderer adapters own only the resources specified by their interfaces. Clients mount and dispose adapters at their lifecycle boundaries.
+The kit provides mechanisms, not game policy. Clients own scene creation, clocks, content, strings, palettes, dimensions, schemas, tuning, randomness, physics, collisions and persistence keys. Pure modules accept explicit data and return values; browser and renderer adapters own only the resources specified by their interfaces. Clients mount and dispose adapters at their lifecycle boundaries. `followFrameTurn` returns an idempotent disposer and also disposes on game destruction: it stops fitting, removes its listeners and observer, and restores only method wrappers it still owns. The page retains ownership of its frame-turn watch and CSS properties.
 
 For example, `createProgressState()` returns operation handles that reject stale callbacks; clients decide when to begin, update, finish and display progress. `mountModalBackdrop(context, area)` receives a scene, depth, fallback colour, colour mapper and dimensions, and returns a `ready` promise and `destroy()` handle. The client chooses modal layout, input ownership and gameplay pausing. `saveStore(storage, keys, format)` receives the client's save schema and storage port; the kit does not choose a migration or reset policy.
 
