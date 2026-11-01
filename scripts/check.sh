@@ -3,7 +3,7 @@ set -euo pipefail
 
 check_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 . "$check_root/scripts/check-runtime.sh"
-check_cache=$check_root/.claude/npm-cache
+check_cache=${GAME_KIT_NPM_CACHE:-$check_root/.claude/npm-cache}
 check_uid=$(id -u)
 check_gid=$(id -g)
 check_image=$(node_check_image "$check_root")

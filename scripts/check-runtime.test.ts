@@ -33,11 +33,18 @@ it.each([
   }
 });
 
-it("uses the root Node version for either container job", () => {
-  const root = mkdtempSync(join(tmpdir(), "kit-image-"));
-  writeFileSync(join(root, ".nvmrc"), "24.21.0\n");
-  const result = execFileSync("bash", ["-c", '. "$1"; node_check_image "$2"', "_", runtime, root], {
-    encoding: "utf8",
-  });
-  expect(result).toBe("node:24.21.0\n");
-});
+it.each(["24.21.0", "v24.21.0"])(
+  "uses root Node version %s for either container job",
+  (version) => {
+    const root = mkdtempSync(join(tmpdir(), "kit-image-"));
+    writeFileSync(join(root, ".nvmrc"), `${version}\n`);
+    const result = execFileSync(
+      "bash",
+      ["-c", '. "$1"; node_check_image "$2"', "_", runtime, root],
+      {
+        encoding: "utf8",
+      },
+    );
+    expect(result).toBe("node:24.21.0\n");
+  },
+);

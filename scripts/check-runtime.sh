@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Shared resource policy for the standalone and exact-consumer jobs.
 node_check_image() {
-  printf 'node:%s\n' "$(cat "$1/.nvmrc")"
+  local version
+  version=$(cat "$1/.nvmrc")
+  printf 'node:%s\n' "${version#v}"
 }
 
 require_load() {
