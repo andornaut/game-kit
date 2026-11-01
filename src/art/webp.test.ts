@@ -39,8 +39,8 @@ describe("the lossless WebP", () => {
     expect(sameRgba(await decodeWebp(await encodeLosslessWebp(image)), image)).toBe(true);
   });
 
-  it("roundtrips a 2048x2032 atlas-sized synthetic image including transparent RGB", async () => {
-    const image = numbered(2048, 2032);
+  it("roundtrips a 2048x2043 atlas-sized synthetic image including transparent RGB", async () => {
+    const image = numbered(2048, 2043);
     expect(sameRgba(await decodeWebp(await encodeLosslessWebp(image)), image)).toBe(true);
   });
 

@@ -15,7 +15,7 @@ The final consumer distribution is the compiled GitHub release artifact describe
 
 ## Version and interface policy
 
-The source package is version `0.2.0`. `KIT_COMMIT` remains the exact source identity; a version never substitutes for the recorded revision. The explicit `exports` map and exported TypeScript declarations define the public interface. Deep `src/` paths, tests and standalone scripts are private. `build/buildInfo` exposes declarations only through the TypeScript `types` condition; it has no runtime entry.
+The source package is version `0.3.0`. `KIT_COMMIT` remains the exact source identity; a version never substitutes for the recorded revision. The explicit `exports` map and exported TypeScript declarations define the public interface. Deep `src/` paths, tests and standalone scripts are private. `build/buildInfo` exposes declarations only through the TypeScript `types` condition; it has no runtime entry.
 
 Use patch versions for compatible fixes, minor versions for additive public facilities, and a major version for incompatible changes after 1.0. Before 1.0, incompatible changes require a minor version bump and an explicit migration. Preserve existing subpaths with compatibility exports when practical. Update the manifest and root lockfile together; prove both clients against exact revisions before canonical integration. Documentation-only changes do not require a version bump.
 
@@ -90,7 +90,7 @@ Paths below are relative to `src/`. Pure modules use no browser, renderer or Nod
 | Modules                                                                                                                                          | Environment                                   | Responsibility                                                                                                                                                                     |
 | ------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `arrays`, `assertNever`, `lines`, `maps`, `numbers`, `opaqueBounds`, `random`, `records`, `rect`, `rgba`, `units`                                | Pure                                          | Collections, seeded randomness, geometry, pixel bounds, colour remapping and branded units                                                                                         |
-| `art/aseprite`, `art/rgbaImage`                                                                                                                  | Pure                                          | Aseprite animation specifications and RGBA atlas primitives; games validate asset JSON                                                                                             |
+| `art/aseprite`, `art/atlasBuild`, `art/atlasLayout`, `art/rgbaImage`                                                                             | Pure                                          | Aseprite animation specifications, atomic shelf packing, injected atlas page orchestration and RGBA primitives; games validate asset JSON                                          |
 | `art/png`, `art/webp`                                                                                                                            | Node                                          | PNG decoding and deterministic lossless WebP encoding/decoding                                                                                                                     |
 | `build/buildLabel`, `build/buildInfo.d.ts`                                                                                                       | Bundled runtime                               | Build label and declarations for `__APP_VERSION__` and `__COMMIT__`, supplied by the bundler                                                                                       |
 | `build/buildVersion`, `build/contentHash`, `build/phaserBuild`, `build/phaserUses`                                                               | Node                                          | Commit labels, content hashes, reduced Phaser builds and static checks of Phaser usage                                                                                             |
@@ -141,6 +141,12 @@ WORKAROUND: Parent-scoped development overrides pin [KaTeX](https://github.com/a
 - **Pixel fonts:** `text/pixelFont` accepts glyph bits, widths, height, spacing and space width through `PixelFontContext`; it returns atlas geometry and advances. Clients own glyph definitions and text normalization. `text/phaser/registerPixelFont` registers a supplied atlas with the scene using explicit key, colour, size, line height and space advance.
 - **Progress:** `undefined` means an unknown total, drawn as a static centred segment; finite values are clamped from zero to one. `createProgressState` replaces the previous operation on each `begin`; stale handles cannot update or finish its replacement. DOM and Phaser adapters share geometry. Games own visibility, timing and accessible labels; the caller clears Phaser graphics.
 - **Saves:** games own keys, schemas, validation and migration policy. A newer stored version is preserved; a corrupt save is backed up before replacement. Failed storage access disables writes for the session.
+
+## Atlas packing
+
+`art/atlasLayout` exports `packAtlas(policy, items)`. Callers supply rectangle groups that stay on one page, their sort comparator, extrusion, maximum size and candidate widths. The shared shelf solver prefers fewer pages, then less area, retaining the first supplied width on ties. Clients own normalization, grouping, source-rectangle deduplication, manifests, frame metadata, trimming, recolouring and output names.
+
+`art/atlasBuild` exports `drawAtlasPage(extrude, images, page)` and `buildAtlasPages(dependencies, pages)`. Both modules are pure and browser-safe. The latter accepts injected read/decode/encode functions and optional decoded images, reads and decodes each uncached source once across all pages, and encodes exactly once per page. It preserves page/blit order, bounds and caller metadata; missing draw sources and dependency failures propagate to the client.
 
 ## Terrain traversal
 
@@ -198,12 +204,12 @@ The kit imports no game code and holds no player text. Only `phaser/` folders im
 
 ## Release artifacts
 
-The public source repository is [andornaut/game-kit](https://github.com/andornaut/game-kit). Version 0.2.0 uses the GitHub release asset `game-kit-0.2.0.tgz`, without npm registry publication. After publication, install the versioned artifact:
+The public source repository is [andornaut/game-kit](https://github.com/andornaut/game-kit). Version 0.3.0 uses the GitHub release asset `game-kit-0.3.0.tgz`, without npm registry publication. After publication, install the versioned artifact:
 
 ```json
 {
   "dependencies": {
-    "@andornaut/game-kit": "https://github.com/andornaut/game-kit/releases/download/v0.2.0/game-kit-0.2.0.tgz"
+    "@andornaut/game-kit": "https://github.com/andornaut/game-kit/releases/download/v0.3.0/game-kit-0.3.0.tgz"
   }
 }
 ```

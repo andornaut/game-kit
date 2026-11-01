@@ -7,6 +7,8 @@
   "files": [
     "src/arrays.ts",
     "src/art/aseprite.ts",
+    "src/art/atlasBuild.ts",
+    "src/art/atlasLayout.ts",
     "src/art/rgbaImage.ts",
     "src/assertNever.ts",
     "src/build/buildInfo.d.ts",
