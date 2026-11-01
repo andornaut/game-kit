@@ -5,6 +5,7 @@ set -euo pipefail
 expected_hash=$1 source_revision=$2 dog_revision=$3 duck_revision=$4
 [ "$(sha256sum /assets/release.tgz | cut -d ' ' -f 1)" = "$expected_hash" ]
 mkdir -p /scratch/reference /scratch/home
+touch /scratch/npm-user-config /scratch/npm-global-config
 # Validate archive paths before extraction, including link and special-file refusal.
 tar -tzf /assets/release.tgz > /scratch/artifact-files.txt
 awk '$0 !~ /^package\// || $0 ~ /(^|\/)\.\.(\/|$)/ { bad=1 } END { exit bad }' /scratch/artifact-files.txt

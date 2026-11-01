@@ -80,8 +80,8 @@ docker run --rm --read-only --cpus 4 --network none -u "$(id -u):$(id -g)" \
   -v "$dog_git:/repos/dog.git:ro" -v "$duck_git:/repos/duck.git:ro" \
   -v "$dog_cache:/caches/dog:ro" -v "$duck_cache:/caches/duck:ro" \
   -v "$output:/scratch" --tmpfs "/tmp:exec,uid=$(id -u),gid=$(id -g)" \
-  -e npm_config_logs_dir=/scratch/npm-logs -e npm_config_userconfig=/dev/null \
-  -e npm_config_globalconfig=/dev/null -e HOME=/scratch/home \
+  -e npm_config_logs_dir=/scratch/npm-logs -e npm_config_userconfig=/scratch/npm-user-config \
+  -e npm_config_globalconfig=/scratch/npm-global-config -e HOME=/scratch/home \
   node:24.21.0 timeout 600s bash /harness/scripts/release-consumer-job.sh \
   "$expected_hash" "$source_revision" "$dog_revision" "$duck_revision" \
   >"$output/container.log" 2>&1
