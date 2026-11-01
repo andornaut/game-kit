@@ -41,6 +41,7 @@
     "src/save/contracts.ts",
     "src/save/saveStore.ts",
     "src/save/versionedSave.ts",
+    "src/terrain/traversal.ts",
     "src/text/bitmapFont.ts",
     "src/text/overflow.ts",
     "src/text/pixelFont.ts",

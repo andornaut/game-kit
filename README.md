@@ -15,7 +15,7 @@ The final consumer distribution is the compiled GitHub release artifact describe
 
 ## Version and interface policy
 
-The source package is version `0.1.0`. `KIT_COMMIT` remains the exact source identity; a version never substitutes for the recorded revision. The explicit `exports` map and exported TypeScript declarations define the public interface. Deep `src/` paths, tests and standalone scripts are private. `build/buildInfo` exposes declarations only through the TypeScript `types` condition; it has no runtime entry.
+The source package is version `0.2.0`. `KIT_COMMIT` remains the exact source identity; a version never substitutes for the recorded revision. The explicit `exports` map and exported TypeScript declarations define the public interface. Deep `src/` paths, tests and standalone scripts are private. `build/buildInfo` exposes declarations only through the TypeScript `types` condition; it has no runtime entry.
 
 Use patch versions for compatible fixes, minor versions for additive public facilities, and a major version for incompatible changes after 1.0. Before 1.0, incompatible changes require a minor version bump and an explicit migration. Preserve existing subpaths with compatibility exports when practical. Update the manifest and root lockfile together; prove both clients against exact revisions before canonical integration. Documentation-only changes do not require a version bump.
 
@@ -36,6 +36,7 @@ src/                  Source modules and colocated tests
   progress/           DOM and Phaser bar adapters
   pwa/                Browser lifecycle, service worker and Vite adapters
   save/               Save interfaces and storage implementations
+  terrain/            Pure bounded traversal and collision stepping
   text/               Pure font metrics and Phaser font adapter
   view/               Pure geometry, DOM layout and Phaser presentation
 scripts/              Isolated verification and exact-commit consumer sync
@@ -107,6 +108,7 @@ Paths below are relative to `src/`. Pure modules use no browser, renderer or Nod
 | `pwa/cachePolicy`, `pwa/hashedIcons`, `pwa/precacheList`, `pwa/serviceWorkerUrl`                                                                 | Pure                                          | Cache policy, icon naming, precache selection and sound-format URL parameters                                                                                                      |
 | `pwa/serviceWorker`                                                                                                                              | Service worker                                | Offline caching and update activation for the game's policy and precache manifest                                                                                                  |
 | `save/`                                                                                                                                          | Pure contracts/store, browser storage adapter | Versioned JSON saves, corrupt-save backup and write protection after unavailable storage or a newer save; `localSaveStorage` wraps localStorage and `memoryStorage` supports tests |
+| `terrain/traversal`                                                                                                                              | Pure                                          | Shared runtime/search terrain stepping, bounded reachability and explicit geometry/budget results                                                                                  |
 | `text/` except `text/phaser/`                                                                                                                    | Pure                                          | BMFont parsing, measurement, fixed-size wrapping, overflow reports and pixel atlas geometry from supplied glyphs                                                                   |
 | `view/fitCheck`, `view/pagePoint`, `view/settleFit`                                                                                              | Pure                                          | Canvas-fit decisions, rotated pointer mapping and bounded layout settling                                                                                                          |
 | `clock/phaser/`, `input/phaser/`, `progress/phaser/`, `text/phaser/`, `view/phaser/`                                                             | Phaser, browser                               | Frame-cap application, input guards, progress drawing, font-cache access and pixel atlas registration, viewport fitting, palette-remapped snapshots and modal backdrop ownership   |
@@ -139,6 +141,14 @@ WORKAROUND: Parent-scoped development overrides pin [KaTeX](https://github.com/a
 - **Pixel fonts:** `text/pixelFont` accepts glyph bits, widths, height, spacing and space width through `PixelFontContext`; it returns atlas geometry and advances. Clients own glyph definitions and text normalization. `text/phaser/registerPixelFont` registers a supplied atlas with the scene using explicit key, colour, size, line height and space advance.
 - **Progress:** `undefined` means an unknown total, drawn as a static centred segment; finite values are clamped from zero to one. `createProgressState` replaces the previous operation on each `begin`; stale handles cannot update or finish its replacement. DOM and Phaser adapters share geometry. Games own visibility, timing and accessible labels; the caller clears Phaser graphics.
 - **Saves:** games own keys, schemas, validation and migration policy. A newer stored version is preserved; a corrupt save is backed up before replacement. Failed storage access disables writes for the session.
+
+## Terrain traversal
+
+`terrain/traversal` exports `stepTraversal(context, input, state)` and `findTraversal(context, request)`. Runtime and search execute the same finite-AABB kernel: immediate horizontal intent, fixed-step gravity/jump/fall, swept solid side/ceiling clipping and moving-solid push/carry. Ledges block only downward relative crossings, without snapping from below. Safe grounding requires full-foot support and body clearance. The goal is a landing envelope or corridor containing the complete body, not a smaller target actor rectangle.
+
+Callers supply resolved pixels/second, absolute seconds, body dimensions/offset, profile, timestep, bounds, drop limit, collision iteration limit and swept-body hazard predicates. `sampleColliders(timeSeconds, dtSeconds, queryBounds)` returns complete swept-entrant coverage with opaque stable owner identities, solid/ledge kinds and before/after rectangles. Ordinary mover endpoints describe the exact discrete tick path even when authored easing is nonlinear; graph movers supply contiguous absolute-time segments. Supply deterministic future samples only when known. Unknown reactive futures return `complete: false`; the kit never projects the whole world. Callers retain self-exclusion, snapshot ordering, cache lifecycle and pursuit policies.
+
+`TraversalBudget` supplies explicit finite `horizonSteps`, `maxStates` and `maxSteps`; `maxCollisionSteps` is explicit in the context. Search returns a replayable `found` witness, `unreachable` only within the exhaustively searched finite domain, `budget-exhausted` when work limits prevent completion, or distinct `geometry-unavailable` for incomplete geometry. Step failures return the original state and no committed segments. Mixed-motion support unions do not establish safe grounding; pushes beyond the sampled domain return `geometry-unavailable`. Revalidate every executed step against current geometry.
 
 ## Manual PWA updates
 
@@ -188,12 +198,12 @@ The kit imports no game code and holds no player text. Only `phaser/` folders im
 
 ## Release artifacts
 
-The public source repository is [andornaut/game-kit](https://github.com/andornaut/game-kit). Version 0.1.0 uses the GitHub release asset `game-kit-0.1.0.tgz`, without npm registry publication. After publication, install the versioned artifact:
+The public source repository is [andornaut/game-kit](https://github.com/andornaut/game-kit). Version 0.2.0 uses the GitHub release asset `game-kit-0.2.0.tgz`, without npm registry publication. After publication, install the versioned artifact:
 
 ```json
 {
   "dependencies": {
-    "@andornaut/game-kit": "https://github.com/andornaut/game-kit/releases/download/v0.1.0/game-kit-0.1.0.tgz"
+    "@andornaut/game-kit": "https://github.com/andornaut/game-kit/releases/download/v0.2.0/game-kit-0.2.0.tgz"
   }
 }
 ```
