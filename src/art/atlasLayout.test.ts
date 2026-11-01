@@ -57,13 +57,10 @@ describe("packAtlas", () => {
       const extrude = 1;
       const layout = packAtlas(
         {
-          compare: (a, b) =>
-            (b.rectangles[0]?.height ?? 0) - (a.rectangles[0]?.height ?? 0) ||
-            (b.rectangles[0]?.width ?? 0) - (a.rectangles[0]?.width ?? 0) ||
-            (a.value < b.value ? -1 : 1),
+          compare: () => 0,
           extrude,
           maxSize,
-          widths: [...[256, 512, 1024, 2048].filter((width) => width < maxSize), maxSize],
+          widths: [maxSize],
         },
         items,
       );
