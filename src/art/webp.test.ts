@@ -39,6 +39,11 @@ describe("the lossless WebP", () => {
     expect(sameRgba(await decodeWebp(await encodeLosslessWebp(image)), image)).toBe(true);
   });
 
+  it("roundtrips a 2048x2032 atlas-sized synthetic image including transparent RGB", async () => {
+    const image = numbered(2048, 2032);
+    expect(sameRgba(await decodeWebp(await encodeLosslessWebp(image)), image)).toBe(true);
+  });
+
   it("writes the same bytes each time", async () => {
     const image = numbered(16, 16);
     const [a, b] = await Promise.all([encodeLosslessWebp(image), encodeLosslessWebp(image)]);
