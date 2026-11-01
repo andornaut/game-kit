@@ -15,7 +15,7 @@ The final consumer distribution is the compiled GitHub release artifact describe
 
 ## Version and interface policy
 
-The source package is version `0.3.1`. `KIT_COMMIT` remains the exact source identity; a version never substitutes for the recorded revision. The explicit `exports` map and exported TypeScript declarations define the public interface. Deep `src/` paths, tests and standalone scripts are private. `build/buildInfo` exposes declarations only through the TypeScript `types` condition; it has no runtime entry.
+The source package is version `0.3.2`. `KIT_COMMIT` remains the exact source identity; a version never substitutes for the recorded revision. The explicit `exports` map and exported TypeScript declarations define the public interface. Deep `src/` paths, tests and standalone scripts are private. `build/buildInfo` exposes declarations only through the TypeScript `types` condition; it has no runtime entry.
 
 Use patch versions for compatible fixes, minor versions for additive public facilities, and a major version for incompatible changes after 1.0. Before 1.0, incompatible changes require a minor version bump and an explicit migration. Preserve existing subpaths with compatibility exports when practical. Update the manifest and root lockfile together; prove both clients against exact revisions before canonical integration. Documentation-only changes do not require a version bump.
 
@@ -156,6 +156,8 @@ Callers supply resolved pixels/second, absolute seconds, body dimensions/offset,
 
 `TraversalBudget` supplies explicit finite `horizonSteps`, `maxStates` and `maxSteps`; `maxCollisionSteps` is explicit in the context. Search returns a replayable `found` witness, `unreachable` only within the exhaustively searched finite domain, `budget-exhausted` when work limits prevent completion, or distinct `geometry-unavailable` for incomplete geometry. Step failures return the original state and no committed segments. Mixed-motion support unions do not establish safe grounding; pushes beyond the sampled domain return `geometry-unavailable`. Revalidate every executed step against current geometry.
 
+Frontier priority combines the horizontal full-body goal gap and any gap below the goal. Zero vertical speed above the goal adds a wrong-height contact cost; ascent adds none. Deeper states win ties. Exact states at different times remain distinct, preserving waits for moving geometry, and ordering adds no geometry or physics calls.
+
 ## Manual PWA updates
 
 `startOfflinePlay(options, page)` accepts `activationPolicy: "manual"`; `createUpdateFlow(container, now, online, reload, show, options?)` accepts the same optional policy. The default remains `"automatic"`. Manual mode never activates a waiting worker or reloads on controller changes before explicit `flow.accept()`. Boot checks and installation still wait up to `bootWaitMs`; activity reporting and arrival/resume check cadence are unchanged.
@@ -204,12 +206,12 @@ The kit imports no game code and holds no player text. Only `phaser/` folders im
 
 ## Release artifacts
 
-The public source repository is [andornaut/game-kit](https://github.com/andornaut/game-kit). Version 0.3.1 uses the GitHub release asset `game-kit-0.3.1.tgz`, without npm registry publication. After publication, install the versioned artifact:
+The public source repository is [andornaut/game-kit](https://github.com/andornaut/game-kit). Version 0.3.2 uses the GitHub release asset `game-kit-0.3.2.tgz`, without npm registry publication. After publication, install the versioned artifact:
 
 ```json
 {
   "dependencies": {
-    "@andornaut/game-kit": "https://github.com/andornaut/game-kit/releases/download/v0.3.1/game-kit-0.3.1.tgz"
+    "@andornaut/game-kit": "https://github.com/andornaut/game-kit/releases/download/v0.3.2/game-kit-0.3.2.tgz"
   }
 }
 ```
