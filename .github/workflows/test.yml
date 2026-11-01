@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - name: Verify in isolated containers
+      - name: Verify source and packed native bootstrap in isolated containers
         run: bash scripts/check.sh
       - name: Build committed release artifacts offline
         run: bash scripts/pack.sh .claude/release-output

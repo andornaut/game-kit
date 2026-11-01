@@ -12,15 +12,21 @@ mkdir -p "$1" "$root/.claude"
 output=$(realpath "$1")
 # CLEANUP (added 2026-11-01): retain snapshots until their release artifacts are verified.
 scratch=$(mktemp -d "$root/.claude/release.XXXXXXXX")
-git -C "$root" archive "$revision" src package.json README.md LICENSE scripts/vendor-manifest.mjs | tar -x -C "$scratch"
+git -C "$root" archive "$revision" | tar -x -C "$scratch"
 printf '%s\n' "$revision" > "$scratch/SOURCE_COMMIT"
+cache=${GAME_KIT_NPM_CACHE:-$root/.claude/npm-cache}
 docker run --rm --read-only --network none --cpus 4 -u "$(id -u):$(id -g)" \
   --mount "type=bind,source=$scratch,target=/package" \
   --mount "type=bind,source=$output,target=/out" \
+  --mount "type=bind,source=$cache,target=/npmcache,readonly" \
   --tmpfs "/tmp:exec,uid=$(id -u),gid=$(id -g)" \
   -e HOME=/tmp -e "SOURCE_DATE_EPOCH=$source_epoch" -e npm_config_cache=/tmp/npm-cache -w /package "$image" sh -ec '
-    node scripts/vendor-manifest.mjs package.json
-    find src -type f -name "*.test.ts" -delete
+    cp -a /npmcache /tmp/npm-cache
+    npm ci --offline --ignore-scripts --no-audit --no-fund
+    mkdir release
+    node scripts/release-build.mjs release
+    cp SOURCE_COMMIT release/SOURCE_COMMIT
+    cd release
     version=$(node -p "JSON.parse(require('\''fs'\'').readFileSync('\''package.json'\'')).version")
     npm pack --offline --ignore-scripts --json --pack-destination /out > /out/pack.json
     mv "/out/andornaut-game-kit-$version.tgz" "/out/game-kit-$version.tgz"

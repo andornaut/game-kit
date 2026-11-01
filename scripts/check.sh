@@ -26,7 +26,10 @@ fingerprint() {
   } | sha256sum
 }
 
+mkdir -p "$check_root/.claude"
 check_before=$(fingerprint)
+# CLEANUP (added 2026-11-01): retain artifact evidence until release review accepts it.
+check_evidence=$(mktemp -d "$check_root/.claude/artifact-check.XXXXXXXX")
 finish() {
   local result=$?
   trap - EXIT
@@ -49,7 +52,9 @@ check_container=(
   docker run --rm --read-only --cpus 4
   -u "$check_uid:$check_gid"
   -e HOME=/tmp -e npm_config_cache=/npmcache
+  -e "WORKERS_CI_COMMIT_SHA=$(git rev-parse HEAD)"
   -v "$check_root:/app:ro" -v "$check_cache:/npmcache"
+  -v "$check_evidence:/evidence" -e GAME_KIT_ARTIFACT_EVIDENCE=/evidence
   -w /app
   --tmpfs "/tmp:exec,uid=$check_uid,gid=$check_gid"
   --tmpfs "/app/node_modules:exec,uid=$check_uid,gid=$check_gid"
@@ -66,4 +71,5 @@ echo 'Checking types, lint and tests offline in a fresh container.'
   npm run check
   npm run lint
   npm test -- --maxWorkers=4
+  node scripts/release-artifact.mjs
 '

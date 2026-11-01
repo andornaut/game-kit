@@ -11,7 +11,7 @@ import { frameSteps } from "@andornaut/game-kit/clock/fixedStep";
 import { seededRandom } from "@andornaut/game-kit/random";
 ```
 
-This is one source package at the repository root, not a compiled distribution. Explicit package exports expose the supported modules and stylesheets; tests are internal. Import individual modules so pure clients do not load an engine adapter. Declare `"@andornaut/game-kit": "file:vendor/game-kit"` in the client's dependencies and install it with the client lockfile. TypeScript, tsx, Vite and Vitest resolve the same explicit package exports. Do not add source aliases: they bypass package encapsulation. Clients retain `noEmit: true` and set `allowImportingTsExtensions: true`; internal source imports include their `.ts` extension for native Node 24 resolution. Internal imports are relative. `KIT_COMMIT`, beside this file in a game's copy, records the exact source commit. Update the canonical game-kit repository, then copy it with `scripts/sync-into.sh`; never edit the vendor copy by hand.
+The final consumer distribution is the compiled GitHub release artifact described below. The repository also supports source-based development snapshots. Explicit package exports expose the supported modules and stylesheets; tests are internal. Import individual modules so pure clients do not load an engine adapter. Install the versioned GitHub tarball URL with the client lockfile. Use `file:vendor/game-kit` only for source-based development snapshots. TypeScript, tsx, Vite and Vitest resolve the same explicit package exports. Do not add source aliases: they bypass package encapsulation. Release exports resolve to JavaScript and declarations. Development source imports use `.ts` extensions and require `allowImportingTsExtensions: true` when type checking. Internal imports are relative. `KIT_COMMIT`, beside this file in a game's copy, records the exact source commit. Update the canonical game-kit repository, then copy it with `scripts/sync-into.sh`; never edit the vendor copy by hand.
 
 ## Version and interface policy
 
@@ -58,7 +58,7 @@ The gate uses Node 24.21.0, at most four CPUs and four Vitest workers. It instal
 | `npm test -- --maxWorkers=4` | Run unit and package contract tests              |
 | `npm run format`             | Format a writable checkout                       |
 
-These npm commands run inside the isolated verification container. The package ships TypeScript source; it has no separate compilation or release-build step.
+These npm commands run inside the isolated verification container. Development snapshots ship TypeScript source. Release packaging emits JavaScript and declarations with `tsconfig.release.json`.
 
 The gate checks pure ECMAScript, browser, service-worker, Phaser and Node environments separately, then the combined source/test project. Negative compilation fixtures reject foreign ambient globals; isolated package fixtures load a pure module without peers and the PNG adapter with only its PNG peer. Renderer adapters require their declared engine peer.
 
@@ -71,7 +71,7 @@ GAME_KIT_NPM_CACHE=/path/to/populated/npm-cache \
 
 The job pins the current kit HEAD and both supplied Git revisions, exports clean snapshots into retained scratch space, installs the exact kit payload, updates only snapshot lock metadata offline, and runs real client type checks, shared Vite bootstrap tests, native tsx imports, CSS resolution and private-path rejection. It never builds or deploys a game and never edits either checkout. Input consumer revisions must already declare the local file dependency. Populate the cache through the projects' existing install process; a missing offline dependency fails the job. Results and exact revision identifiers are retained in the printed `.claude/consumer-check.*` directory. This local Docker job also works in CI when its runner has both repository object stores and the populated cache; it requires no new credentials or remote service.
 
-## Consumer sync
+## Development snapshot sync
 
 ```bash
 scripts/sync-into.sh <game repository or worktree>
@@ -80,7 +80,7 @@ scripts/sync-into.sh --check <game repository or worktree>
 
 Sync exports the committed `src/`, root package metadata, README and licence into `vendor/game-kit/` and writes the exact source revision to `KIT_COMMIT`. It removes obsolete files only within that vendor directory. The vendor payload excludes standalone gate configuration and development tooling. Its generated manifest preserves the root package name, version, exports and peers, but omits development dependencies and scripts, so a local file dependency does not install the kit’s lint tools into a game. The transform is taken from the same recorded revision; there is no second authored manifest. Sync requires Node 24.21.0, Bash, Git, tar and coreutils. `--check` reads the recorded commit and compares the entire payload, including copies made from the nested layout at older revisions. A dirty checkout is not exported.
 
-No registry, account or installation is required for source vendoring. Games retain their `@andornaut/game-kit/*` imports and `vendor/game-kit/src/*` payload layout. Import `gameViteConfig` from `@andornaut/game-kit/build/vite/gameConfig` in `vite.config.ts`; native file-package resolution is available before the configuration loads. Consumers include vendor source/tests in their type/test checks and exclude it from their own formatting/lint gates. Land a canonical commit, then sync that exact revision into each consumer in a separate commit.
+No registry, account or installation is required for source vendoring. Games retain their `@andornaut/game-kit/*` imports and `vendor/game-kit/src/*` payload layout. Import `gameViteConfig` from `@andornaut/game-kit/build/vite/gameConfig` in `vite.config.ts`; compiled package resolution is available before the configuration loads; source snapshots are development-only. Consumers include vendor source/tests in their type/test checks and exclude it from their own formatting/lint gates. Land a canonical commit, then sync that exact revision into each consumer in a separate commit.
 
 ## Modules and environments
 
@@ -130,7 +130,7 @@ Node tooling and the standalone gate target Node 24.21.0. Browser modules need D
 
 ## Integration contracts
 
-- **Build:** `gameViteConfig` expects `pages/`, `public/`, `src/`, `vendor/game-kit/src/` and `package.json`, and writes `dist/`. Import it through the package exports from `vite.config.ts`. It loads the game's configuration module through native package resolution, defines the build globals, and includes both game and kit tests. Games supply pages, plugins, preview host, chunk warning limit and test timeout.
+- **Build:** `gameViteConfig` expects `pages/`, `public/`, `src/` and `package.json`, and writes `dist/`. Its test include list also covers optional development snapshot tests under `vendor/game-kit/src/`; installed release tests are not shipped. Import it through the package exports from `vite.config.ts`. It loads the game's configuration module through native package resolution, defines the build globals, and includes both game and kit tests. Games supply pages, plugins, preview host, chunk warning limit and test timeout.
 - **Motion:** games validate finite coordinates, starts and nonnegative durations. Zero duration changes instantly at its start; infinite query positions select endpoints. Games retain clocks, randomness, movement profiles, physics and collisions. `motion/Point` is a compatibility type export of the same immutable point contract as `rect/Point`.
 - **Progress:** `undefined` means an unknown total, drawn as a static centred segment; finite values are clamped from zero to one. `createProgressState` replaces the previous operation on each `begin`; stale handles cannot update or finish its replacement. DOM and Phaser adapters share geometry. Games own visibility, timing and accessible labels; the caller clears Phaser graphics.
 - **Saves:** games own keys, schemas, validation and migration policy. A newer stored version is preserved; a corrupt save is backed up before replacement. Failed storage access disables writes for the session.
@@ -182,4 +182,4 @@ The public source repository is [andornaut/game-kit](https://github.com/andornau
 
 Commit the consumer lockfile so the exact URL and integrity are recorded. Public imports remain `@andornaut/game-kit/<path>`; Node 24.21.0, TypeScript, Vite and test runners resolve the installed package through its explicit exports. No client source alias is required. Existing source-sync scripts remain available for isolated development snapshots.
 
-`bash scripts/pack.sh <output-directory>` builds the committed revision in an isolated offline container. It writes the npm-compatible archive, `SHA256SUMS` and `SOURCE_COMMIT`; the archive carries the same provenance file. It includes runtime source, public metadata, README and licence, without standalone development dependencies or scripts. The source CI checks the library and uploads these reviewable artifacts without publishing a release. Publish an immutable version tag only after CI is green for that exact main commit.
+`bash scripts/pack.sh <output-directory>` builds the committed revision in an isolated offline container. It writes the npm-compatible archive, `SHA256SUMS` and `SOURCE_COMMIT`; the archive carries the same provenance file. It includes emitted JavaScript, declarations, CSS, public metadata, README and licence, without TypeScript runtime source, tests, standalone development dependencies or scripts. Release exports preserve every explicit subpath; `build/buildInfo` remains type-only. Node cannot strip TypeScript inside `node_modules`. The gate tests the actual packed artifact there, including native Vite configuration bootstrap. The source CI checks the library and uploads these reviewable artifacts without publishing a release. Publish an immutable version tag only after CI is green for that exact main commit.
