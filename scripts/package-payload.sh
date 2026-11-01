@@ -7,6 +7,13 @@ export_package_payload() {
     git -C "$repository" archive "$revision" kit/ | tar -x --strip-components=1 -C "$destination"
   else
     git -C "$repository" archive "$revision" src/ package.json README.md LICENSE | tar -x -C "$destination"
+    if git -C "$repository" cat-file -e "$revision:scripts/vendor-manifest.mjs" 2>/dev/null; then
+      local transform
+      transform=$(mktemp)
+      git -C "$repository" show "$revision:scripts/vendor-manifest.mjs" >"$transform"
+      node --input-type=module - "$destination/package.json" <"$transform"
+      find "$transform" -delete
+    fi
   fi
 }
 

@@ -18,6 +18,10 @@ it("syncs committed root payloads, removes obsolete files and checks older neste
     join(repo, "scripts/package-payload.sh"),
     readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "package-payload.sh")),
   );
+  writeFileSync(
+    join(repo, "scripts/vendor-manifest.mjs"),
+    readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "vendor-manifest.mjs")),
+  );
   const git = (...args: string[]) =>
     execFileSync("git", ["-C", repo, ...args], { encoding: "utf8" }).trim();
   git("init", "-q");
@@ -26,7 +30,8 @@ it("syncs committed root payloads, removes obsolete files and checks older neste
   for (const base of ["kit/", ""]) {
     mkdirSync(join(repo, base, "src"), { recursive: true });
     for (const [file, content] of Object.entries({
-      "package.json": '{"name":"@andornaut/game-kit"}\n',
+      "package.json":
+        '{"name":"@andornaut/game-kit","devDependencies":{"unused":"1"},"scripts":{"test":"private"}}\n',
       "README.md": "# Package\n",
       LICENSE: "MIT\n",
       "src/value.ts": "export const value = 1;\n",
@@ -48,6 +53,9 @@ it("syncs committed root payloads, removes obsolete files and checks older neste
   expect(readFileSync(join(game, "vendor/game-kit/KIT_COMMIT"), "utf8").trim()).toBe(
     git("rev-parse", "HEAD"),
   );
+  const manifest = JSON.parse(readFileSync(join(game, "vendor/game-kit/package.json"), "utf8"));
+  expect(manifest.devDependencies).toBeUndefined();
+  expect(manifest.scripts).toBeUndefined();
   writeFileSync(join(game, "outside.txt"), "keep");
   writeFileSync(join(game, "vendor/game-kit/src/value.ts"), "changed");
   expect(() =>
