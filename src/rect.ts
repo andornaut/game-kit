@@ -1,4 +1,4 @@
-// A position in screen pixels.
+// A position in the caller's coordinate units.
 export interface Point {
   readonly x: number;
   readonly y: number;

@@ -1,13 +1,11 @@
 import { clamp01 } from "./numbers";
+import type { Point } from "./rect";
+
+export type { Point } from "./rect";
 
 export type Easing = "linear" | "sineInOut";
 
 // Coordinates use the caller's units, independently on each axis.
-export interface Point {
-  readonly x: number;
-  readonly y: number;
-}
-
 // Start and duration use the same progress unit, such as seconds or road scroll.
 export interface Segment {
   readonly duration: number;

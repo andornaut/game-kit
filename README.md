@@ -15,7 +15,7 @@ This is one source package at the repository root, not a compiled distribution. 
 
 ## Version and interface policy
 
-The source package is version `0.2.0`. `KIT_COMMIT` remains the exact source identity; a version never substitutes for the recorded revision. The explicit `exports` map and exported TypeScript declarations define the public interface. Deep `src/` paths, tests and standalone scripts are private. `build/buildInfo` exposes declarations only through the TypeScript `types` condition; it has no runtime entry.
+The source package is version `0.2.1`. `KIT_COMMIT` remains the exact source identity; a version never substitutes for the recorded revision. The explicit `exports` map and exported TypeScript declarations define the public interface. Deep `src/` paths, tests and standalone scripts are private. `build/buildInfo` exposes declarations only through the TypeScript `types` condition; it has no runtime entry.
 
 Use patch versions for compatible fixes, minor versions for additive public facilities, and a major version for incompatible changes after 1.0. Before 1.0, incompatible changes require a minor version bump and an explicit migration. Preserve existing subpaths with compatibility exports when practical. Update the manifest and root lockfile together; prove both clients against exact revisions before canonical integration. Documentation-only changes do not require a version bump.
 
@@ -49,7 +49,7 @@ Every module belongs to this package. `phaser/`, `dom/` and `vite/` subdirectori
 bash scripts/check.sh
 ```
 
-The gate uses Node 24.21.0, at most four CPUs and four Vitest workers. It installs into container tmpfs from the repository-local npm cache, then checks types, formatting, lint and tests without network access. The checkout is read-only and source fingerprints must remain stable. CI invokes the same script. Start below one-minute load 24.
+The gate uses Node 24.21.0, at most four CPUs and four Vitest workers. It installs into container tmpfs from the repository-local npm cache, then checks types, formatting, lint and tests without network access. The checkout is read-only and source fingerprints must remain stable. CI invokes the same script. Start below one-minute load 24. Both verification jobs use the same fail-closed load check and derive their container image from the root `.nvmrc`.
 
 | Command                      | Purpose                                          |
 | ---------------------------- | ------------------------------------------------ |
@@ -131,7 +131,7 @@ Node tooling and the standalone gate target Node 24.21.0. Browser modules need D
 ## Integration contracts
 
 - **Build:** `gameViteConfig` expects `pages/`, `public/`, `src/`, `vendor/game-kit/src/` and `package.json`, and writes `dist/`. Import it through the package exports from `vite.config.ts`. It loads the game's configuration module through native package resolution, defines the build globals, and includes both game and kit tests. Games supply pages, plugins, preview host, chunk warning limit and test timeout.
-- **Motion:** games validate finite coordinates, starts and nonnegative durations. Zero duration changes instantly at its start; infinite query positions select endpoints. Games retain clocks, randomness, movement profiles, physics and collisions.
+- **Motion:** games validate finite coordinates, starts and nonnegative durations. Zero duration changes instantly at its start; infinite query positions select endpoints. Games retain clocks, randomness, movement profiles, physics and collisions. `motion/Point` is a compatibility type export of the same immutable point contract as `rect/Point`.
 - **Progress:** `undefined` means an unknown total, drawn as a static centred segment; finite values are clamped from zero to one. `createProgressState` replaces the previous operation on each `begin`; stale handles cannot update or finish its replacement. DOM and Phaser adapters share geometry. Games own visibility, timing and accessible labels; the caller clears Phaser graphics.
 - **Saves:** games own keys, schemas, validation and migration policy. A newer stored version is preserved; a corrupt save is backed up before replacement. Failed storage access disables writes for the session.
 
