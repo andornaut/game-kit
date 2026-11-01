@@ -15,7 +15,7 @@ The final consumer distribution is the compiled GitHub release artifact describe
 
 ## Version and interface policy
 
-The source package is version `0.0.1`. `KIT_COMMIT` remains the exact source identity; a version never substitutes for the recorded revision. The explicit `exports` map and exported TypeScript declarations define the public interface. Deep `src/` paths, tests and standalone scripts are private. `build/buildInfo` exposes declarations only through the TypeScript `types` condition; it has no runtime entry.
+The source package is version `0.1.0`. `KIT_COMMIT` remains the exact source identity; a version never substitutes for the recorded revision. The explicit `exports` map and exported TypeScript declarations define the public interface. Deep `src/` paths, tests and standalone scripts are private. `build/buildInfo` exposes declarations only through the TypeScript `types` condition; it has no runtime entry.
 
 Use patch versions for compatible fixes, minor versions for additive public facilities, and a major version for incompatible changes after 1.0. Before 1.0, incompatible changes require a minor version bump and an explicit migration. Preserve existing subpaths with compatibility exports when practical. Update the manifest and root lockfile together; prove both clients against exact revisions before canonical integration. Documentation-only changes do not require a version bump.
 
@@ -140,6 +140,19 @@ WORKAROUND: Parent-scoped development overrides pin [KaTeX](https://github.com/a
 - **Progress:** `undefined` means an unknown total, drawn as a static centred segment; finite values are clamped from zero to one. `createProgressState` replaces the previous operation on each `begin`; stale handles cannot update or finish its replacement. DOM and Phaser adapters share geometry. Games own visibility, timing and accessible labels; the caller clears Phaser graphics.
 - **Saves:** games own keys, schemas, validation and migration policy. A newer stored version is preserved; a corrupt save is backed up before replacement. Failed storage access disables writes for the session.
 
+## Manual PWA updates
+
+`startOfflinePlay(options, page)` accepts `activationPolicy: "manual"`; `createUpdateFlow(container, now, online, reload, show, options?)` accepts the same optional policy. The default remains `"automatic"`. Manual mode never activates a waiting worker or reloads on controller changes before explicit `flow.accept()`. Boot checks and installation still wait up to `bootWaitMs`; activity reporting and arrival/resume check cadence are unchanged.
+
+Keep registration readiness separate from offer eligibility:
+
+- Call `play.setRegistrationReady(true)` at the client's first safe install point: Dog's first Start arrival or Chibi's first prepared zone frame. Controlled pages register immediately; first installs register once readiness is true.
+- Call `play.setOfferVisible(visible)` for offer eligibility. It never registers a worker or clears dismissal.
+- Call `play.flow.beginOfferVisit()` when creating a new offer visit, such as Dog's Start scene creation. Pause/resume and temporary visibility changes do not begin a visit.
+- Call `play.flow.dismissOffer()` for Cancel. It suppresses offers until the next `beginOfferVisit()`, retaining the waiting worker across visibility changes and update checks.
+
+The explicit Update now action calls `flow.accept()`: activate the waiting worker and reload once it takes control, or reload immediately when none is waiting (including a newer-save fallback offer). Repeated acceptance while reloading does nothing. Legacy `setOnHome()` combines registration readiness and eligibility, resetting dismissal on a false-to-true arrival. Do not use it for clients with independent visit lifecycles.
+
 ## Engine and client contract
 
 The kit provides mechanisms, not game policy. Clients own scene creation, clocks, content, strings, palettes, dimensions, schemas, tuning, randomness, physics, collisions and persistence keys. Pure modules accept explicit data and return values; browser and renderer adapters own only the resources specified by their interfaces. Clients mount and dispose adapters at their lifecycle boundaries. `followFrameTurn` returns an idempotent disposer and also disposes on game destruction: it stops fitting, removes its listeners and observer, and restores only method wrappers it still owns. The page retains ownership of its frame-turn watch and CSS properties.
@@ -175,12 +188,12 @@ The kit imports no game code and holds no player text. Only `phaser/` folders im
 
 ## Release artifacts
 
-The public source repository is [andornaut/game-kit](https://github.com/andornaut/game-kit). Version 0.0.1 is distributed as the GitHub release asset `game-kit-0.0.1.tgz`, without npm registry publication:
+The public source repository is [andornaut/game-kit](https://github.com/andornaut/game-kit). Version 0.1.0 uses the GitHub release asset `game-kit-0.1.0.tgz`, without npm registry publication. After publication, install the versioned artifact:
 
 ```json
 {
   "dependencies": {
-    "@andornaut/game-kit": "https://github.com/andornaut/game-kit/releases/download/v0.0.1/game-kit-0.0.1.tgz"
+    "@andornaut/game-kit": "https://github.com/andornaut/game-kit/releases/download/v0.1.0/game-kit-0.1.0.tgz"
   }
 }
 ```
