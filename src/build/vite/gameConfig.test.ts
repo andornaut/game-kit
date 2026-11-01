@@ -81,11 +81,7 @@ describe("gameViteConfig", () => {
     ["answers the preview host", (built) => built.preview?.allowedHosts, ["game-preview"]],
     ["answers the dev host", (built) => built.server?.allowedHosts, ["game-preview"]],
     ["warns past the chunk limit", (built) => built.build?.chunkSizeWarningLimit, 1100],
-    [
-      "tests the kit and the game",
-      (built) => built.test?.include,
-      ["vendor/game-kit/src/**/*.test.ts", "src/**/*.test.ts"],
-    ],
+    ["runs only game-owned tests", (built) => built.test?.include, ["src/**/*.test.ts"]],
     ["gives each test its time", (built) => built.test?.testTimeout, 30_000],
   ])("%s", (_case, read, expected) => {
     expect(read(config)).toEqual(expected);

@@ -9,8 +9,8 @@
 //
 // The game's repository is laid out as: pages/ (Vite's root; each HTML page's path under it is its
 // URL, and pages load modules as /src/...), public/ (copied as is), src/, and package.json
-// (its version is __APP_VERSION__). The build writes dist/. Source development snapshots
-// may also supply tests under vendor/game-kit/src/.
+// (its version is __APP_VERSION__). The build writes dist/. Games run only their own tests;
+// library implementation and contract tests run in the canonical library repository.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -96,7 +96,7 @@ export async function gameViteConfig<Modules>(
     },
     test: {
       environment: "node",
-      include: ["vendor/game-kit/src/**/*.test.ts", "src/**/*.test.ts"],
+      include: ["src/**/*.test.ts"],
       root: repoPath("."),
       testTimeout: options.testTimeout,
     },

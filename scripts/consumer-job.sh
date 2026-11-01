@@ -18,8 +18,18 @@ for game in dog duck; do
     npm install --package-lock-only --offline --ignore-scripts --no-audit --no-fund
     npm ci --offline --ignore-scripts --no-audit --no-fund
     npm run check
-    node_modules/.bin/vitest run vendor/game-kit/src/build/vite/gameConfig.test.ts --maxWorkers=4
-    node_modules/.bin/tsx --eval 'import {seededRandom} from "@andornaut/game-kit/random"; import {createProgressState} from "@andornaut/game-kit/progressState"; createProgressState().begin().finish(); if(typeof seededRandom(1)()!=="number")throw new Error("Native tsx import failed");'
+    # Bootstrap the real client configuration without executing library tests in the game.
+    node --input-type=module <<'JS'
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { loadConfigFromFile } from 'vite';
+const loaded = await loadConfigFromFile(
+  { command: 'build', mode: 'test' }, undefined, process.cwd(), 'silent', undefined, 'native');
+assert(loaded, 'Client Vite configuration did not load');
+const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
+assert.equal(loaded.config.define?.__APP_VERSION__, JSON.stringify(version));
+JS
+    node_modules/.bin/tsx --eval 'import "@andornaut/game-kit/random"; import "@andornaut/game-kit/progressState";'
     node -e 'const r=require("node:module").createRequire(process.cwd()+"/package.json");r.resolve("@andornaut/game-kit/view/frameTurnPortraitGame.css");try{r.resolve("@andornaut/game-kit/src/random.ts");throw new Error("Private source exposed")}catch(e){if(e.code!=="ERR_PACKAGE_PATH_NOT_EXPORTED")throw e}'
   ) >"/scratch/$game.log" 2>&1
   echo "$game type/package checks passed at $revision with kit $kit_revision"
