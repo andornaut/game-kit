@@ -1,4 +1,4 @@
-import type { Point, Rect } from "../rect";
+import type { Point, Rect } from "../rect.ts";
 
 export interface TraversalMotionSegment {
   readonly startSeconds: number;

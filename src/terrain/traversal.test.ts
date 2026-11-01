@@ -83,6 +83,7 @@ describe("terrain traversal", () => {
     const result = stepTraversal(c, { jump: false, move: 0, timeSeconds: 4 }, start);
     expect(result.status).toBe("ok");
     expect(result.state.x).toBeCloseTo(0);
+    expect(Math.max(...result.segments.map((segment) => segment.to.x))).toBeCloseTo(2);
     expect(result.state.y).toBeCloseTo(4);
     expect(result.state.grounded).toBe(true);
   });
@@ -102,7 +103,7 @@ describe("terrain traversal", () => {
       { ...input, move: 0 },
       start,
     );
-    expect(crushed.status).not.toBe("ok");
+    expect(crushed.status).toBe("blocked");
     expect(crushed.state).toBe(start);
     expect(crushed.segments).toEqual([]);
   });
