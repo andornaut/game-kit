@@ -8,11 +8,12 @@
     "node": ">=24.21.0"
   },
   "scripts": {
-    "check": "tsc",
+    "check": "tsc && tsc -p tsconfig.pure.json && tsc -p tsconfig.browser.json && tsc -p tsconfig.worker.json && tsc -p tsconfig.phaser.json && tsc -p tsconfig.node.json",
     "format": "prettier --write . && eslint --fix .",
     "lint": "prettier --check . && eslint --max-warnings 0 . && markdownlint-cli2",
     "test": "vitest run",
-    "verify": "bash scripts/check.sh"
+    "verify": "bash scripts/check.sh",
+    "check:consumers": "bash scripts/check-consumers.sh"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -33,7 +34,7 @@
     "vite": "^8.3.5",
     "vitest": "^5.0.5"
   },
-  "version": "0.0.1",
+  "version": "0.1.0",
   "peerDependencies": {
     "@jsquash/webp": "1.5.0",
     "@types/node": "^24.19.2",
@@ -110,9 +111,10 @@
     "./motion": "./src/motion.ts",
     "./numbers": "./src/numbers.ts",
     "./opaqueBounds": "./src/opaqueBounds.ts",
+    "./package.json": "./package.json",
+    "./progress": "./src/progress.ts",
     "./progress/dom/progressBar": "./src/progress/dom/progressBar.ts",
     "./progress/phaser/drawProgressBar": "./src/progress/phaser/drawProgressBar.ts",
-    "./progress": "./src/progress.ts",
     "./progressState": "./src/progressState.ts",
     "./pwa/appWindow": "./src/pwa/appWindow.ts",
     "./pwa/backNavigation": "./src/pwa/backNavigation.ts",
@@ -136,6 +138,7 @@
     "./records": "./src/records.ts",
     "./rect": "./src/rect.ts",
     "./rgba": "./src/rgba.ts",
+    "./save/contracts": "./src/save/contracts.ts",
     "./save/saveStore": "./src/save/saveStore.ts",
     "./save/storage": "./src/save/storage.ts",
     "./save/versionedSave": "./src/save/versionedSave.ts",
@@ -154,7 +157,6 @@
     "./view/phaser/followFrameTurn": "./src/view/phaser/followFrameTurn.ts",
     "./view/phaser/modalBackdrop": "./src/view/phaser/modalBackdrop.ts",
     "./view/phaser/snapshotRemap": "./src/view/phaser/snapshotRemap.ts",
-    "./view/settleFit": "./src/view/settleFit.ts",
-    "./package.json": "./package.json"
+    "./view/settleFit": "./src/view/settleFit.ts"
   }
 }

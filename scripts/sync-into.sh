@@ -37,15 +37,7 @@ vendor="$(cd "$game" && pwd)/vendor/game-kit"
 scratch=$(mktemp -d)
 trap 'find "$scratch" -depth -delete' EXIT
 
-# Export the package payload, including commits with the nested source layout.
-export_kit() {
-  mkdir -p "$scratch/kit"
-  if git -C "$kit_repo" cat-file -e "$1:kit/package.json" 2>/dev/null; then
-    git -C "$kit_repo" archive "$1" kit/ | tar -x --strip-components=1 -C "$scratch/kit"
-  else
-    git -C "$kit_repo" archive "$1" src/ package.json README.md LICENSE | tar -x -C "$scratch/kit"
-  fi
-}
+. "$kit_repo/scripts/package-payload.sh"
 
 if $check; then
   if [ ! -f "$vendor/KIT_COMMIT" ]; then
@@ -57,7 +49,7 @@ if $check; then
     echo "KIT_COMMIT $commit is not a commit in $kit_repo" >&2
     exit 1
   fi
-  export_kit "$commit"
+  export_package_payload "$kit_repo" "$commit" "$scratch/kit"
   echo "$commit" >"$scratch/kit/KIT_COMMIT"
   if diff -r "$scratch/kit" "$vendor"; then
     echo "$vendor matches game-kit $commit"
@@ -72,11 +64,6 @@ if [ -n "$(git -C "$kit_repo" status --porcelain -- src package.json README.md L
   echo "The package has uncommitted changes; the sync copies HEAD." >&2
 fi
 commit=$(git -C "$kit_repo" rev-parse HEAD)
-export_kit "$commit"
-mkdir -p "$vendor"
-# Replace only this package's payload, preserving its revision marker until copying succeeds.
-[ ! -L "$vendor" ] || { echo "Refusing a symlink vendor directory: $vendor" >&2; exit 1; }
-find "$vendor" -depth -mindepth 1 ! -path "$vendor/KIT_COMMIT" -delete
-cp -a "$scratch/kit/." "$vendor/"
-echo "$commit" >"$vendor/KIT_COMMIT"
+export_package_payload "$kit_repo" "$commit" "$scratch/kit"
+install_package_payload "$scratch/kit" "$commit" "$vendor"
 echo "Copied game-kit $commit into $vendor"

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,7 +10,7 @@ import { PHASER_ENTRY_ID } from "../phaserBuild";
 import { gameViteConfig } from "./gameConfig";
 
 // A game's repository, laid out as gameViteConfig expects, whose config module imports the kit
-// by its alias.
+// through its package exports.
 const repo = mkdtempSync(join(tmpdir(), "game-config-"));
 afterAll(() => rmSync(repo, { force: true, recursive: true }));
 
@@ -25,6 +25,16 @@ const plugin: PluginOption = { name: "game-plugin" };
 beforeAll(async () => {
   mkdirSync(join(repo, "vendor/game-kit/src"), { recursive: true });
   mkdirSync(join(repo, "src/tools"), { recursive: true });
+  mkdirSync(join(repo, "node_modules/@andornaut"), { recursive: true });
+  writeFileSync(
+    join(repo, "vendor/game-kit/package.json"),
+    JSON.stringify({
+      exports: { "./marker": "./src/marker.ts" },
+      name: "@andornaut/game-kit",
+      type: "module",
+    }),
+  );
+  symlinkSync("../../vendor/game-kit", join(repo, "node_modules/@andornaut/game-kit"));
   writeFileSync(join(repo, "package.json"), JSON.stringify({ version: "1.2.3" }));
   writeFileSync(join(repo, "vendor/game-kit/src/marker.ts"), 'export const MARKER = "kit";\n');
   writeFileSync(
@@ -47,7 +57,7 @@ beforeAll(async () => {
 }, 30_000);
 
 describe("gameViteConfig", () => {
-  it("loads the game's plugins from its config module, given the kit's alias", () => {
+  it("loads the game's plugins from its config module, through the installed package", () => {
     // The module runner gives a module namespace, so its export is compared, not the object.
     expect([seen.modules?.marker, seen.repoPath]).toEqual(["kit", join(repo, "x")]);
     expect(config.plugins).toEqual([plugin]);
@@ -63,9 +73,9 @@ describe("gameViteConfig", () => {
       { main: join(repo, "pages/index.html"), play: join(repo, "pages/play/index.html") },
     ],
     [
-      "aliases /src and the kit",
+      "aliases only the game source",
       (built) => built.resolve?.alias,
-      { "/src": join(repo, "src"), "@andornaut/game-kit": join(repo, "vendor/game-kit/src") },
+      { "/src": join(repo, "src") },
     ],
     ["names the package's version", (built) => built.define?.__APP_VERSION__, '"1.2.3"'],
     ["answers the preview host", (built) => built.preview?.allowedHosts, ["game-preview"]],

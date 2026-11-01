@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": []
+  },
+  "files": [
+    "src/clock/phaser/capFrameRate.ts",
+    "src/input/phaser/catchOutsideTaps.ts",
+    "src/input/phaser/guardSceneInput.ts",
+    "src/progress/phaser/drawProgressBar.ts",
+    "src/text/phaser/phaserBitmapFont.ts",
+    "src/view/phaser/followFrameTurn.ts",
+    "src/view/phaser/modalBackdrop.ts",
+    "src/view/phaser/snapshotRemap.ts"
+  ]
+}

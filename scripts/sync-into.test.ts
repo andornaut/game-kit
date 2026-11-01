@@ -14,6 +14,10 @@ it("syncs committed root payloads, removes obsolete files and checks older neste
   mkdirSync(join(repo, "scripts"), { recursive: true });
   mkdirSync(game);
   writeFileSync(join(repo, "scripts/sync-into.sh"), script);
+  writeFileSync(
+    join(repo, "scripts/package-payload.sh"),
+    readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "package-payload.sh")),
+  );
   const git = (...args: string[]) =>
     execFileSync("git", ["-C", repo, ...args], { encoding: "utf8" }).trim();
   git("init", "-q");

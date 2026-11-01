@@ -32,7 +32,7 @@ interface WorkerScope {
   addEventListener(type: "activate" | "install", listener: (event: LifecycleEvent) => void): void;
   addEventListener(type: "fetch", listener: (event: FetchRequestEvent) => void): void;
   addEventListener(type: "message", listener: (event: MessageEvent) => void): void;
-  readonly location: Location;
+  readonly location: { readonly href: string; readonly origin: string };
   skipWaiting(): Promise<void>;
 }
 

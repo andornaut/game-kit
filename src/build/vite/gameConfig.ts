@@ -1,13 +1,11 @@
 // A game's whole Vite and Vitest config, for its vite.config.ts to export:
 //
 //   import type * as ConfigModules from "./src/tools/viteConfigModules";
-//   import { gameViteConfig } from "./vendor/game-kit/src/build/vite/gameConfig";
+//   import { gameViteConfig } from "@andornaut/game-kit/build/vite/gameConfig";
 //   export default gameViteConfig<typeof ConfigModules>({ ... });
 //
-// Vite bundles vite.config.ts without the config's own resolve.alias, so the config imports this
-// module by its path under vendor/game-kit/ (it and the kit modules it imports use relative paths,
-// Vite and Node only), and the game's plugins, whose code imports the kit as @andornaut/game-kit,
-// load from configModules through a Vite module runner given that alias.
+// The game installs this source package as file:vendor/game-kit. Vite and its module runner
+// resolve the same explicit package exports before and after loading the config.
 //
 // The game's repository is laid out as: pages/ (Vite's root; each HTML page's path under it is its
 // URL, and pages load modules as /src/...), public/ (copied as is), src/, vendor/game-kit/src/,
@@ -49,12 +47,10 @@ export async function gameViteConfig<Modules>(
   // An absolute path in the repository. Vite resolves relative paths against root, which is
   // pages/, so every path goes through here instead.
   const repoPath = (path: string) => resolve(options.repoRoot, path);
-  const kitAlias = { "@andornaut/game-kit": repoPath("vendor/game-kit/src") };
   // configFile: false, so the runner resolves its own config from these options alone rather than
   // loading vite.config.ts, which calls this function, again.
   const { module } = await runnerImport<Modules>(repoPath(options.configModules), {
     configFile: false,
-    resolve: { alias: kitAlias },
   });
   const packageVersion: string = JSON.parse(readFileSync(repoPath("package.json"), "utf8")).version;
   const hosts = options.previewHost === undefined ? [] : [options.previewHost];
@@ -90,7 +86,7 @@ export async function gameViteConfig<Modules>(
     publicDir: repoPath("public"),
     // The pages load their modules as /src/..., which names the repository's src/ rather than
     // pages/src/.
-    resolve: { alias: { "/src": repoPath("src"), ...kitAlias } },
+    resolve: { alias: { "/src": repoPath("src") } },
     root: repoPath("pages"),
     server: {
       allowedHosts: hosts,

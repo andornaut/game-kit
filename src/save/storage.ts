@@ -1,9 +1,8 @@
 // Key-value storage for saves, as promises: a read or write that throws (private mode, quota,
 // blocked site data) becomes a rejected promise, which saveStore reports as unavailable.
-export interface SaveStorage {
-  read(key: string): Promise<string | null>;
-  write(key: string, value: string): Promise<void>;
-}
+import type { SaveStorage } from "./contracts";
+
+export type { SaveStorage } from "./contracts";
 
 export type StorageLike = Pick<Storage, "getItem" | "setItem">;
 

@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["node"]
+  },
+  "files": [
+    "src/art/png.ts",
+    "src/art/webp.ts",
+    "src/build/buildVersion.ts",
+    "src/build/contentHash.ts",
+    "src/build/phaserBuild.ts",
+    "src/build/phaserUses.ts",
+    "src/build/vite/gameConfig.ts",
+    "src/build/vite/phaserBuildPlugin.ts",
+    "src/headers/vite/securityHeadersPlugin.ts",
+    "src/pwa/vite/hashedIconsPlugin.ts",
+    "src/pwa/vite/precachePlugin.ts"
+  ]
+}

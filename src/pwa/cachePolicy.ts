@@ -29,7 +29,11 @@ export function isHashedAssetUrl(policy: CachePolicy, url: string): boolean {
 // its name, so the HTTP cache may answer with the copy the page just loaded. Every other URL can,
 // so no-cache has the server confirm the HTTP cache's copy, or send the new one, before it is
 // stored.
-export function precacheFetchOptions(policy: CachePolicy, url: string): RequestInit {
+export interface PrecacheFetchOptions {
+  readonly cache: "default" | "no-cache";
+}
+
+export function precacheFetchOptions(policy: CachePolicy, url: string): PrecacheFetchOptions {
   return { cache: isHashedAssetUrl(policy, url) ? "default" : "no-cache" };
 }
 
