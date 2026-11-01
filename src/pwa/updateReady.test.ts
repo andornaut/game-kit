@@ -13,6 +13,7 @@ import {
   type ServiceWorkerLike,
   SKIP_WAITING_MESSAGE,
   updateAction,
+  type UpdateFlowOptions,
   type UpdateState,
 } from "./updateReady.ts";
 
@@ -220,7 +221,11 @@ describe("activateWaitingWorker", () => {
 });
 
 describe("createUpdateFlow", () => {
-  const setup = ({ controller = RUNNING_WORKER as unknown, online = true } = {}) => {
+  const setup = ({
+    activationPolicy = "automatic",
+    controller = RUNNING_WORKER as unknown,
+    online = true,
+  }: UpdateFlowOptions & { controller?: unknown; online?: boolean } = {}) => {
     const container = new FakeContainer(controller);
     const reload = vi.fn();
     const shown: boolean[] = [];
@@ -231,6 +236,7 @@ describe("createUpdateFlow", () => {
       () => online,
       reload,
       (visible) => shown.push(visible),
+      { activationPolicy },
     );
     let booted = false;
     void flow.bootable.then(() => {
@@ -238,6 +244,88 @@ describe("createUpdateFlow", () => {
     });
     return { booted: () => booted, clock, container, flow, reload, shown };
   };
+
+  it("requires explicit manual acceptance before input and ignores unrelated controller changes", async () => {
+    const { booted, container, flow, reload, shown } = setup({ activationPolicy: "manual" });
+    const registration = new FakeRegistration();
+    const worker = registration.finishInstall();
+    flow.watch(registration);
+    flow.beginOfferVisit();
+    flow.setOfferVisible(true);
+    flow.endBootWait();
+    container.takeOver();
+    await settle();
+    expect(booted()).toBe(true);
+    expect(shown).toEqual([true]);
+    expect(worker.messages).toEqual([]);
+    expect(reload).not.toHaveBeenCalled();
+    flow.accept();
+    flow.accept();
+    expect(worker.messages).toEqual([SKIP_WAITING_MESSAGE]);
+    container.takeOver();
+    container.takeOver();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves manual boot timing while checking and installing without implicit activation", async () => {
+    const { booted, flow } = setup({ activationPolicy: "manual" });
+    const registration = new FakeRegistration(true);
+    flow.watch(registration);
+    await settle();
+    expect(booted()).toBe(false);
+    flow.endBootWait();
+    await settle();
+    expect(booted()).toBe(true);
+    expect(registration.finishInstall().messages).toEqual([]);
+    flow.noteInteraction();
+    flow.setOfferVisible(true);
+    expect(registration.waiting?.messages).toEqual([]);
+  });
+
+  it("retains dismissal through hidden and resumed offers and replacement workers until a new visit", () => {
+    const { flow, shown } = setup({ activationPolicy: "manual" });
+    const registration = new FakeRegistration();
+    const first = registration.finishInstall();
+    flow.watch(registration);
+    flow.beginOfferVisit();
+    flow.setOfferVisible(true);
+    flow.dismissOffer();
+    flow.setOfferVisible(true);
+    flow.setOfferVisible(false);
+    flow.setOfferVisible(true);
+    registration.startInstall();
+    const replacement = registration.finishInstall();
+    flow.setOfferVisible(false);
+    flow.beginOfferVisit();
+    expect(shown).toEqual([true, false]);
+    flow.setOfferVisible(true);
+    expect(shown).toEqual([true, false, true]);
+    expect(first.messages).toEqual([]);
+    flow.accept();
+    expect(replacement.messages).toEqual([SKIP_WAITING_MESSAGE]);
+  });
+
+  it("resets legacy dismissal on an actual home arrival only", () => {
+    const { flow, shown } = setup({ activationPolicy: "manual" });
+    const registration = new FakeRegistration();
+    registration.finishInstall();
+    flow.watch(registration);
+    flow.setOnHome(true);
+    flow.dismissOffer();
+    flow.setOnHome(true);
+    expect(shown).toEqual([true, false]);
+    flow.setOnHome(false);
+    flow.setOnHome(true);
+    expect(shown).toEqual([true, false, true]);
+  });
+
+  it("keeps explicit no-worker reload idempotent under manual activation", () => {
+    const { flow, reload } = setup({ activationPolicy: "manual" });
+    flow.dismissOffer();
+    flow.accept();
+    flow.accept();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
 
   // Before watch: a controlled page waits for its check, a first visit has nothing to wait for.
   it("before watching, waits to boot only a controlled page", async () => {

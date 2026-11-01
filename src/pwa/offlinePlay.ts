@@ -1,10 +1,10 @@
 import {
   type ContainerLike,
   createUpdateFlow,
-  registerWhenDue,
   type RegistrationLike,
   type ServiceWorkerLike,
   type UpdateFlow,
+  type UpdateFlowOptions,
 } from "./updateReady.ts";
 import { watchVisibility } from "./visibility.ts";
 import type { VisibilitySource } from "./wakeLock.ts";
@@ -14,7 +14,7 @@ export const INTERACTION_EVENTS = ["keydown", "pointerdown"] as const;
 
 export type OfflineActivity = "idle" | "installing" | "registering";
 
-export interface OfflinePlayOptions {
+export interface OfflinePlayOptions extends UpdateFlowOptions {
   // How long a fresh load holds the first screen and the save for a newer version to be checked
   // for and installed, so it reloads into that version before the first screen draws.
   readonly bootWaitMs: number;
@@ -52,8 +52,13 @@ export interface OfflinePlay {
   // The update flow: accept() is the update offer's button, and noteInteraction() counts play
   // that started without input.
   readonly flow: UpdateFlow;
-  // Call with whether the game's home screen is in front, on each change (registerWhenDue).
+  // Legacy home hook: combines offer visits, eligibility and first-install readiness.
   readonly setOnHome: (onHome: boolean) => void;
+  // First-install readiness, after the client has prepared its first playable frame.
+  // Controlled pages register immediately regardless of this value.
+  setRegistrationReady(ready: boolean): void;
+  // Offer eligibility only. This never starts registration or resets dismissal.
+  setOfferVisible(visible: boolean): void;
 }
 
 // The browser's page, or undefined where it has no service workers.
@@ -75,7 +80,7 @@ export function browserOfflinePage(): OfflinePage | undefined {
 // Offline play and updates, on the kit's update flow: the player's keys and presses count as
 // interacting, the page coming back into view checks for a newer version (an installed app
 // resumed without relaunching), the boot waits at most bootWaitMs, and the service worker
-// registers when due (registerWhenDue). A failed registration leaves the game running online.
+// registers when ready. A failed registration leaves the game running online.
 export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage): OfflinePlay {
   const { container, eventTarget } = page;
   let activity: OfflineActivity | undefined;
@@ -111,6 +116,7 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
     () => page.online(),
     () => page.reload(),
     options.onUpdateShown,
+    options,
   );
   for (const type of INTERACTION_EVENTS) {
     eventTarget.addEventListener(type, () => flow.noteInteraction(), {
@@ -120,16 +126,39 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
   }
   watchVisibility((visible) => flow.setVisible(visible), eventTarget, page.visibilitySource);
   page.setTimeout(() => flow.endBootWait(), options.bootWaitMs);
-  const setOnHome = registerWhenDue(container, flow, () => {
+  let registered = false;
+  const register = () => {
+    registered = true;
     reportActivity("registering");
-    return container
+    void container
       .register(options.serviceWorkerUrl, { scope: "/" })
       .then(watchInstallation)
       .catch((error: unknown) => {
         reportActivity("idle");
         console.warn("Service worker registration failed; the game will not work offline.", error);
         throw error;
-      });
-  });
-  return { bootable: flow.bootable, flow, setOnHome };
+      })
+      .then(
+        (registration) => flow.watch(registration),
+        () => flow.noRegistration(),
+      );
+  };
+  const setRegistrationReady = (ready: boolean) => {
+    if (ready && !registered) {
+      register();
+    }
+  };
+  if (container.controller !== null) {
+    register();
+  }
+  return {
+    bootable: flow.bootable,
+    flow,
+    setOfferVisible: (visible) => flow.setOfferVisible(visible),
+    setOnHome(onHome) {
+      flow.setOnHome(onHome);
+      setRegistrationReady(onHome);
+    },
+    setRegistrationReady,
+  };
 }

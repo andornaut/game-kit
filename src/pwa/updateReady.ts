@@ -26,7 +26,13 @@ export interface ContainerLike extends EventTarget {
 // installing, or installed and waiting behind the running one.
 type NewerVersion = "none" | "pending" | "waiting";
 
+export interface UpdateFlowOptions {
+  // Automatic by default. Manual activation requires accept(), including before input.
+  readonly activationPolicy?: "automatic" | "manual";
+}
+
 export interface UpdateState {
+  readonly activationPolicy?: UpdateFlowOptions["activationPolicy"];
   // A key, touch or click, or play started, since the page loaded.
   interacted: boolean;
   newer: NewerVersion;
@@ -46,11 +52,12 @@ export interface UpdateState {
 // prompt: show the home screen's update plate, whose button switches.
 type UpdateAction = "prompt" | "run" | "switch" | "wait";
 
-// Before the player has interacted, a waiting version takes over at once. On a fresh load the
+// Under automatic activation, before input a waiting version takes over at once. On a fresh load the
 // boot waits for the check and install, so that reload comes before the game draws. Once they
 // have interacted the page never reloads on its own, and the update plate shows on each arrival
 // home. A switch that has not reloaded by the end of the boot wait lets the game boot.
 export function updateAction({
+  activationPolicy = "automatic",
   interacted,
   newer,
   onHome,
@@ -62,7 +69,7 @@ export function updateAction({
     return waitOver ? "run" : "wait";
   }
   if (newer === "waiting") {
-    if (!interacted) {
+    if (!interacted && activationPolicy === "automatic") {
       return "switch";
     }
     return onHome ? "prompt" : "run";
@@ -135,12 +142,19 @@ export interface UpdateFlow {
   // and write its save. Construct the game and load its assets meanwhile: only the first screen
   // and the save wait for this. It never resolves for a page that reloads first.
   readonly bootable: Promise<void>;
+  // Starts an explicit offer visit and clears its dismissal, including while hidden.
+  beginOfferVisit(): void;
+  // Hides the offer for this visit without consuming or activating its waiting worker.
+  dismissOffer(): void;
   endBootWait(): void;
   noteInteraction(): void;
   // The registration failed, so there is no newer version to wait for.
   noRegistration(): void;
-  // Whether the home screen is in front. Each arrival home after input checks for a newer version.
+  // Legacy eligibility hook: a false-to-true arrival also begins a new offer visit.
+  // Each arrival after input checks for a newer version.
   setOnHome(onHome: boolean): void;
+  // Offer eligibility and arrival/resume checks, independent of registration and visit lifetime.
+  setOfferVisible(visible: boolean): void;
   // Whether the page is in view. Coming back into view on the home screen checks for a newer
   // version, at most once per RESUME_CHECK_MS.
   setVisible(visible: boolean): void;
@@ -158,8 +172,10 @@ export function createUpdateFlow(
   online: () => boolean,
   reload: () => void,
   show: (visible: boolean) => void,
+  options: UpdateFlowOptions = {},
 ): UpdateFlow {
   let state: UpdateState = {
+    activationPolicy: options.activationPolicy,
     interacted: false,
     newer: container.controller === null ? "none" : "pending",
     onHome: false,
@@ -169,6 +185,7 @@ export function createUpdateFlow(
   };
   let lastCheck: number | undefined;
   let shown = false;
+  let dismissed = false;
   let waitingWorker: ServiceWorkerLike | undefined;
   let watched: RegistrationLike | undefined;
   let boot: () => void = () => undefined;
@@ -191,10 +208,17 @@ export function createUpdateFlow(
     } else if (action === "run" || action === "prompt") {
       boot();
     }
-    const visible = updateAction(state) === "prompt";
+    const visible = !dismissed && updateAction(state) === "prompt";
     if (visible !== shown) {
       shown = visible;
       show(visible);
+    }
+  };
+  const setOfferVisible = (onHome: boolean) => {
+    const arrived = onHome && !state.onHome && state.interacted;
+    update({ onHome });
+    if (arrived && online() && watched !== undefined) {
+      check(watched).catch(() => undefined);
     }
   };
   update({});
@@ -204,13 +228,22 @@ export function createUpdateFlow(
         return;
       }
       if (waitingWorker === undefined) {
+        update({ reloading: true });
         reload();
         return;
       }
       switchVersion(waitingWorker);
       update({});
     },
+    beginOfferVisit() {
+      dismissed = false;
+      update({});
+    },
     bootable,
+    dismissOffer() {
+      dismissed = true;
+      update({});
+    },
     endBootWait: () => update({ waitOver: true }),
     noRegistration: () => update({ newer: "none" }),
     noteInteraction() {
@@ -218,12 +251,12 @@ export function createUpdateFlow(
         update({ interacted: true });
       }
     },
+    setOfferVisible,
     setOnHome(onHome) {
-      const arrived = onHome && !state.onHome && state.interacted;
-      update({ onHome });
-      if (arrived && online() && watched !== undefined) {
-        check(watched).catch(() => undefined);
+      if (onHome && !state.onHome) {
+        dismissed = false;
       }
+      setOfferVisible(onHome);
     },
     setVisible(visible) {
       const due = resumeCheckDue({

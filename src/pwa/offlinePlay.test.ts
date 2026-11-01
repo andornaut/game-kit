@@ -4,6 +4,7 @@ import {
   INTERACTION_EVENTS,
   type OfflineActivity,
   type OfflinePage,
+  type OfflinePlayOptions,
   type RegisteringContainer,
   startOfflinePlay,
 } from "./offlinePlay.ts";
@@ -85,6 +86,7 @@ function openPage(
   controlled: boolean,
   deployed: Deployed | "fails",
   onOfflineActivity?: (activity: OfflineActivity) => void,
+  activationPolicy: OfflinePlayOptions["activationPolicy"] = "automatic",
 ) {
   const registration = deployed === "fails" ? undefined : new FakeRegistration(deployed);
   const container = new FakeContainer(
@@ -109,6 +111,7 @@ function openPage(
   const play = startOfflinePlay(
     {
       ...OPTIONS,
+      activationPolicy,
       ...(onOfflineActivity === undefined ? {} : { onOfflineActivity }),
       onUpdateShown: (visible) => shown.push(visible),
     },
@@ -122,6 +125,91 @@ afterEach(() => {
 });
 
 describe("startOfflinePlay", () => {
+  it("defers first registration until client readiness after its prepared frame independently of offers", async () => {
+    const activities: OfflineActivity[] = [];
+    const { container, play } = openPage(
+      false,
+      "none",
+      (activity) => activities.push(activity),
+      "manual",
+    );
+    await expect(play.bootable).resolves.toBeUndefined();
+    play.setOfferVisible(true);
+    play.setOfferVisible(false);
+    play.flow.beginOfferVisit();
+    play.setOfferVisible(true);
+    play.setRegistrationReady(false);
+    expect(container.registered).toEqual([]);
+    expect(activities).toEqual(["idle"]);
+    play.setRegistrationReady(true);
+    expect(container.registered).toEqual([[OPTIONS.serviceWorkerUrl, { scope: "/" }]]);
+    expect(activities).toEqual(["idle", "registering"]);
+    await settle();
+    expect(activities).toEqual(["idle", "registering", "idle"]);
+    play.setRegistrationReady(false);
+    play.setRegistrationReady(true);
+    play.setOfferVisible(false);
+    play.setOfferVisible(true);
+    expect(container.registered).toHaveLength(1);
+  });
+
+  it("registers controlled manual pages immediately without activation before interaction", async () => {
+    const activities: OfflineActivity[] = [];
+    const { container, play, registration, shown } = openPage(
+      true,
+      "waiting",
+      (activity) => activities.push(activity),
+      "manual",
+    );
+    expect(container.registered).toHaveLength(1);
+    play.setRegistrationReady(false);
+    await settle();
+    await expect(play.bootable).resolves.toBeUndefined();
+    play.setOfferVisible(true);
+    expect(shown).toEqual([true]);
+    expect(registration?.waiting?.messages).toEqual([]);
+    expect(activities).toEqual(["idle", "registering", "idle"]);
+    play.flow.accept();
+    expect(registration?.waiting?.messages).toEqual([SKIP_WAITING_MESSAGE]);
+  });
+
+  it("keeps manual arrival and resume checks eligible after dismissal without readiness changes", async () => {
+    const { clock, page, play, registration, shown, visibilitySource } = openPage(
+      true,
+      "none",
+      undefined,
+      "manual",
+    );
+    await settle();
+    expect(registration?.updates).toBe(1);
+    play.setOfferVisible(true);
+    expect(registration?.updates).toBe(1);
+    page.eventTarget.dispatchEvent(new Event("pointerdown"));
+    play.flow.dismissOffer();
+    play.setRegistrationReady(false);
+    play.setRegistrationReady(true);
+    expect(registration?.updates).toBe(1);
+    play.setOfferVisible(false);
+    play.setOfferVisible(true);
+    expect(registration?.updates).toBe(2);
+    clock.now = RESUME_CHECK_MS - 1;
+    visibilitySource.setVisibility("hidden");
+    visibilitySource.setVisibility("visible");
+    expect(registration?.updates).toBe(2);
+    clock.now = RESUME_CHECK_MS;
+    visibilitySource.setVisibility("hidden");
+    visibilitySource.setVisibility("visible");
+    expect(registration?.updates).toBe(3);
+    if (registration === undefined) {
+      throw new Error("Missing test registration");
+    }
+    registration.waiting = new FakeWorker();
+    registration.dispatchEvent(new Event("updatefound"));
+    expect(shown).toEqual([]);
+    play.flow.beginOfferVisit();
+    expect(shown).toEqual([true]);
+  });
+
   it("observes first registration and an in-flight install only after home without holding play", async () => {
     const activities: OfflineActivity[] = [];
     const { play, registration } = openPage(false, "installing", (activity) =>
