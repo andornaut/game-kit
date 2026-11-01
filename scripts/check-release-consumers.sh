@@ -8,6 +8,16 @@ kit_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 artifact=$(realpath -e -- "$1")
 expected_hash=$2
 source_revision=$(git -C "$kit_root" rev-parse --verify "$3^{commit}")
+expected_version=$(git -C "$kit_root" show "$source_revision:package.json" | python3 -c '
+import json, re, sys
+manifest = json.load(sys.stdin)
+if manifest.get("name") != "@andornaut/game-kit":
+    raise SystemExit("Source revision is not @andornaut/game-kit")
+version = manifest.get("version", "")
+if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+    raise SystemExit("Source revision has no exact release version")
+print(version)
+')
 dog_repository=$(realpath -e -- "$4")
 dog_revision=$(git -C "$dog_repository" rev-parse --verify "$5^{commit}")
 duck_repository=$(realpath -e -- "$6")
@@ -51,8 +61,8 @@ PYTHON
 }
 before=$(fingerprint "$kit_root" "$dog_repository" "$duck_repository")
 printf '%s\n' "$before" >"$output/source.before"
-printf 'artifact_sha256=%s\nsource=%s\ndog=%s\nduck=%s\nharness=%s\n' \
-  "$expected_hash" "$source_revision" "$dog_revision" "$duck_revision" "$(git -C "$kit_root" rev-parse HEAD)" >"$output/revisions.txt"
+printf 'artifact_sha256=%s\nsource=%s\nversion=%s\ndog=%s\nduck=%s\nharness=%s\n' \
+  "$expected_hash" "$source_revision" "$expected_version" "$dog_revision" "$duck_revision" "$(git -C "$kit_root" rev-parse HEAD)" >"$output/revisions.txt"
 verify_sources() {
   local result=$?
   trap - EXIT
@@ -83,5 +93,5 @@ docker run --rm --read-only --cpus 4 --network none -u "$(id -u):$(id -g)" \
   -e npm_config_logs_dir=/scratch/npm-logs -e npm_config_userconfig=/scratch/npm-user-config \
   -e npm_config_globalconfig=/scratch/npm-global-config -e HOME=/scratch/home \
   node:24.21.0 timeout 600s bash /harness/scripts/release-consumer-job.sh \
-  "$expected_hash" "$source_revision" "$dog_revision" "$duck_revision" \
+  "$expected_hash" "$source_revision" "$expected_version" "$dog_revision" "$duck_revision" \
   >"$output/container.log" 2>&1

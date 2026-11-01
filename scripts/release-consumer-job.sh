@@ -2,7 +2,8 @@
 # Container-only implementation. Never run against a live consumer checkout.
 set -euo pipefail
 [ "$(node --version)" = v24.21.0 ]
-expected_hash=$1 source_revision=$2 dog_revision=$3 duck_revision=$4
+[ "$#" = 5 ]
+expected_hash=$1 source_revision=$2 expected_version=$3 dog_revision=$4 duck_revision=$5
 [ "$(sha256sum /assets/release.tgz | cut -d ' ' -f 1)" = "$expected_hash" ]
 mkdir -p /scratch/reference /scratch/home
 touch /scratch/npm-user-config /scratch/npm-global-config
@@ -12,7 +13,7 @@ awk '$0 !~ /^package\// || $0 ~ /(^|\/)\.\.(\/|$)/ { bad=1 } END { exit bad }' /
 tar -tvzf /assets/release.tgz > /scratch/artifact-modes.txt
 awk 'substr($0,1,1) != "-" && substr($0,1,1) != "d" { bad=1 } END { exit bad }' /scratch/artifact-modes.txt
 tar -xzf /assets/release.tgz -C /scratch/reference --no-same-owner
-export EXPECTED_KIT_COMMIT=$source_revision
+export EXPECTED_KIT_COMMIT=$source_revision EXPECTED_KIT_VERSION=$expected_version
 failed=0
 for game in dog duck; do
   if [ "$game" = dog ]; then revision=$dog_revision; else revision=$duck_revision; fi
@@ -49,7 +50,7 @@ assert.equal(fs.realpathSync(installed), installed);
 assert.equal(fs.readFileSync(`${installed}/SOURCE_COMMIT`, 'utf8').trim(), process.env.EXPECTED_KIT_COMMIT);
 const manifest = JSON.parse(fs.readFileSync(`${installed}/package.json`, 'utf8'));
 assert.equal(manifest.name, '@andornaut/game-kit');
-assert.equal(manifest.version, '0.0.1');
+assert.equal(manifest.version, process.env.EXPECTED_KIT_VERSION);
 const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
 const entry = lock.packages['node_modules/@andornaut/game-kit'];
 assert(entry.resolved.startsWith('file:'));
