@@ -10,6 +10,7 @@
     "src/input/pagePresses.ts",
     "src/progress/dom/progressBar.ts",
     "src/pwa/appWindow.ts",
+    "src/pwa/audioUnlock.ts",
     "src/pwa/backNavigation.ts",
     "src/pwa/exitApp.ts",
     "src/pwa/installButton.ts",

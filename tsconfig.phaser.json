@@ -10,6 +10,7 @@
     "src/input/phaser/guardSceneInput.ts",
     "src/progress/phaser/drawProgressBar.ts",
     "src/text/phaser/phaserBitmapFont.ts",
+    "src/text/phaser/registerPixelFont.ts",
     "src/view/phaser/followFrameTurn.ts",
     "src/view/phaser/modalBackdrop.ts",
     "src/view/phaser/snapshotRemap.ts"

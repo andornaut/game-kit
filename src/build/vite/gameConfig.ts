@@ -4,12 +4,13 @@
 //   import { gameViteConfig } from "@andornaut/game-kit/build/vite/gameConfig";
 //   export default gameViteConfig<typeof ConfigModules>({ ... });
 //
-// The game installs this source package as file:vendor/game-kit. Vite and its module runner
-// resolve the same explicit package exports before and after loading the config.
+// The game installs the compiled release artifact. Vite and its module runner resolve
+// its explicit package exports before and after loading the config.
 //
 // The game's repository is laid out as: pages/ (Vite's root; each HTML page's path under it is its
-// URL, and pages load modules as /src/...), public/ (copied as is), src/, vendor/game-kit/src/,
-// package.json (its version is __APP_VERSION__), and the build writes dist/.
+// URL, and pages load modules as /src/...), public/ (copied as is), src/, and package.json
+// (its version is __APP_VERSION__). The build writes dist/. Source development snapshots
+// may also supply tests under vendor/game-kit/src/.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
