@@ -16,7 +16,7 @@ The compiled GitHub release archive contains JavaScript and declarations. Instal
 
 ## Version and interface policy
 
-The source package is version `0.4.1`. The explicit `exports` map and exported declarations define the public interface. Internal imports are relative and acyclic; there is no root barrel loading an engine for pure callers.
+The source package is version `0.4.2`. The explicit `exports` map and exported declarations define the public interface. Internal imports are relative and acyclic; there is no root barrel loading an engine for pure callers.
 
 Compatible fixes use patch versions; additive public facilities use minor versions. After 1.0, incompatible changes require a major version. Before 1.0, incompatible changes require a minor version and an explicit migration. Update the manifest and root lockfile together. Prove the compiled artifact against exact consumer revisions before publication. Documentation-only changes need no version bump.
 
@@ -103,7 +103,7 @@ WORKAROUND: Parent-scoped development overrides pin [KaTeX](https://github.com/a
 
 ## Release artifacts and consumer proof
 
-The public source repository is [andornaut/game-kit](https://github.com/andornaut/game-kit). GitHub releases distribute `game-kit-<version>.tgz`, `SOURCE_COMMIT` and `SHA256SUMS`, without npm registry publication. Install only an actually published version and commit the lockfile integrity. The versioned artifact URL for `0.4.1` is `https://github.com/andornaut/game-kit/releases/download/v0.4.1/game-kit-0.4.1.tgz`.
+The public source repository is [andornaut/game-kit](https://github.com/andornaut/game-kit). GitHub releases distribute `game-kit-<version>.tgz`, `SOURCE_COMMIT` and `SHA256SUMS`, without npm registry publication. Install only an actually published version and commit the lockfile integrity. The versioned artifact URL for `0.4.2` is `https://github.com/andornaut/game-kit/releases/download/v0.4.2/game-kit-0.4.2.tgz`.
 
 `bash scripts/pack.sh <output-directory>` builds the committed revision in an isolated offline container. It emits JavaScript and declarations using `tsconfig.release.json` and packages public metadata, provenance, README and MIT licence. Runtime TypeScript source, tests and private development commands are excluded. Library-owned verification, packaging and CI scripts remain private.
 
