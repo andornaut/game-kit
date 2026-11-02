@@ -5,6 +5,7 @@ import {
   findTraversal,
   stepTraversal,
   type TraversalCollider,
+  type TraversalCommand,
   type TraversalContext,
   type TraversalState,
 } from "./traversal";
@@ -525,4 +526,242 @@ it("does not turn horizontal progress through a hazardous goal into a found witn
     timeSeconds: 0,
   });
   expect(result.status).toBe("unreachable");
+});
+
+describe("preferred traversal commands", () => {
+  const forward: TraversalCommand = { jump: false, move: 1 };
+  const backward: TraversalCommand = { jump: false, move: -1 };
+  const request = {
+    goal: rect(1, 8, 2, 2),
+    horizonSteps: 1,
+    maxStates: 32,
+    maxSteps: 32,
+    start,
+    timeSeconds: 0,
+  };
+
+  it("validates the whole command sequence before any callback", () => {
+    const c = {
+      ...context([]),
+      safe: () => {
+        throw new Error("Unexpected safety call");
+      },
+      sampleColliders: () => {
+        throw new Error("Unexpected geometry call");
+      },
+    };
+    const inherited = Object.assign(Object.create({ timeSeconds: undefined }), forward);
+    const invalid: unknown[] = [
+      [forward, forward],
+      [{ jump: false, move: 2 }],
+      [{ jump: 1, move: 1 }],
+      [null],
+      new Array(1),
+      [{ ...forward, timeSeconds: 0 }],
+      [{ ...forward, timeSeconds: undefined }],
+      [inherited],
+    ];
+    for (const commands of invalid) {
+      expect(() =>
+        findTraversal(c, { ...request, preferredInputs: commands as readonly TraversalCommand[] }),
+      ).toThrow(RangeError);
+    }
+  });
+
+  it("accepts command metadata, derives the clock and stops at the earliest valid goal", () => {
+    const c = context([fixed(ground, floor)]);
+    const result = findTraversal(c, {
+      ...request,
+      horizonSteps: 2,
+      preferredInputs: [{ ...forward, label: "first" }, backward] as readonly TraversalCommand[],
+      timeSeconds: 3,
+    });
+    expect(result.status).toBe("found");
+    if (result.status !== "found") {
+      return;
+    }
+    expect(result.inputs).toEqual([{ ...forward, timeSeconds: 3 }]);
+    expect(result.work).toEqual({ states: 2, steps: 1 });
+    const physical = stepTraversal(c, { ...forward, timeSeconds: 3 }, start);
+    expect(result.state).toEqual(physical.state);
+  });
+
+  it("checks an already valid initial goal before spending preferred steps", () => {
+    const result = findTraversal(context([fixed(ground, floor)]), {
+      ...request,
+      goal: rect(0, 8, 2, 2),
+      maxStates: 1,
+      maxSteps: 0,
+      preferredInputs: [forward],
+    });
+    expect(result).toEqual({
+      inputs: [],
+      state: start,
+      status: "found",
+      work: { states: 1, steps: 0 },
+    });
+  });
+
+  it("falls back from a completed prefix without poisoning regular seen or charging overlap twice", () => {
+    const c = context([fixed(ground, floor)]);
+    const result = findTraversal(c, {
+      ...request,
+      goal: rect(2, 8, 2, 2),
+      horizonSteps: 2,
+      maxStates: 16,
+      maxSteps: 16,
+      preferredInputs: [forward],
+    });
+    expect(result.status).toBe("found");
+    if (result.status !== "found") {
+      return;
+    }
+    expect(result.inputs).toEqual(
+      [forward, forward].map((command, i) => ({ ...command, timeSeconds: i * c.dtSeconds })),
+    );
+    expect(result.work).toEqual({ states: 16, steps: 16 });
+    expect(result.state.x).toBe(2);
+  });
+
+  it("retains unsafe-prefix step cost while falling back from the original start", () => {
+    const result = findTraversal(
+      { ...context([fixed(ground, floor)]), safe: ({ to }) => to.x >= 0 },
+      {
+        ...request,
+        preferredInputs: [backward],
+      },
+    );
+    expect(result.status).toBe("found");
+    if (result.status !== "found") {
+      return;
+    }
+    expect(result.inputs).toEqual([{ ...forward, timeSeconds: 0 }]);
+    expect(result.work).toEqual({ states: 5, steps: 7 });
+  });
+
+  it("retains successful-prefix costs and enforces state and step caps in existing order", () => {
+    const c = context([fixed(ground, floor)]);
+    expect(
+      findTraversal(c, { ...request, maxStates: 1, preferredInputs: [forward] }),
+    ).toMatchObject({
+      reason: "states",
+      status: "budget-exhausted",
+      work: { states: 1, steps: 1 },
+    });
+    expect(
+      findTraversal(c, { ...request, maxStates: 6, preferredInputs: [backward] }),
+    ).toMatchObject({
+      reason: "states",
+      status: "budget-exhausted",
+      work: { states: 6, steps: 7 },
+    });
+    expect(
+      findTraversal(c, { ...request, maxSteps: 6, preferredInputs: [backward] }),
+    ).toMatchObject({ reason: "steps", status: "budget-exhausted", work: { states: 6, steps: 6 } });
+  });
+
+  it("propagates incomplete geometry and collision budgets without a fallback", () => {
+    const c = context([fixed(ground, floor)]);
+    let samples = 0;
+    const unknown = findTraversal(
+      { ...c, sampleColliders: () => ({ colliders: [], complete: ++samples !== 2 }) },
+      { ...request, preferredInputs: [forward] },
+    );
+    expect(unknown).toEqual({ status: "geometry-unavailable", work: { states: 1, steps: 1 } });
+    expect(samples).toBe(2);
+    const collision = findTraversal(
+      { ...c, maxCollisionSteps: 1 },
+      { ...request, preferredInputs: [forward] },
+    );
+    expect(collision).toEqual({
+      reason: "collision",
+      status: "budget-exhausted",
+      work: { states: 1, steps: 1 },
+    });
+  });
+
+  it("does not accept an unsupported initial goal or skip terminal geometry revalidation", () => {
+    const c = context([]);
+    expect(
+      findTraversal(c, { ...request, goal: rect(0, 8, 2, 2), horizonSteps: 0, preferredInputs: [] })
+        .status,
+    ).toBe("unreachable");
+    let samples = 0;
+    const supported = context([fixed(ground, floor)]);
+    const result = findTraversal(
+      {
+        ...supported,
+        sampleColliders: (...args) => ({
+          ...supported.sampleColliders(...args),
+          complete: ++samples !== 4,
+        }),
+      },
+      { ...request, preferredInputs: [forward] },
+    );
+    expect(result).toEqual({ status: "geometry-unavailable", work: { states: 2, steps: 1 } });
+    expect(samples).toBe(4);
+  });
+
+  it("proves a static walk-off landing through the shared kernel within the existing limits", () => {
+    const solids = [
+      rect(2400, 960, 120, 480),
+      rect(2544, 888, 48, 552),
+      rect(2592, 960, 288, 480),
+      rect(2520, 960, 24, 480),
+      rect(2880, 960, 120, 480),
+    ];
+    const c: TraversalContext<Rect> = {
+      body: { height: 46, offset: { x: 2, y: 2 }, width: 44 },
+      bounds: rect(0, 0, 6840, 1440),
+      dtSeconds: 1 / 120,
+      epsilon: 1e-6,
+      maxCollisionSteps: 16,
+      maxDrop: 1440,
+      profile: { gravity: 1780, jumpSpeed: 535, maxFallSpeed: 275, walkSpeed: 336 },
+      safe: () => true,
+      sampleColliders: () => ({
+        colliders: solids.map((r) => ({ after: r, before: r, kind: "solid", supportId: r })),
+        complete: true,
+      }),
+    };
+    const r = {
+      goal: rect(2593.600000000003, 911.999999, 286.3999999999969, 48.000002),
+      horizonSteps: 120,
+      maxStates: 256,
+      maxSteps: 4096,
+      start: {
+        fallFromY: 888,
+        grounded: true,
+        supportId: solids[1]!,
+        vy: 0,
+        x: 2545.600000000003,
+        y: 840,
+      },
+      timeSeconds: 2.341666666666661,
+    };
+    expect(findTraversal(c, r)).toMatchObject({
+      reason: "states",
+      status: "budget-exhausted",
+      work: { states: 256, steps: 256 },
+    });
+    const result = findTraversal(c, {
+      ...r,
+      preferredInputs: Array.from({ length: r.horizonSteps }, () => forward),
+    });
+    expect(result.status).toBe("found");
+    if (result.status !== "found") {
+      return;
+    }
+    expect(result.inputs).toHaveLength(57);
+    expect(result.work).toEqual({ states: 58, steps: 57 });
+    let state: TraversalState<Rect> = r.start;
+    for (const input of result.inputs) {
+      const checked = stepTraversal(c, input, state);
+      expect(checked.status).toBe("ok");
+      state = checked.state;
+    }
+    expect(state).toEqual(result.state);
+    expect(state.grounded).toBe(true);
+    expect(state.y).toBe(912);
+  });
 });

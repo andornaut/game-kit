@@ -36,6 +36,7 @@ export interface TraversalInput {
   readonly jump: boolean;
   readonly timeSeconds: number;
 }
+export type TraversalCommand = Pick<TraversalInput, "move" | "jump">;
 export interface TraversalSafety {
   readonly from: Readonly<Rect>;
   readonly to: Readonly<Rect>;
@@ -74,6 +75,7 @@ export interface TraversalRequest<Id> extends TraversalBudget {
   readonly timeSeconds: number;
   // A landing envelope containing the complete actor, not the target actor's smaller box.
   readonly goal: Readonly<Rect>;
+  readonly preferredInputs?: readonly TraversalCommand[];
 }
 export interface TraversalWork {
   readonly states: number;
@@ -576,6 +578,23 @@ export function findTraversal<Id>(
   ) {
     throw new RangeError("Invalid traversal search domain");
   }
+  const commands = request.preferredInputs;
+  if (commands !== undefined) {
+    if (!Array.isArray(commands) || commands.length > request.horizonSteps) {
+      throw new RangeError("Invalid preferred traversal inputs");
+    }
+    for (const command of commands) {
+      if (
+        command === null ||
+        (typeof command !== "object" && typeof command !== "function") ||
+        "timeSeconds" in command ||
+        ![-1, 0, 1].includes(command.move) ||
+        typeof command.jump !== "boolean"
+      ) {
+        throw new RangeError("Invalid preferred traversal inputs");
+      }
+    }
+  }
   interface Node {
     state: TraversalState<Id>;
     depth: number;
@@ -603,6 +622,10 @@ export function findTraversal<Id>(
     return `${depth}:${s.x}:${s.y}:${s.vy}:${s.grounded}:${s.fallFromY}:${support}`;
   };
   const seen = new Set([key(0, request.start)]);
+  const hasPreferred = commands !== undefined && commands.length > 0;
+  // Charging a preferred state must not prune it from the independent frontier.
+  const charged = hasPreferred ? new Set(seen) : undefined;
+  let frontierOrder = 1;
   const distance = (state: TraversalState<Id>) => {
     const b = box(context, state);
     // Ascent can clear an obstruction before descending into the landing corridor.
@@ -650,9 +673,13 @@ export function findTraversal<Id>(
     }
     return node;
   };
-  push({ depth: 0, order: 0, score: distance(request.start), state: request.start });
-  while (frontier.length) {
-    const node = pop();
+  const initial: Node = {
+    depth: 0,
+    order: 0,
+    score: distance(request.start),
+    state: request.start,
+  };
+  const terminal = (node: Node): TraversalResult<Id> | undefined => {
     if (node.state.grounded && inside(request.goal, box(context, node.state), context.epsilon)) {
       // Validate even an empty witness against actual geometry and caller safety.
       const body = box(context, node.state);
@@ -682,6 +709,64 @@ export function findTraversal<Id>(
         return { inputs: inputs.reverse(), state: node.state, status: "found", work };
       }
     }
+    return undefined;
+  };
+  push(initial);
+  if (hasPreferred) {
+    const found = terminal(initial);
+    if (found) {
+      return found;
+    }
+    let node = initial;
+    for (const command of commands) {
+      if (work.steps === request.maxSteps) {
+        return { reason: "steps", status: "budget-exhausted", work };
+      }
+      const input: TraversalInput = {
+        jump: command.jump,
+        move: command.move,
+        timeSeconds: request.timeSeconds + node.depth * context.dtSeconds,
+      };
+      work.steps++;
+      const result = stepTraversal(context, input, node.state);
+      if (result.status === "geometry-unavailable") {
+        return { status: "geometry-unavailable", work };
+      }
+      if (result.status === "budget-exhausted") {
+        return { reason: "collision", status: "budget-exhausted", work };
+      }
+      if (result.status !== "ok") {
+        break;
+      }
+      const id = key(node.depth + 1, result.state);
+      if (!charged!.has(id)) {
+        if (work.states === request.maxStates) {
+          return { reason: "states", status: "budget-exhausted", work };
+        }
+        charged!.add(id);
+        work.states++;
+      }
+      node = {
+        depth: node.depth + 1,
+        input,
+        order: 0,
+        parent: node,
+        score: 0,
+        state: result.state,
+      };
+      const reached = terminal(node);
+      if (reached) {
+        return reached;
+      }
+    }
+  }
+  while (frontier.length) {
+    const node = pop();
+    // The original start was already checked before an opted-in preferred path.
+    const found = node === initial && hasPreferred ? undefined : terminal(node);
+    if (found) {
+      return found;
+    }
     if (node.depth === request.horizonSteps) {
       continue;
     }
@@ -710,15 +795,18 @@ export function findTraversal<Id>(
         if (seen.has(id)) {
           continue;
         }
-        if (work.states === request.maxStates) {
-          return { reason: "states", status: "budget-exhausted", work };
+        if (!charged || !charged.has(id)) {
+          if (work.states === request.maxStates) {
+            return { reason: "states", status: "budget-exhausted", work };
+          }
+          charged?.add(id);
+          work.states++;
         }
         seen.add(id);
-        work.states++;
         push({
           depth: node.depth + 1,
           input,
-          order: work.states,
+          order: ++frontierOrder,
           parent: node,
           score: distance(result.state),
           state: result.state,
