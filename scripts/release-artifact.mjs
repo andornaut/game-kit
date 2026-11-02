@@ -1,4 +1,4 @@
-// Exercise the packed package through native node_modules resolution.
+// Exercise the compiled package through native node_modules resolution.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
@@ -38,59 +38,90 @@ execFileSync("tar", [
   "-C",
   installed,
 ]);
-for (const dependency of ["vite", "vitest", "typescript", "phaser"]) {
-  symlinkSync(
-    resolve(root, "node_modules", dependency),
-    join(consumer, "node_modules", dependency),
-  );
-}
+const source = JSON.parse(readFileSync("package.json", "utf8"));
 const manifest = JSON.parse(readFileSync(join(installed, "package.json"), "utf8"));
-assert.equal(manifest.version, JSON.parse(readFileSync("package.json", "utf8")).version);
-assert.deepEqual(
-  Object.keys(manifest.exports),
-  Object.keys(JSON.parse(readFileSync("package.json", "utf8")).exports),
-);
+assert.equal(manifest.version, source.version);
+assert.deepEqual(Object.keys(manifest.exports), Object.keys(source.exports));
 for (const entry of Object.values(manifest.exports)) {
   for (const target of typeof entry === "string" ? [entry] : Object.values(entry)) {
     assert.ok(existsSync(resolve(installed, target)), target);
   }
 }
 assert.equal(manifest.license, "MIT");
-assert.deepEqual(manifest.exports["./build/buildInfo"], { types: "./dist/build/buildInfo.d.ts" });
+assert.deepEqual(Object.keys(manifest.peerDependencies), ["phaser"]);
 for (const file of result[0].files) {
   assert.ok(!file.path.endsWith(".ts") || file.path.endsWith(".d.ts"), file.path);
   assert.ok(!file.path.includes(".test."), file.path);
 }
-writeFileSync(join(consumer, "package.json"), JSON.stringify({ type: "module", version: "1.2.3" }));
-writeFileSync(join(consumer, "modules.ts"), 'export { clamp } from "@andornaut/game-kit/numbers";');
-writeFileSync(
-  join(consumer, "vite.config.ts"),
-  `
-import { gameViteConfig } from '@andornaut/game-kit/build/vite/gameConfig';
-export default gameViteConfig({repoRoot: import.meta.dirname, configModules:'modules.ts', pages:{},
-chunkSizeWarningLimit:500, previewHost:undefined, testTimeout:1000,
-plugins:(modules)=>{ if(modules.clamp(0,1,2)!==1) throw Error('runner import failed'); return []; }});
-`,
-);
+writeFileSync(join(consumer, "package.json"), JSON.stringify({ type: "module" }));
+// No peers are present during the pure runtime and declaration checks.
 writeFileSync(
   join(consumer, "bootstrap.mjs"),
   `
 import assert from 'node:assert/strict';
+import { clamp } from '@andornaut/game-kit/numbers';
 import { createProgressState } from '@andornaut/game-kit/progressState';
-import { loadConfigFromFile } from 'vite';
-assert.equal(typeof createProgressState, 'function');
-assert.ok(import.meta.resolve('@andornaut/game-kit/crash/crash.css').endsWith('/dist/crash/crash.css'));
-assert.throws(()=>import.meta.resolve('@andornaut/game-kit/src/numbers.ts'), {code:'ERR_PACKAGE_PATH_NOT_EXPORTED'});
-assert.throws(()=>import.meta.resolve('@andornaut/game-kit/build/buildInfo'), {code:'ERR_PACKAGE_PATH_NOT_EXPORTED'});
-const loaded=await loadConfigFromFile(
-  {command:'build',mode:'production'}, undefined, process.cwd(), 'silent', undefined, 'native');
-assert.ok(loaded);
-assert.equal(loaded.config.define.__APP_VERSION__, '"1.2.3"');
+import { memoryStorage } from '@andornaut/game-kit/save/storage';
+import * as storageModule from '@andornaut/game-kit/save/storage';
+assert.deepEqual(Object.keys(storageModule), ['memoryStorage']);
+import { findTraversal } from '@andornaut/game-kit/terrain/traversal';
+assert.equal(clamp(0,1,2), 1);
+assert.equal(typeof findTraversal, 'function');
+createProgressState().begin().finish();
+const storage = memoryStorage();
+await storage.write('proof', 'value');
+assert.equal(await storage.read('proof'), 'value');
+for (const path of ['src/numbers.ts', 'dist/numbers.js', 'SOURCE_COMMIT']) {
+  assert.throws(()=>import.meta.resolve('@andornaut/game-kit/' + path), {code:'ERR_PACKAGE_PATH_NOT_EXPORTED'});
+}
 `,
 );
-execFileSync(process.execPath, ["bootstrap.mjs"], {
-  cwd: consumer,
-  stdio: "inherit",
-  env: { ...process.env, WORKERS_CI_COMMIT_SHA: "1234567890123456789012345678901234567890" },
-});
-console.log("Packed artifact native Node and Vite bootstrap passed.");
+execFileSync(process.execPath, ["bootstrap.mjs"], { cwd: consumer, stdio: "inherit" });
+writeFileSync(
+  join(consumer, "types.mts"),
+  `
+import { memoryStorage, type SaveStorage } from '@andornaut/game-kit/save/storage';
+import { stepTraversal, type TraversalContext } from '@andornaut/game-kit/terrain/traversal';
+const storage: SaveStorage = memoryStorage();
+void storage; void stepTraversal;
+export type Context = TraversalContext<string>;
+`,
+);
+execFileSync(
+  process.execPath,
+  [
+    resolve("node_modules/typescript/bin/tsc"),
+    "--module",
+    "NodeNext",
+    "--target",
+    "ES2022",
+    "--strict",
+    "--skipLibCheck",
+    "--noEmit",
+    "types.mts",
+  ],
+  { cwd: consumer, stdio: "inherit" },
+);
+// The parent owns its Vite configuration, which imports only the game mechanisms it uses.
+symlinkSync(resolve(root, "node_modules/vite"), join(consumer, "node_modules/vite"));
+writeFileSync(
+  join(consumer, "vite.config.ts"),
+  `
+import { defineConfig } from 'vite';
+import { clamp } from '@andornaut/game-kit/numbers';
+export default defineConfig({ define: { __KIT_CHECK__: JSON.stringify(clamp(0,1,2)) } });
+`,
+);
+writeFileSync(
+  join(consumer, "vite-bootstrap.mjs"),
+  `
+import assert from 'node:assert/strict';
+import { loadConfigFromFile } from 'vite';
+const loaded = await loadConfigFromFile(
+  {command:'build',mode:'production'}, undefined, process.cwd(), 'silent', undefined, 'native');
+assert.ok(loaded);
+assert.equal(loaded.config.define.__KIT_CHECK__, '1');
+`,
+);
+execFileSync(process.execPath, ["vite-bootstrap.mjs"], { cwd: consumer, stdio: "inherit" });
+console.log("Packed artifact native Node, declarations and parent Vite bootstrap passed.");

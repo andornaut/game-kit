@@ -1,7 +1,7 @@
 import type { Point, Rect } from "../rect.ts";
 
 // How far the page's game frame is turned clockwise on the screen: 0, or 90 or -90 where the game
-// is drawn on its side, such as a landscape game on a phone held in portrait (frameTurn.ts).
+// is drawn on its side, such as a landscape game on a phone held in portrait.
 export type FrameTurn = -90 | 0 | 90;
 
 // A point on the page, in client pixels, in game pixels: canvasBox is the canvas's box on the page

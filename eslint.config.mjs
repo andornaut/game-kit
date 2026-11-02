@@ -9,10 +9,8 @@ import { plugins, sourceRules, toolingRules } from "./eslint.config.base.mjs";
 
 const KIT_FILES = ["src/**/*.ts"];
 const PHASER_FILES = ["src/**/phaser/**"];
-const VITE_FILES = ["src/**/vite/**"];
 
-// A copy of the kit lives in each game, so it imports nothing from outside src/ and its own
-// modules by relative path, which resolve consistently in every client.
+// Source modules import their own modules by relative path and never import a game.
 const OUTSIDE_KIT = {
   group: ["@andornaut/game-kit", "@andornaut/game-kit/*", "**/src", "**/src/*"],
   message: "src/ imports nothing from a game, and its own modules by relative path.",
@@ -23,13 +21,6 @@ const OUTSIDE_KIT = {
 const PHASER = {
   group: ["**/phaser", "**/phaser/*"],
   message: "Only phaser/ folders may import Phaser or a phaser/ folder.",
-};
-
-// Build plugins run in Node at build time, never in the game: only vite/ folders import Vite or
-// a vite/ folder.
-const VITE = {
-  group: ["**/vite", "**/vite/*"],
-  message: "Only vite/ folders may import Vite or a vite/ folder.",
 };
 
 export default defineConfig(
@@ -51,16 +42,12 @@ export default defineConfig(
   // A later no-restricted-imports replaces an earlier one, so each file gets one list.
   {
     files: KIT_FILES,
-    ignores: [...PHASER_FILES, ...VITE_FILES],
-    rules: { "no-restricted-imports": ["error", { patterns: [OUTSIDE_KIT, PHASER, VITE] }] },
+    ignores: PHASER_FILES,
+    rules: { "no-restricted-imports": ["error", { patterns: [OUTSIDE_KIT, PHASER] }] },
   },
   {
     files: PHASER_FILES,
-    rules: { "no-restricted-imports": ["error", { patterns: [OUTSIDE_KIT, VITE] }] },
-  },
-  {
-    files: VITE_FILES,
-    rules: { "no-restricted-imports": ["error", { patterns: [OUTSIDE_KIT, PHASER] }] },
+    rules: { "no-restricted-imports": ["error", { patterns: [OUTSIDE_KIT] }] },
   },
   // No import cycles: a module in a cycle can run before what it imports has loaded. Type-only
   // imports are erased at build time, so they never form one.

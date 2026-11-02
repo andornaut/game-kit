@@ -1,24 +1,21 @@
 {
   "name": "@andornaut/game-kit",
-  "description": "Game-independent TypeScript mechanisms, browser and Phaser adapters, and build tools.",
+  "description": "Game-independent TypeScript mechanisms and Phaser adapters.",
   "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=24.21.0"
   },
   "scripts": {
-    "check": "tsc && tsc -p tsconfig.pure.json && tsc -p tsconfig.browser.json && tsc -p tsconfig.worker.json && tsc -p tsconfig.phaser.json && tsc -p tsconfig.node.json",
+    "check": "tsc && tsc -p tsconfig.pure.json && tsc -p tsconfig.phaser.json",
     "format": "prettier --write . && eslint --fix .",
     "lint": "prettier --check . && eslint --max-warnings 0 . && markdownlint-cli2",
     "test": "vitest run",
-    "verify": "bash scripts/check.sh",
-    "check:consumers": "bash scripts/check-consumers.sh"
+    "verify": "bash scripts/check.sh"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@jsquash/webp": "1.5.0",
     "@types/node": "^24.19.2",
-    "@types/pngjs": "6.0.5",
     "eslint": "^10.14.0",
     "eslint-plugin-import-x": "4.17.1",
     "eslint-plugin-simple-import-sort": "^14.0.0",
@@ -26,47 +23,18 @@
     "globals": "^17.13.0",
     "markdownlint-cli2": "^0.24.0",
     "phaser": "^4.2.1",
-    "pngjs": "7.0.0",
     "prettier": "^3.9.10",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.71.2",
     "vite": "^8.3.5",
     "vitest": "^5.0.5"
   },
-  "version": "0.3.2",
+  "version": "0.4.0",
   "peerDependencies": {
-    "@jsquash/webp": "1.5.0",
-    "@types/node": "^24.19.2",
-    "@types/pngjs": "6.0.5",
-    "phaser": "^4.2.1",
-    "pngjs": "7.0.0",
-    "typescript": "^6.0.3",
-    "vite": "^8.3.5",
-    "vitest": "^5.0.5"
+    "phaser": "^4.2.1"
   },
   "peerDependenciesMeta": {
-    "@jsquash/webp": {
-      "optional": true
-    },
-    "@types/node": {
-      "optional": true
-    },
-    "@types/pngjs": {
-      "optional": true
-    },
     "phaser": {
-      "optional": true
-    },
-    "pngjs": {
-      "optional": true
-    },
-    "typescript": {
-      "optional": true
-    },
-    "vite": {
-      "optional": true
-    },
-    "vitest": {
       "optional": true
     }
   },
@@ -79,36 +47,16 @@
   "exports": {
     "./arrays": "./src/arrays.ts",
     "./art/aseprite": "./src/art/aseprite.ts",
-    "./art/atlasBuild": "./src/art/atlasBuild.ts",
-    "./art/atlasLayout": "./src/art/atlasLayout.ts",
-    "./art/png": "./src/art/png.ts",
     "./art/rgbaImage": "./src/art/rgbaImage.ts",
-    "./art/webp": "./src/art/webp.ts",
     "./assertNever": "./src/assertNever.ts",
-    "./build/buildInfo": {
-      "types": "./src/build/buildInfo.d.ts"
-    },
-    "./build/buildLabel": "./src/build/buildLabel.ts",
-    "./build/buildVersion": "./src/build/buildVersion.ts",
-    "./build/contentHash": "./src/build/contentHash.ts",
-    "./build/phaserBuild": "./src/build/phaserBuild.ts",
-    "./build/phaserUses": "./src/build/phaserUses.ts",
-    "./build/vite/gameConfig": "./src/build/vite/gameConfig.ts",
-    "./build/vite/phaserBuildPlugin": "./src/build/vite/phaserBuildPlugin.ts",
     "./clock/fixedStep": "./src/clock/fixedStep.ts",
     "./clock/frameCap": "./src/clock/frameCap.ts",
     "./clock/phaser/capFrameRate": "./src/clock/phaser/capFrameRate.ts",
-    "./crash/crash.css": "./src/crash/crash.css",
-    "./crash/crashModel": "./src/crash/crashModel.ts",
-    "./crash/crashScreen": "./src/crash/crashScreen.ts",
-    "./headers/securityHeaders": "./src/headers/securityHeaders.ts",
-    "./headers/vite/securityHeadersPlugin": "./src/headers/vite/securityHeadersPlugin.ts",
     "./input/hold": "./src/input/hold.ts",
     "./input/listScroll": "./src/input/listScroll.ts",
     "./input/modalInput": "./src/input/modalInput.ts",
     "./input/onePress": "./src/input/onePress.ts",
     "./input/outsideTap": "./src/input/outsideTap.ts",
-    "./input/pagePresses": "./src/input/pagePresses.ts",
     "./input/phaser/catchOutsideTaps": "./src/input/phaser/catchOutsideTaps.ts",
     "./input/phaser/guardSceneInput": "./src/input/phaser/guardSceneInput.ts",
     "./input/tapGuard": "./src/input/tapGuard.ts",
@@ -121,28 +69,8 @@
     "./opaqueBounds": "./src/opaqueBounds.ts",
     "./package.json": "./package.json",
     "./progress": "./src/progress.ts",
-    "./progress/dom/progressBar": "./src/progress/dom/progressBar.ts",
     "./progress/phaser/drawProgressBar": "./src/progress/phaser/drawProgressBar.ts",
     "./progressState": "./src/progressState.ts",
-    "./pwa/appWindow": "./src/pwa/appWindow.ts",
-    "./pwa/audioUnlock": "./src/pwa/audioUnlock.ts",
-    "./pwa/backNavigation": "./src/pwa/backNavigation.ts",
-    "./pwa/cachePolicy": "./src/pwa/cachePolicy.ts",
-    "./pwa/exitApp": "./src/pwa/exitApp.ts",
-    "./pwa/hashedIcons": "./src/pwa/hashedIcons.ts",
-    "./pwa/installButton": "./src/pwa/installButton.ts",
-    "./pwa/installFlow": "./src/pwa/installFlow.ts",
-    "./pwa/installState": "./src/pwa/installState.ts",
-    "./pwa/offlinePlay": "./src/pwa/offlinePlay.ts",
-    "./pwa/precacheList": "./src/pwa/precacheList.ts",
-    "./pwa/serviceWorker": "./src/pwa/serviceWorker.ts",
-    "./pwa/serviceWorkerUrl": "./src/pwa/serviceWorkerUrl.ts",
-    "./pwa/storagePersistence": "./src/pwa/storagePersistence.ts",
-    "./pwa/updateReady": "./src/pwa/updateReady.ts",
-    "./pwa/visibility": "./src/pwa/visibility.ts",
-    "./pwa/vite/hashedIconsPlugin": "./src/pwa/vite/hashedIconsPlugin.ts",
-    "./pwa/vite/precachePlugin": "./src/pwa/vite/precachePlugin.ts",
-    "./pwa/wakeLock": "./src/pwa/wakeLock.ts",
     "./random": "./src/random.ts",
     "./records": "./src/records.ts",
     "./rect": "./src/rect.ts",
@@ -151,7 +79,6 @@
     "./save/saveStore": "./src/save/saveStore.ts",
     "./save/storage": "./src/save/storage.ts",
     "./save/versionedSave": "./src/save/versionedSave.ts",
-    "./sessionStore": "./src/sessionStore.ts",
     "./terrain/traversal": "./src/terrain/traversal.ts",
     "./text/bitmapFont": "./src/text/bitmapFont.ts",
     "./text/overflow": "./src/text/overflow.ts",
@@ -161,12 +88,8 @@
     "./text/textFit": "./src/text/textFit.ts",
     "./units": "./src/units.ts",
     "./view/fitCheck": "./src/view/fitCheck.ts",
-    "./view/frameTurn": "./src/view/frameTurn.ts",
-    "./view/frameTurnLandscapeGame.css": "./src/view/frameTurnLandscapeGame.css",
-    "./view/frameTurnPortraitGame.css": "./src/view/frameTurnPortraitGame.css",
     "./view/modalDim": "./src/view/modalDim.ts",
     "./view/pagePoint": "./src/view/pagePoint.ts",
-    "./view/phaser/followFrameTurn": "./src/view/phaser/followFrameTurn.ts",
     "./view/phaser/modalBackdrop": "./src/view/phaser/modalBackdrop.ts",
     "./view/phaser/snapshotRemap": "./src/view/phaser/snapshotRemap.ts",
     "./view/settleFit": "./src/view/settleFit.ts"

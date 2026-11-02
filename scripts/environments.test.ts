@@ -10,10 +10,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 it.each([
   ["pure", ["document", "process", "Buffer"]],
-  ["browser", ["process", "Buffer"]],
-  ["worker", ["document", "process"]],
   ["phaser", ["process", "Buffer"]],
-  ["node", ["document", "window"]],
 ] as const)(
   "rejects foreign ambient globals in the %s source environment",
   (environment, globals) => {
@@ -40,7 +37,7 @@ it.each([
 it("assigns every public TypeScript source module to an explicit environment", () => {
   const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   const declared = new Set(
-    ["pure", "browser", "worker", "phaser", "node"].flatMap(
+    ["pure", "phaser"].flatMap(
       (name) => JSON.parse(readFileSync(join(root, `tsconfig.${name}.json`), "utf8")).files,
     ),
   );

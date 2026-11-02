@@ -78,12 +78,14 @@ for (const target of targets(manifest.exports)) {
   assert(!/(?<!\.d)\.[cm]?tsx?$/.test(target), `Runtime TypeScript export: ${target}`);
   assert(fs.statSync(path.join(installed, target)).isFile(), `Missing export: ${target}`);
 }
-for (const subpath of ['crash/crash.css', 'view/frameTurnLandscapeGame.css', 'view/frameTurnPortraitGame.css']) {
-  const resolved = require.resolve(`@andornaut/game-kit/${subpath}`);
-  assert(resolved.startsWith(installed + path.sep));
-  assert(fs.readFileSync(resolved, 'utf8').trim().length > 0);
+for (const [subpath, entry] of Object.entries(manifest.exports)) {
+  if (typeof entry === 'string' && entry.endsWith('.css')) {
+    const resolved = require.resolve(`@andornaut/game-kit/${subpath.slice(2)}`);
+    assert(resolved.startsWith(installed + path.sep));
+    assert(fs.readFileSync(resolved, 'utf8').trim().length > 0);
+  }
 }
-for (const subpath of ['src/numbers.ts', 'src/build/vite/gameConfig.ts', 'dist/numbers.js', 'SOURCE_COMMIT']) {
+for (const subpath of ['src/numbers.ts', 'dist/numbers.js', 'SOURCE_COMMIT']) {
   assert.throws(() => require.resolve(`@andornaut/game-kit/${subpath}`), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
 }
 console.log(JSON.stringify({ source: process.env.EXPECTED_KIT_COMMIT, package: entry }));
@@ -121,7 +123,10 @@ import assert from 'node:assert/strict';
 import { clamp, lerp } from '@andornaut/game-kit/numbers';
 import { advanceWidth } from '@andornaut/game-kit/text/bitmapFont';
 import { createProgressState } from '@andornaut/game-kit/progressState';
-await import('@andornaut/game-kit/build/vite/gameConfig');
+import { memoryStorage } from '@andornaut/game-kit/save/storage';
+const storage = memoryStorage();
+await storage.write('proof', 'value');
+assert.equal(await storage.read('proof'), 'value');
 assert.equal(clamp(0, 1, 2), 1);
 assert.equal(lerp(2, 6, 2), 10);
 assert.equal(typeof advanceWidth, 'function');

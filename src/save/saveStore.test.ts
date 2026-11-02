@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { saveStore } from "./saveStore.ts";
-import { browserStorage, lazyStorage, memoryStorage, type SaveStorage } from "./storage.ts";
+import { memoryStorage, type SaveStorage } from "./storage.ts";
 import type { SaveFormat } from "./versionedSave.ts";
 
 // A save of a count of coins at version 1, which refuses a negative count.
@@ -143,45 +143,5 @@ describe("saveStore", () => {
       expect(calls.writes).toBe(1);
       expect(entries.get(KEYS.save)).toBe("{not json");
     });
-  });
-});
-
-describe("browserStorage", () => {
-  it("turns a throwing setItem into an unavailable save", async () => {
-    const full = browserStorage({
-      getItem: () => null,
-      setItem: () => {
-        throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
-      },
-    });
-    expect(await saveStore(full, KEYS, FORMAT).save(5)).toEqual({
-      reason: "The quota has been exceeded.",
-      status: "unavailable",
-    });
-  });
-});
-
-describe("lazyStorage", () => {
-  it("turns a storage that cannot even be looked up into an unavailable load", async () => {
-    const blocked = lazyStorage(() => {
-      throw new DOMException("Access is denied for this document.", "SecurityError");
-    });
-    expect((await saveStore(browserStorage(blocked), KEYS, FORMAT).load()).status).toBe(
-      "unavailable",
-    );
-  });
-
-  it("reads and writes through the Storage-like object it looks up", async () => {
-    const entries = new Map<string, string>();
-    const local = lazyStorage(() => ({
-      getItem: (key) => entries.get(key) ?? null,
-      setItem: (key, value) => {
-        entries.set(key, value);
-      },
-    }));
-    const store = saveStore(browserStorage(local), KEYS, FORMAT);
-    await store.save(5);
-    expect(entries.get(KEYS.save)).toBe(STORED);
-    expect((await store.load()).save).toBe(5);
   });
 });

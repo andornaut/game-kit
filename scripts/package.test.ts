@@ -3,7 +3,6 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createProgressState } from "@andornaut/game-kit/progressState";
-import ts from "typescript";
 import { expect, it } from "vitest";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -17,7 +16,6 @@ it("exposes the root source package through explicit existing module paths", () 
   const lock = JSON.parse(readFileSync(resolve(root, "package-lock.json"), "utf8"));
   expect([lock.version, lock.packages[""].version]).toEqual([manifest.version, manifest.version]);
   expect(manifest.name).toBe("@andornaut/game-kit");
-  expect(existsSync(resolve(root, "kit/package.json"))).toBe(false);
   expect(Object.keys(manifest.exports)).not.toContain(".");
   for (const [name, target] of Object.entries(manifest.exports)) {
     expect(name).not.toContain("*");
@@ -33,13 +31,6 @@ it("exposes the root source package through explicit existing module paths", () 
       expect(target.types).toMatch(/\.d\.ts$/);
     }
   }
-  const declaration = ts.resolveModuleName(
-    "@andornaut/game-kit/build/buildInfo",
-    fileURLToPath(import.meta.url),
-    { moduleResolution: ts.ModuleResolutionKind.Bundler },
-    ts.sys,
-  ).resolvedModule;
-  expect(declaration?.resolvedFileName).toBe(resolve(root, "src/build/buildInfo.d.ts"));
   const state = createProgressState();
   const snapshots: unknown[] = [];
   const unsubscribe = state.subscribe((snapshot) => snapshots.push(snapshot));
