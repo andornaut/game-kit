@@ -110,7 +110,7 @@ The public source repository is [andornaut/game-kit](https://github.com/andornau
 ```bash
 bash scripts/check-release-consumers.sh \
   <artifact.tgz> <sha256> <source-commit> \
-  <Dog-repository> <Dog-revision> <Chibi-repository> <Chibi-revision>
+  <Archie-repository> <Archie-revision> <Chibi-repository> <Chibi-revision>
 ```
 
 This proof checks immutable consumer snapshots with the exact compiled artifact, source revision and checksum. It validates installed bytes, lockfile integrity, every export, native imports and declarations, actual parent Vite/Vitest configuration bootstrap and focused client wiring. It never edits live checkouts or builds/deploys a game. Both pinned revisions must already use their parent-owned website/tooling implementations. Offline consumer caches are selected by `GAME_KIT_DOG_CACHE` and `GAME_KIT_DUCK_CACHE`. Evidence is retained in the printed scratch directory.
