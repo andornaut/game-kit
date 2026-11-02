@@ -140,7 +140,7 @@ WORKAROUND: Parent-scoped development overrides pin [KaTeX](https://github.com/a
 - **Motion:** games validate finite coordinates, starts and nonnegative durations. Zero duration changes instantly at its start; infinite query positions select endpoints. Games retain clocks, randomness, movement profiles, physics and collisions. `motion/Point` is a compatibility type export of the same immutable point contract as `rect/Point`.
 - **Pixel fonts:** `text/pixelFont` accepts glyph bits, widths, height, spacing and space width through `PixelFontContext`; it returns atlas geometry and advances. Clients own glyph definitions and text normalization. `text/phaser/registerPixelFont` registers a supplied atlas with the scene using explicit key, colour, size, line height and space advance.
 - **Progress:** `undefined` means an unknown total, drawn as a static centred segment; finite values are clamped from zero to one. `createProgressState` replaces the previous operation on each `begin`; stale handles cannot update or finish its replacement. DOM and Phaser adapters share geometry. Games own visibility, timing and accessible labels; the caller clears Phaser graphics.
-- **Saves:** games own keys, schemas, validation and migration policy. A newer stored version is preserved; a corrupt save is backed up before replacement. Failed storage access disables writes for the session.
+- **Saves:** games own keys, schemas, validation and migration policy. A newer stored version is preserved; a corrupt save is backed up before replacement. Failed reads or backups disable writes for the session. Failed writes may be retried. Encoding and JSON serialization failures return `invalid` without writing.
 
 ## Atlas packing
 

@@ -17,11 +17,38 @@ export_package_payload() {
   fi
 }
 
-install_package_payload() {
+install_package_payload() (
+  set -euo pipefail
   local payload=$1 revision=$2 destination=$3
   [ ! -L "$destination" ] || { echo "Refusing a symlink vendor directory: $destination" >&2; return 1; }
-  mkdir -p "$destination"
-  find "$destination" -depth -mindepth 1 ! -path "$destination/KIT_COMMIT" -delete
-  cp -a "$payload/." "$destination/"
-  echo "$revision" >"$destination/KIT_COMMIT"
-}
+  local stage backup installed=false moved=false
+  mkdir -p "$(dirname "$destination")"
+  stage=$(mktemp -d "$destination.stage.XXXXXXXX")
+  backup=$(mktemp -d "$destination.backup.XXXXXXXX")
+  finish_payload() {
+    local result=$?
+    trap - EXIT
+    if $moved && ! $installed; then
+      if ! mv -T -- "$backup/payload" "$destination"; then
+        echo 'Payload replacement failed; the previous payload is retained in its backup directory.' >&2
+        exit 1
+      fi
+    fi
+    if [ -d "$stage" ]; then
+      find "$stage" -depth -delete
+    fi
+    find "$backup" -depth -delete
+    exit "$result"
+  }
+  trap finish_payload EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  cp -a "$payload/." "$stage/"
+  printf '%s\n' "$revision" >"$stage/KIT_COMMIT"
+  if [ -e "$destination" ]; then
+    mv -T -- "$destination" "$backup/payload"
+    moved=true
+  fi
+  mv -T -- "$stage" "$destination"
+  installed=true
+)

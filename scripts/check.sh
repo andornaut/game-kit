@@ -10,20 +10,7 @@ check_image=$(node_check_image "$check_root")
 cd -- "$check_root"
 
 fingerprint() {
-  {
-    git rev-parse HEAD
-    git status --porcelain=v1 --untracked-files=all -z
-    while IFS= read -r -d '' path; do
-      printf '%s\0' "$path"
-      if [[ -L "$path" ]]; then
-        readlink -- "$path"
-      elif [[ -f "$path" ]]; then
-        sha256sum -- "$path"
-      else
-        printf 'missing\0'
-      fi
-    done < <(git ls-files --cached --others --exclude-standard -z | sort -zu)
-  } | sha256sum
+  python3 "$check_root/scripts/source-fingerprint.py" "$check_root"
 }
 
 mkdir -p "$check_root/.claude"

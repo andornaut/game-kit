@@ -108,8 +108,12 @@ export function loadSave<Doc>(format: SaveFormat<Doc>, raw: string | null): Load
 
 // The text stored for a save at the format's version, or why it cannot be stored.
 export function encodeSave<Doc>(format: SaveFormat<Doc>, save: Doc): Checked<string> {
-  const encoded = format.encode(save);
-  return encoded.ok
-    ? { ok: true, value: JSON.stringify({ ...encoded.value, version: format.version }) }
-    : encoded;
+  try {
+    const encoded = format.encode(save);
+    return encoded.ok
+      ? { ok: true, value: JSON.stringify({ ...encoded.value, version: format.version }) }
+      : encoded;
+  } catch {
+    return { ok: false, reason: "The save could not be encoded as JSON" };
+  }
 }

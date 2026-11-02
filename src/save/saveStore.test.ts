@@ -40,6 +40,30 @@ function faultyStorage(entries: Map<string, string>, faults: { read?: boolean; w
 }
 
 describe("saveStore", () => {
+  it.each(["bigint", "cycle", "encoder"])(
+    "reports %s encoding failure without writing",
+    async (kind) => {
+      const entries = new Map([[KEYS.save, STORED]]);
+      const cycle: Record<string, unknown> = {};
+      cycle.self = cycle;
+      const format: SaveFormat<number> = {
+        ...FORMAT,
+        encode: () => {
+          if (kind === "encoder") {
+            throw new Error("private encoder detail");
+          }
+          return { ok: true, value: kind === "cycle" ? cycle : { value: 1n } };
+        },
+      };
+      const { calls, storage } = faultyStorage(entries, {});
+      expect(await saveStore(storage, KEYS, format).save(1)).toEqual({
+        reason: "The save could not be encoded as JSON",
+        status: "invalid",
+      });
+      expect(calls.writes).toBe(0);
+      expect(entries.get(KEYS.save)).toBe(STORED);
+    },
+  );
   it("round-trips a save", async () => {
     const entries = new Map<string, string>();
     const store = saveStore(memoryStorage(entries), KEYS, FORMAT);

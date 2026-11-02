@@ -1,6 +1,7 @@
 import type { Scene } from "phaser";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { mountModalBackdrop } from "./modalBackdrop.ts";
 import { snapshotRemapped } from "./snapshotRemap.ts";
 
 // The browser's image element, which Node lacks.
@@ -24,7 +25,8 @@ class FakeContext {
 
 // A scene whose renderer reads back snapshot, and whose texture manager holds textures by key.
 // canvas false: the manager makes no canvas texture.
-function fakeScene(snapshot: unknown, canvas = true) {
+function fakeScene(snapshot: unknown, canvas = true, deferred = false) {
+  let complete = () => {};
   const context = new FakeContext();
   const textures = new Map<string, { refreshed: boolean }>([["dim", { refreshed: false }]]);
   const areas: number[][] = [];
@@ -33,7 +35,10 @@ function fakeScene(snapshot: unknown, canvas = true) {
       renderer: {
         snapshotArea(x: number, y: number, w: number, h: number, callback: (s: unknown) => void) {
           areas.push([x, y, w, h]);
-          callback(snapshot);
+          complete = () => callback(snapshot);
+          if (!deferred) {
+            complete();
+          }
         },
       },
     },
@@ -56,7 +61,7 @@ function fakeScene(snapshot: unknown, canvas = true) {
       remove: (key: string) => textures.delete(key),
     },
   };
-  return { areas, context, scene: scene as unknown as Scene, textures };
+  return { areas, complete: () => complete(), context, scene: scene as unknown as Scene, textures };
 }
 
 const AREA = { height: 1, width: 1, x: 3, y: 4 };
@@ -66,6 +71,68 @@ afterEach(() => {
 });
 
 describe("snapshotRemapped", () => {
+  it("settles a modal fallback and removes its failed deferred capture", async () => {
+    (globalThis as { HTMLImageElement?: unknown }).HTMLImageElement = FakeImage;
+    const { complete, scene, textures } = fakeScene(new FakeImage(), true, true);
+    let destroyed = false;
+    let fallback = false;
+    const object = {
+      destroy() {
+        destroyed = true;
+      },
+      setDepth() {
+        return object;
+      },
+      setOrigin() {
+        return object;
+      },
+      setScrollFactor() {
+        return object;
+      },
+    };
+    Object.assign(scene, {
+      add: {
+        rectangle() {
+          fallback = true;
+          return object;
+        },
+      },
+      events: { off() {}, once() {} },
+    });
+    const handle = mountModalBackdrop(
+      {
+        depth: 1,
+        fallbackColour: 0,
+        remap: () => {
+          throw new Error("readback failed");
+        },
+        scene,
+      },
+      AREA,
+    );
+    complete();
+    await expect(handle.ready).resolves.toBe(false);
+    expect(fallback).toBe(true);
+    expect([...textures.keys()]).toEqual(["dim"]);
+    handle.destroy();
+    expect(destroyed).toBe(true);
+  });
+  it("rejects errors from a deferred renderer callback", async () => {
+    (globalThis as { HTMLImageElement?: unknown }).HTMLImageElement = FakeImage;
+    const { complete, scene } = fakeScene(new FakeImage(), true, true);
+    const failure = new Error("readback failed");
+    const pending = snapshotRemapped(
+      () => {
+        throw failure;
+      },
+      scene,
+      AREA,
+      "dim",
+    );
+    const rejected = expect(pending).rejects.toBe(failure);
+    expect(complete).not.toThrow();
+    await rejected;
+  });
   it("draws the area's pixels remapped into a fresh texture", async () => {
     (globalThis as { HTMLImageElement?: unknown }).HTMLImageElement = FakeImage;
     const image = new FakeImage();
