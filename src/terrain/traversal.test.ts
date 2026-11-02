@@ -68,6 +68,9 @@ describe("terrain traversal", () => {
     const before = rect(-5, 10, 20, 2),
       middle = rect(-3, 8, 20, 2),
       after = rect(-5, 6, 20, 2);
+    Object.freeze(before);
+    Object.freeze(middle);
+    Object.freeze(after);
     const c = context([
       {
         after,
@@ -86,6 +89,7 @@ describe("terrain traversal", () => {
     expect(Math.max(...result.segments.map((segment) => segment.to.x))).toBeCloseTo(2);
     expect(result.state.y).toBeCloseTo(4);
     expect(result.state.grounded).toBe(true);
+    expect(result.state.supportId).toBe(ground);
   });
   it("a moving side pushes the body and crushing fails atomically", () => {
     const mover: TraversalCollider<object> = {
@@ -170,8 +174,18 @@ describe("terrain traversal", () => {
     expect(findTraversal(context([]), { ...request, horizonSteps: 0 }).status).toBe("unreachable");
   });
   it("rejects incomplete segment timelines and safety/drop failures atomically", () => {
-    const invalid = { ...fixed(ground, floor), segments: [] };
-    expect(stepTraversal(context([invalid]), input, start).status).toBe("geometry-unavailable");
+    const timelines = [
+      [],
+      [{ endSeconds: 0, from: floor, startSeconds: 0, to: floor }],
+      [
+        { endSeconds: 0.04, from: floor, startSeconds: 0, to: floor },
+        { endSeconds: 0.1, from: floor, startSeconds: 0.05, to: floor },
+      ],
+    ];
+    for (const segments of timelines) {
+      const invalid = { ...fixed(ground, floor), segments };
+      expect(stepTraversal(context([invalid]), input, start).status).toBe("geometry-unavailable");
+    }
     const unsafe = stepTraversal(
       { ...context([fixed(ground, floor)]), safe: () => false },
       input,
@@ -420,9 +434,13 @@ it("retains waits at the same position until a moving wall opens", () => {
   expect(result.inputs.map(({ move }) => move)).toEqual([1, 0, 0, 0, 1, 1, 1, 1]);
   expect(result.inputs.every(({ jump }) => !jump)).toBe(true);
   expect(result.work).toEqual({ states: 22, steps: 48 });
-  expect(findTraversal(context, { ...request, start: { ...start, vy: -0, x: -0 } })).toEqual(
-    result,
-  );
+  expect(
+    findTraversal(context, {
+      ...request,
+      start: { ...start, vy: -0, x: -0 },
+      timeSeconds: -0,
+    }),
+  ).toEqual(result);
   let state = start;
   let repeats = 0;
   for (const input of result.inputs) {

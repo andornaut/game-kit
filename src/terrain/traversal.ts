@@ -203,16 +203,23 @@ function validGeometry<Id>(time: number, dt: number, geometry: TraversalGeometry
   return true;
 }
 function atTime<Id>(time: number, dt: number, collider: TraversalCollider<Id>, at: number): Rect {
-  const list = motions(time, dt, collider);
-  const s = list.find((s) => at < s.endSeconds) ?? list[list.length - 1]!;
-  const fraction = Math.max(
-    0,
-    Math.min(1, (at - s.startSeconds) / (s.endSeconds - s.startSeconds)),
-  );
+  const list = collider.segments;
+  let start = time;
+  let end = time + dt;
+  let from = collider.before;
+  let to = collider.after;
+  if (list) {
+    const segment = list.find((s) => at < s.endSeconds) ?? list[list.length - 1]!;
+    start = segment.startSeconds;
+    end = segment.endSeconds;
+    from = segment.from;
+    to = segment.to;
+  }
+  const fraction = Math.max(0, Math.min(1, (at - start) / (end - start)));
   return {
-    ...s.from,
-    x: s.from.x + (s.to.x - s.from.x) * fraction,
-    y: s.from.y + (s.to.y - s.from.y) * fraction,
+    ...from,
+    x: from.x + (to.x - from.x) * fraction,
+    y: from.y + (to.y - from.y) * fraction,
   };
 }
 function supports<Id>(
@@ -398,15 +405,17 @@ export function stepTraversal<Id>(
   if (geometry.colliders.some((c) => c.kind === "solid" && overlaps(body, c.before, e))) {
     return fail("blocked");
   }
-  const times = [
-    ...new Set([
-      time,
-      time + dt,
-      ...geometry.colliders.flatMap((c) =>
-        motions(time, dt, c).flatMap((s) => [s.startSeconds, s.endSeconds]),
-      ),
-    ]),
-  ].sort((a, b) => a - b);
+  // Unsegmented colliders share the step endpoints already present in this set.
+  const boundaries = new Set([time, time + dt]);
+  for (const collider of geometry.colliders) {
+    if (collider.segments) {
+      for (const segment of collider.segments) {
+        boundaries.add(segment.startSeconds);
+        boundaries.add(segment.endSeconds);
+      }
+    }
+  }
+  const times = [...boundaries].sort((a, b) => a - b);
   const segments: TraversalSafety[] = [];
   let iterations = 0;
   let fallFromY = carrier ? body.y + body.height : state.fallFromY;
