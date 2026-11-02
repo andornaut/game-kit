@@ -90,6 +90,14 @@ describe("terrain traversal", () => {
     expect(result.state.y).toBeCloseTo(4);
     expect(result.state.grounded).toBe(true);
     expect(result.state.supportId).toBe(ground);
+    expect(Object.keys(result.state)).toEqual([
+      "grounded",
+      "vy",
+      "x",
+      "y",
+      "supportId",
+      "fallFromY",
+    ]);
   });
   it("a moving side pushes the body and crushing fails atomically", () => {
     const mover: TraversalCollider<object> = {
@@ -116,6 +124,7 @@ describe("terrain traversal", () => {
     const result = stepTraversal(c, { ...input, move: 1 }, { ...start, grounded: false, x: 2 });
     expect(result.status).toBe("ok");
     expect(result.state.grounded).toBe(false);
+    expect(Object.keys(result.state)).toEqual(["grounded", "vy", "x", "y", "fallFromY"]);
     expect(result.state.y).toBeGreaterThan(8);
     const narrow = stepTraversal(
       context([fixed({}, rect(1, 10, 0.5, 2))]),
@@ -177,6 +186,7 @@ describe("terrain traversal", () => {
     const timelines = [
       [],
       [{ endSeconds: 0, from: floor, startSeconds: 0, to: floor }],
+      [{ endSeconds: 0.1 + 1e-8, from: floor, startSeconds: 0, to: floor }],
       [
         { endSeconds: 0.04, from: floor, startSeconds: 0, to: floor },
         { endSeconds: 0.1, from: floor, startSeconds: 0.05, to: floor },
@@ -294,6 +304,32 @@ describe("terrain traversal", () => {
     expect(result.state.y).toBeCloseTo(3);
     expect(result.state.grounded).toBe(false);
     expect(result.state.vy).toBeLessThan(0);
+  });
+  it("preserves collapsed clocks with accepted empty segments and without colliders", () => {
+    const time = 2 ** 53;
+    const tick = { ...input, timeSeconds: time };
+    const supported = stepTraversal(
+      context([{ ...fixed(ground, floor), segments: [] }]),
+      tick,
+      start,
+    );
+    expect(supported.status).toBe("ok");
+    expect(supported.state).toEqual(start);
+    expect(supported.segments).toEqual([
+      {
+        endSeconds: time,
+        from: rect(start.x, start.y, 2, 2),
+        phase: "landing",
+        startSeconds: time,
+        to: rect(start.x, start.y, 2, 2),
+      },
+    ]);
+    const unsupported = stepTraversal(context([]), tick, { ...start, grounded: false });
+    expect(unsupported.status).toBe("ok");
+    expect(unsupported.state.x).toBe(start.x);
+    expect(unsupported.state.y).toBe(start.y);
+    expect(Object.hasOwn(unsupported.state, "supportId")).toBe(false);
+    expect(unsupported.segments).toEqual([]);
   });
 });
 

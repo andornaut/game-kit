@@ -405,17 +405,31 @@ export function stepTraversal<Id>(
   if (geometry.colliders.some((c) => c.kind === "solid" && overlaps(body, c.before, e))) {
     return fail("blocked");
   }
-  // Unsegmented colliders share the step endpoints already present in this set.
-  const boundaries = new Set([time, time + dt]);
+  // Allocate the set and sort only when a segment adds another boundary value.
+  const stepEnd = time + dt;
+  let boundaries: Set<number> | undefined;
   for (const collider of geometry.colliders) {
     if (collider.segments) {
       for (const segment of collider.segments) {
-        boundaries.add(segment.startSeconds);
-        boundaries.add(segment.endSeconds);
+        if (segment.startSeconds !== time && segment.startSeconds !== stepEnd) {
+          boundaries ??= new Set([time, stepEnd]);
+          boundaries.add(segment.startSeconds);
+        }
+        if (segment.endSeconds !== time && segment.endSeconds !== stepEnd) {
+          boundaries ??= new Set([time, stepEnd]);
+          boundaries.add(segment.endSeconds);
+        }
       }
     }
   }
-  const times = [...boundaries].sort((a, b) => a - b);
+  // Set normalizes signed zero and deduplicates clocks whose addition collapses.
+  const startBoundary = time === 0 ? 0 : time;
+  const endBoundary = stepEnd === 0 ? 0 : stepEnd;
+  const times = boundaries
+    ? [...boundaries].sort((a, b) => a - b)
+    : startBoundary === endBoundary
+      ? [startBoundary]
+      : [startBoundary, endBoundary];
   const segments: TraversalSafety[] = [];
   let iterations = 0;
   let fallFromY = carrier ? body.y + body.height : state.fallFromY;
@@ -523,18 +537,28 @@ export function stepTraversal<Id>(
     segments.push(landing);
     fallFromY = body.y + body.height;
   }
+  /* eslint-disable sort-keys -- Preserve the public state's existing property order. */
   return {
     segments,
-    state: {
-      grounded: Boolean(support),
-      vy: support ? 0 : vy,
-      x: body.x - context.body.offset.x,
-      y: body.y - context.body.offset.y,
-      ...(support ? { supportId: support.supportId } : {}),
-      fallFromY,
-    },
+    state: support
+      ? {
+          grounded: true,
+          vy: 0,
+          x: body.x - context.body.offset.x,
+          y: body.y - context.body.offset.y,
+          supportId: support.supportId,
+          fallFromY,
+        }
+      : {
+          grounded: false,
+          vy,
+          x: body.x - context.body.offset.x,
+          y: body.y - context.body.offset.y,
+          fallFromY,
+        },
     status: "ok",
   };
+  /* eslint-enable sort-keys */
 }
 
 export function findTraversal<Id>(
