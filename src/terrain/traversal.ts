@@ -548,6 +548,8 @@ export function findTraversal<Id>(
     depth: number;
     parent?: Node;
     input?: TraversalInput;
+    score: number;
+    order: number;
   }
   const work = { states: 1, steps: 0 };
   const initialGeometry = context.sampleColliders(
@@ -558,36 +560,66 @@ export function findTraversal<Id>(
   if (!validGeometry(request.timeSeconds, context.dtSeconds, initialGeometry)) {
     return { status: "geometry-unavailable", work };
   }
-  const frontier: Node[] = [{ depth: 0, state: request.start }];
+  const frontier: Node[] = [];
   const identities = new Map<Id, number>();
   const key = (depth: number, s: TraversalState<Id>) => {
     if (s.supportId !== undefined && !identities.has(s.supportId)) {
       identities.set(s.supportId, identities.size);
     }
-    return [
-      depth,
-      s.x,
-      s.y,
-      s.vy,
-      s.grounded,
-      s.fallFromY,
-      s.supportId === undefined ? "none" : identities.get(s.supportId),
-    ].join(":");
+    const support = s.supportId === undefined ? "none" : identities.get(s.supportId);
+    return `${depth}:${s.x}:${s.y}:${s.vy}:${s.grounded}:${s.fallFromY}:${support}`;
   };
   const seen = new Set([key(0, request.start)]);
-  const distance = (node: Node) => {
-    const b = box(context, node.state);
+  const distance = (state: TraversalState<Id>) => {
+    const b = box(context, state);
     // Ascent can clear an obstruction before descending into the landing corridor.
     // Zero vertical speed above that corridor also includes partial ledge contacts.
     return (
       Math.max(0, request.goal.x - b.x, b.x + b.width - request.goal.x - request.goal.width) +
       Math.max(0, b.y + b.height - request.goal.y - request.goal.height) +
-      (node.state.vy === 0 ? Math.max(0, request.goal.y - b.y) : 0)
+      (state.vy === 0 ? Math.max(0, request.goal.y - b.y) : 0)
     );
   };
+  // Stable sort followed by pop selects the latest insertion on an exact tie.
+  // Cache only scores derived from immutable states and the fixed request goal.
+  const preferred = (a: Node, b: Node) =>
+    (b.score - a.score || a.depth - b.depth || a.order - b.order) > 0;
+  const push = (node: Node) => {
+    let index = frontier.length;
+    frontier.push(node);
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2);
+      if (!preferred(node, frontier[parent]!)) {
+        break;
+      }
+      frontier[index] = frontier[parent]!;
+      index = parent;
+    }
+    frontier[index] = node;
+  };
+  const pop = (): Node => {
+    const node = frontier[0]!;
+    const last = frontier.pop()!;
+    if (frontier.length) {
+      let index = 0;
+      while (index * 2 + 1 < frontier.length) {
+        let child = index * 2 + 1;
+        if (child + 1 < frontier.length && preferred(frontier[child + 1]!, frontier[child]!)) {
+          child++;
+        }
+        if (!preferred(frontier[child]!, last)) {
+          break;
+        }
+        frontier[index] = frontier[child]!;
+        index = child;
+      }
+      frontier[index] = last;
+    }
+    return node;
+  };
+  push({ depth: 0, order: 0, score: distance(request.start), state: request.start });
   while (frontier.length) {
-    frontier.sort((a, b) => distance(b) - distance(a) || a.depth - b.depth);
-    const node = frontier.pop()!;
+    const node = pop();
     if (node.state.grounded && inside(request.goal, box(context, node.state), context.epsilon)) {
       // Validate even an empty witness against actual geometry and caller safety.
       const body = box(context, node.state);
@@ -650,7 +682,14 @@ export function findTraversal<Id>(
         }
         seen.add(id);
         work.states++;
-        frontier.push({ depth: node.depth + 1, input, parent: node, state: result.state });
+        push({
+          depth: node.depth + 1,
+          input,
+          order: work.states,
+          parent: node,
+          score: distance(result.state),
+          state: result.state,
+        });
       }
     }
   }

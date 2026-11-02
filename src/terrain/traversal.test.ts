@@ -252,6 +252,17 @@ describe("terrain traversal", () => {
       RangeError,
     );
     expect(() => findTraversal(context([]), { ...request, horizonSteps: 1.5 })).toThrow(RangeError);
+    expect(() =>
+      findTraversal(
+        {
+          ...context([]),
+          sampleColliders: () => {
+            throw new Error("Invalid state must be rejected before sampling");
+          },
+        },
+        { ...request, start: { ...start, vy: Infinity } },
+      ),
+    ).toThrow(RangeError);
     expect(
       findTraversal(
         { ...context([]), sampleColliders: () => ({ colliders: [], complete: false }) },
@@ -392,18 +403,26 @@ it("retains waits at the same position until a moving wall opens", () => {
     x: 0,
     y: 8,
   };
-  const result = findTraversal(context, {
+  const request = {
     goal: { height: 2, width: 4, x: 5, y: 8 },
     horizonSteps: 12,
     maxStates: 256,
     maxSteps: 4096,
     start,
     timeSeconds: 0,
-  });
+  };
+  const result = findTraversal(context, request);
   expect(result.status).toBe("found");
   if (result.status !== "found") {
     return;
   }
+  // Exact ties retain the existing stable-sort/pop witness and work accounting.
+  expect(result.inputs.map(({ move }) => move)).toEqual([1, 0, 0, 0, 1, 1, 1, 1]);
+  expect(result.inputs.every(({ jump }) => !jump)).toBe(true);
+  expect(result.work).toEqual({ states: 22, steps: 48 });
+  expect(findTraversal(context, { ...request, start: { ...start, vy: -0, x: -0 } })).toEqual(
+    result,
+  );
   let state = start;
   let repeats = 0;
   for (const input of result.inputs) {
