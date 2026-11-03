@@ -83,3 +83,40 @@ it("rejects a source revision belonging to another package before launching Dock
   const { run } = fixture("another-package");
   expect(run).toThrow(/Source revision is not @andornaut\/game-kit/);
 });
+
+it.each([
+  [
+    "current traversal callers",
+    ["src/rules/behaviourTraversalGoals.test.ts", "src/view/mapMarks.test.ts"],
+    "src/rules/behaviourTraversalGoals.test.ts",
+  ],
+  ["older renderer callers", ["src/view/mapMarks.test.ts"], "src/view/mapMarks.test.ts"],
+  ["missing caller coverage", [], undefined],
+] as const)("selects a real test or fails for %s", (_, paths, expected) => {
+  const root = mkdtempSync(join(tmpdir(), "kit-consumer-test-selection-"));
+  mkdirSync(join(root, "node_modules/.bin"), { recursive: true });
+  writeFileSync(join(root, "node_modules/.bin/vitest"), '#!/bin/sh\nprintf "%s\\n" "$@"\n', {
+    mode: 0o755,
+  });
+  for (const path of paths) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), "");
+  }
+  const job = readFileSync(join(source, "scripts/release-consumer-job.sh"), "utf8");
+  const selection = job.slice(
+    job.lastIndexOf('    if [ "$game" = dog ]; then'),
+    job.indexOf("\n  ) >"),
+  );
+  const run = () =>
+    execFileSync("bash", ["-euc", selection], {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, game: "duck" },
+      stdio: "pipe",
+    });
+  if (expected === undefined) {
+    expect(run).toThrow(/No supported Chibi caller test exists/);
+  } else {
+    expect(run().trim().split("\n")).toEqual(["run", expected, "--maxWorkers=4"]);
+  }
+});

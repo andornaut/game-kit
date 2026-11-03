@@ -150,7 +150,19 @@ JS
     if [ "$game" = dog ]; then
       node_modules/.bin/vitest run src/home/modalLayout.test.ts --maxWorkers=4
     else
-      node_modules/.bin/vitest run src/view/mapMarks.test.ts --maxWorkers=4
+      duck_test=
+      # Current traversal caller proof; the renderer test supports older exact pins.
+      for candidate in src/rules/behaviourTraversalGoals.test.ts src/view/mapMarks.test.ts; do
+        if [ -f "$candidate" ]; then
+          duck_test=$candidate
+          break
+        fi
+      done
+      if [ -z "$duck_test" ]; then
+        echo 'No supported Chibi caller test exists in the pinned snapshot' >&2
+        exit 1
+      fi
+      node_modules/.bin/vitest run "$duck_test" --maxWorkers=4
     fi
   ) >"/scratch/$game.log" 2>&1
   result=$?
