@@ -29,7 +29,7 @@
     "vite": "^8.3.5",
     "vitest": "^5.0.5"
   },
-  "version": "0.5.0",
+  "version": "0.6.0",
   "peerDependencies": {
     "phaser": "^4.2.1"
   },
@@ -79,6 +79,7 @@
     "./save/saveStore": "./src/save/saveStore.ts",
     "./save/storage": "./src/save/storage.ts",
     "./save/versionedSave": "./src/save/versionedSave.ts",
+    "./terrain/crumbling": "./src/terrain/crumbling.ts",
     "./terrain/traversal": "./src/terrain/traversal.ts",
     "./text/bitmapFont": "./src/text/bitmapFont.ts",
     "./text/overflow": "./src/text/overflow.ts",

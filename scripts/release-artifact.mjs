@@ -65,8 +65,11 @@ import { memoryStorage } from '@andornaut/game-kit/save/storage';
 import * as storageModule from '@andornaut/game-kit/save/storage';
 assert.deepEqual(Object.keys(storageModule), ['memoryStorage']);
 import { findTraversal } from '@andornaut/game-kit/terrain/traversal';
+import { beginCrumblingStep, endCrumblingStep } from '@andornaut/game-kit/terrain/crumbling';
 assert.equal(clamp(0,1,2), 1);
 assert.equal(typeof findTraversal, 'function');
+assert.equal(typeof beginCrumblingStep, 'function');
+assert.equal(typeof endCrumblingStep, 'function');
 createProgressState().begin().finish();
 const storage = memoryStorage();
 await storage.write('proof', 'value');
@@ -81,7 +84,23 @@ writeFileSync(
   join(consumer, "types.mts"),
   `
 import { memoryStorage, type SaveStorage } from '@andornaut/game-kit/save/storage';
-import { stepTraversal, type TraversalContext } from '@andornaut/game-kit/terrain/traversal';
+import {
+  stepTraversal, findTraversal, type TraversalContext,
+  type WorldTraversalContext, type WorldTraversalState,
+  type WorldTraversalStepResult, type WorldTraversalResult,
+} from '@andornaut/game-kit/terrain/traversal';
+import { beginCrumblingStep, endCrumblingStep, type CrumblingWorld } from '@andornaut/game-kit/terrain/crumbling';
+type World = CrumblingWorld<string, string>;
+declare const context: WorldTraversalContext<string, World>;
+declare const state: WorldTraversalState<string, World>;
+const next: WorldTraversalStepResult<string, World> = stepTraversal(
+  context, {move: 0, jump: false, timeSeconds: 0}, state,
+);
+const found: WorldTraversalResult<string, World> = findTraversal(context, {
+  start: state, timeSeconds: 0, goal: {x: 0, y: 0, width: 1, height: 1},
+  horizonSteps: 1, maxStates: 2, maxSteps: 1,
+});
+void next; void found; void beginCrumblingStep; void endCrumblingStep;
 const storage: SaveStorage = memoryStorage();
 void storage; void stepTraversal;
 export type Context = TraversalContext<string>;

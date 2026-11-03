@@ -16,7 +16,7 @@ The compiled GitHub release archive contains JavaScript and declarations. Instal
 
 ## Version and interface policy
 
-The source package is version `0.5.0`. The explicit `exports` map and exported declarations define the public interface. Internal imports are relative and acyclic; there is no root barrel loading an engine for pure callers.
+The source package is version `0.6.0`. The explicit `exports` map and exported declarations define the public interface. Internal imports are relative and acyclic; there is no root barrel loading an engine for pure callers.
 
 Compatible fixes use patch versions; additive public facilities use minor versions. After 1.0, incompatible changes require a major version. Before 1.0, incompatible changes require a minor version and an explicit migration. Update the manifest and root lockfile together. Prove the compiled artifact against exact consumer revisions before publication. Documentation-only changes need no version bump.
 
@@ -50,7 +50,7 @@ Paths are relative to `src/`. The source tree contains game mechanisms and their
 | `motion`                                                                                                          | Pure                     | Immutable motion segments and easing                                             |
 | `progress`, `progressState`                                                                                       | Pure                     | Bar geometry and operation state                                                 |
 | `save/*`                                                                                                          | Pure                     | Storage contract, memory implementation, versioning and save coordination        |
-| `terrain/traversal`                                                                                               | Pure                     | Bounded traversal search and shared runtime collision stepping                   |
+| `terrain/crumbling`, `terrain/traversal`                                                                          | Pure                     | Fixed-tick support lifecycle, bounded search and shared collision stepping       |
 | `text/*` except `text/phaser/*`                                                                                   | Pure                     | Bitmap font metrics, fixed-size wrapping, overflow and pixel atlas geometry      |
 | `view/fitCheck`, `view/modalDim`, `view/pagePoint`, `view/settleFit`                                              | Pure                     | Fit decisions, palette dimming, coordinate mapping and bounded settling          |
 | `clock/phaser/*`, `input/phaser/*`, `progress/phaser/*`, `text/phaser/*`, `view/phaser/*`                         | Phaser, browser renderer | Frame caps, input guards, progress drawing, fonts, snapshots and modal backdrops |
@@ -80,6 +80,24 @@ Frontier priority combines the horizontal full-body goal gap and any gap below t
 
 The initial goal and every eligible preferred state use the normal full-body terminal validation. The first valid goal returns timestamped inputs. Every attempted kernel call, including a failed one, spends the shared step budget; distinct depth/state/support keys across both phases spend the shared state budget, with the initial state counted once. Step capacity is checked before a call and state capacity before admitting a new successful state. A blocked, unsafe or out-of-bounds preferred step, or a sequence ending without a goal, falls back to the original start and time without resetting spent work. Preferred accounting never prunes the fresh regular frontier, and repeated execution still spends steps. Incomplete geometry and collision-budget exhaustion propagate immediately. Preferred failure alone never establishes `unreachable`.
 
+### Immutable traversal worlds
+
+The optional overloads accept `WorldTraversalContext<Id, World>`, `WorldTraversalState<Id, World>` and `WorldTraversalRequest<Id, World>`. The state carries an immutable `world`. `TraversalWorldAdapter` supplies `beginStep`, `endStep`, `key`, snapshot-specific `sampleColliders` and tri-state `safe`. Existing stateless overloads and preferred-command contracts remain unchanged.
+
+`beginStep(world, request)` prepares the phase at the actual tick start before collider sampling; it must be pure and idempotent at that boundary. Geometry and safety use that snapshot for the entire tick. After successful physics, `endStep` receives the absolute tick-end time, full body and all resolved standing-support IDs in collider order. It records contact changes for the next boundary. A failed step returns the original body/world state with no committed segments. The runtime caller separately owns global phase advancement, which a failed actor transaction cannot roll back.
+
+Lifecycle hooks return `TraversalAvailability<World>`. World safety returns `"safe"`, `"unsafe"` or `"unavailable"`; unknown geometry, occupancy or actor futures propagate `geometry-unavailable`. Adapters explicitly supply known other-actor future contacts and occupancy, replacing the planned actor's actual body with its hypothetical body. Unknown data must not become an empty contact set or safe geometry.
+
+Both regular deduplication and shared preferred/regular charging include `world.key(world)`. Equal keys must imply identical future behaviour: include phases, deadlines, pending contacts, standing-contact memory, boundary preparation and any branch-varying external state. Use stable opaque identities without lossy object stringification. Preferred fallback restores the original body/world root while retaining spent work. Arrival validation prepares the world and rechecks actual standing support, clearance and safety. A found result carries that prepared arrival snapshot; witness replay must include final boundary preparation and terminal validation.
+
+### Crumbling supports
+
+`terrain/crumbling` exports `beginCrumblingStep(context, request, world)` and `endCrumblingStep(request, world)`. `CrumblingWorld` stores support phases (`intact`, `warning`, `absent`), deadlines, standing contacts, pending contacts and the last prepared boundary. Callers provide finite positive warning/absence durations, full collider volumes, actor/support identities and occupancy queries. No gameplay timing defaults are supplied.
+
+At tick start, old deadlines take precedence. Warning expiry removes support for the entire tick; absence duration starts at that removal boundary. Eligible absent supports restore only when the full collider volume is clear of all physical bodies. Occupied supports retry at the next tick start; unknown occupancy returns unavailable. There are no sub-tick lifecycle events. Deadlines use active-world seconds and take effect at the first boundary at or after the deadline; a paused clock cannot advance phases.
+
+The complete resolved contact set at tick end records newly standing actor/support pairs. At the next boundary, a new contact on an intact support latches one warning. Additional contacts and stepping off cannot cancel or extend it. Warning duration starts at this consuming boundary. Restoration alone cannot trigger warning; a subsequent new landing can. The adapter assembles complete other-actor contacts and supplies full-volume occupancy, including the substituted branch body, before using these pure transitions.
+
 ## Numeric and text measurement contracts
 
 `numbers.clamp(minimum, maximum, value)` evaluates `Math.min(maximum, Math.max(minimum, value))`. Bounds are not reordered: NaN propagates and reversed bounds return the maximum for non-NaN input. Preserve a caller's opposite nesting unless ordered bounds are established. `lerp(from, to, fraction)` evaluates `from + (to - from) * fraction` without clamping, sanitizing non-finite values or short-circuiting endpoints.
@@ -107,7 +125,7 @@ WORKAROUND: Parent-scoped development overrides pin [KaTeX](https://github.com/a
 
 ## Release artifacts and consumer proof
 
-The public source repository is [andornaut/game-kit](https://github.com/andornaut/game-kit). GitHub releases distribute `game-kit-<version>.tgz`, `SOURCE_COMMIT` and `SHA256SUMS`, without npm registry publication. Install only an actually published version and commit the lockfile integrity. The versioned artifact URL for `0.5.0` is `https://github.com/andornaut/game-kit/releases/download/v0.5.0/game-kit-0.5.0.tgz`.
+The public source repository is [andornaut/game-kit](https://github.com/andornaut/game-kit). GitHub releases distribute `game-kit-<version>.tgz`, `SOURCE_COMMIT` and `SHA256SUMS`, without npm registry publication. Install only an actually published version and commit the lockfile integrity. The versioned artifact URL for `0.6.0` is `https://github.com/andornaut/game-kit/releases/download/v0.6.0/game-kit-0.6.0.tgz`.
 
 `bash scripts/pack.sh <output-directory>` builds the committed revision in an isolated offline container. It emits JavaScript and declarations using `tsconfig.release.json` and packages public metadata, provenance, README and MIT licence. Runtime TypeScript source, tests and private development commands are excluded. Library-owned verification, packaging and CI scripts remain private.
 
