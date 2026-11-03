@@ -12,6 +12,8 @@ export interface BitmapGlyph {
 // first then second), and its line height, in font pixels. parseBitmapFont reads one from an
 // XML BMFont file; phaser/phaserBitmapFont reads one from Phaser's bitmap font cache.
 export interface BitmapFont {
+  // Alphabetic baseline from the line top in font pixels, when supplied by the source.
+  readonly baseline?: number;
   readonly glyphs: ReadonlyMap<string, BitmapGlyph>;
   readonly kernings: ReadonlyMap<string, number>;
   readonly lineHeight: number;
@@ -49,7 +51,13 @@ export function parseBitmapFont(fnt: string): BitmapFont {
       return [char(field.get("first")) + char(field.get("second")), field.get("amount") ?? 0];
     }),
   );
-  return { glyphs, kernings, lineHeight: common.get("lineHeight") ?? 0 };
+  const baseline = common.get("base");
+  return {
+    ...(baseline === undefined ? {} : { baseline }),
+    glyphs,
+    kernings,
+    lineHeight: common.get("lineHeight") ?? 0,
+  };
 }
 
 // A font's rows, in font pixels down from a line's top: where its capitals start (capTop) and

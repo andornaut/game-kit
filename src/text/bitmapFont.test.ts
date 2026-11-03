@@ -32,6 +32,17 @@ const FNT = `<?xml version="1.0"?>
 const FONT = parseBitmapFont(FNT);
 
 describe("parseBitmapFont", () => {
+  it.each([8, 0])("reads the explicit common baseline %i without a default", (baseline) => {
+    expect(parseBitmapFont(FNT.replace('base="8"', `base="${baseline}"`)).baseline).toBe(baseline);
+  });
+
+  it("preserves the original output shape when common has no baseline", () => {
+    const font = parseBitmapFont(FNT.replace(' base="8"', ""));
+    expect(font).toEqual({ glyphs: FONT.glyphs, kernings: FONT.kernings, lineHeight: 11 });
+    expect(Object.keys(font)).toEqual(["glyphs", "kernings", "lineHeight"]);
+    expect("baseline" in font).toBe(false);
+  });
+
   it.each([
     [" ", { advance: 2, height: 0, width: 0, xOffset: 0, yOffset: 0 }],
     ["H", { advance: 5, height: 6, width: 4, xOffset: 0, yOffset: 2 }],
