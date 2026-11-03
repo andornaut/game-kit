@@ -96,6 +96,64 @@ export type TraversalResult<Id> =
       readonly work: TraversalWork;
     };
 
+export type TraversalAvailability<T> =
+  { readonly status: "available"; readonly value: T } | { readonly status: "unavailable" };
+
+export type TraversalWorldSafety = "safe" | "unsafe" | "unavailable";
+
+// Actual tick start and the planned actor's full physical body.
+export interface TraversalWorldBegin {
+  readonly timeSeconds: number;
+  readonly dtSeconds: number;
+  readonly body: Readonly<Rect>;
+}
+
+// Successful tick end; all resolved standing supports are in collider order.
+export interface TraversalWorldEnd<Id> {
+  readonly timeSeconds: number;
+  readonly body: Readonly<Rect>;
+  readonly standingSupportIds: readonly Id[];
+}
+
+export interface TraversalWorldAdapter<Id, World> {
+  // Equal keys must imply identical future behaviour, including contact memory.
+  readonly key: (world: World) => string;
+  // Pure and idempotent at a boundary; process old deadlines before frame sampling.
+  readonly beginStep: (world: World, request: TraversalWorldBegin) => TraversalAvailability<World>;
+  // Record resolved contact changes for the next boundary, without changing this frame.
+  readonly endStep: (world: World, request: TraversalWorldEnd<Id>) => TraversalAvailability<World>;
+  readonly sampleColliders: (
+    world: World,
+    timeSeconds: number,
+    dtSeconds: number,
+    queryBounds: Readonly<Rect>,
+  ) => TraversalGeometry<Id>;
+  readonly safe: (world: World, request: TraversalSafety) => TraversalWorldSafety;
+}
+
+export type WorldTraversalContext<Id, World> = Omit<
+  TraversalContext<Id>,
+  "sampleColliders" | "safe"
+> & {
+  readonly world: TraversalWorldAdapter<Id, World>;
+};
+
+export type WorldTraversalState<Id, World> = TraversalState<Id> & { readonly world: World };
+
+export type WorldTraversalRequest<Id, World> = Omit<TraversalRequest<Id>, "start"> & {
+  readonly start: WorldTraversalState<Id, World>;
+};
+
+export type WorldTraversalStepResult<Id, World> = Omit<TraversalStepResult<Id>, "state"> & {
+  readonly state: WorldTraversalState<Id, World>;
+};
+
+export type WorldTraversalResult<Id, World> =
+  | (Omit<Extract<TraversalResult<Id>, { status: "found" }>, "state"> & {
+      readonly state: WorldTraversalState<Id, World>;
+    })
+  | Exclude<TraversalResult<Id>, { status: "found" }>;
+
 function validRect(rect: Readonly<Rect>): boolean {
   return (
     [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite) &&
@@ -105,7 +163,7 @@ function validRect(rect: Readonly<Rect>): boolean {
     Number.isFinite(rect.y + rect.height)
   );
 }
-function box<Id>(context: TraversalContext<Id>, state: TraversalState<Id>): Rect {
+function box<Id>(context: Pick<TraversalContext<Id>, "body">, state: TraversalState<Id>): Rect {
   return {
     height: context.body.height,
     width: context.body.width,
@@ -130,7 +188,7 @@ function overlaps(a: Readonly<Rect>, b: Readonly<Rect>, epsilon: number): boolea
   );
 }
 function validate<Id>(
-  context: TraversalContext<Id>,
+  context: Omit<TraversalContext<Id>, "sampleColliders" | "safe">,
   state: TraversalState<Id>,
   time: number,
 ): void {
@@ -316,7 +374,7 @@ function hit(
 }
 
 // Every search edge and runtime move executes this same atomic fixed step.
-export function stepTraversal<Id>(
+function stepKernel<Id>(
   context: TraversalContext<Id>,
   input: TraversalInput,
   state: TraversalState<Id>,
@@ -563,9 +621,10 @@ export function stepTraversal<Id>(
   /* eslint-enable sort-keys */
 }
 
-export function findTraversal<Id>(
+function findKernel<Id>(
   context: TraversalContext<Id>,
   request: TraversalRequest<Id>,
+  world?: SearchWorld<Id>,
 ): TraversalResult<Id> {
   validate(context, request.start, request.timeSeconds);
   if (
@@ -604,7 +663,12 @@ export function findTraversal<Id>(
     order: number;
   }
   const work = { states: 1, steps: 0 };
-  const initialGeometry = context.sampleColliders(
+  const initialFrame = world?.prepare(request.start, request.timeSeconds);
+  if (initialFrame?.status === "unavailable") {
+    return { status: "geometry-unavailable", work };
+  }
+  const initialContext = initialFrame?.value.context ?? context;
+  const initialGeometry = initialContext.sampleColliders(
     request.timeSeconds,
     context.dtSeconds,
     box(context, request.start),
@@ -619,7 +683,12 @@ export function findTraversal<Id>(
       identities.set(s.supportId, identities.size);
     }
     const support = s.supportId === undefined ? "none" : identities.get(s.supportId);
-    return `${depth}:${s.x}:${s.y}:${s.vy}:${s.grounded}:${s.fallFromY}:${support}`;
+    const physical = `${depth}:${s.x}:${s.y}:${s.vy}:${s.grounded}:${s.fallFromY}:${support}`;
+    if (!world) {
+      return physical;
+    }
+    const worldKey = world.key(s);
+    return `${physical}:${worldKey.length}:${worldKey}`;
   };
   const seen = new Set([key(0, request.start)]);
   const hasPreferred = commands !== undefined && commands.length > 0;
@@ -684,7 +753,13 @@ export function findTraversal<Id>(
       // Validate even an empty witness against actual geometry and caller safety.
       const body = box(context, node.state);
       const time = request.timeSeconds + node.depth * context.dtSeconds;
-      const g = context.sampleColliders(time, context.dtSeconds, body);
+      const frame = world?.prepare(node.state, time);
+      if (frame?.status === "unavailable") {
+        return { status: "geometry-unavailable", work };
+      }
+      const terminalContext = frame?.value.context ?? context;
+      const terminalState = frame?.value.state ?? node.state;
+      const g = terminalContext.sampleColliders(time, context.dtSeconds, body);
       if (!validGeometry(time, context.dtSeconds, g)) {
         return { status: "geometry-unavailable", work };
       }
@@ -692,7 +767,7 @@ export function findTraversal<Id>(
         supports(context.epsilon, body, g.colliders, "before") &&
         !g.colliders.some((c) => c.kind === "solid" && overlaps(body, c.before, context.epsilon)) &&
         inside(context.bounds, body, context.epsilon) &&
-        context.safe({
+        terminalContext.safe({
           endSeconds: time,
           from: body,
           phase: "landing",
@@ -706,7 +781,10 @@ export function findTraversal<Id>(
           inputs.push(cursor.input);
           cursor = cursor.parent;
         }
-        return { inputs: inputs.reverse(), state: node.state, status: "found", work };
+        return { inputs: inputs.reverse(), state: terminalState, status: "found", work };
+      }
+      if (frame?.value.unavailable) {
+        return { status: "geometry-unavailable", work };
       }
     }
     return undefined;
@@ -728,7 +806,7 @@ export function findTraversal<Id>(
         timeSeconds: request.timeSeconds + node.depth * context.dtSeconds,
       };
       work.steps++;
-      const result = stepTraversal(context, input, node.state);
+      const result = world ? world.step(input, node.state) : stepKernel(context, input, node.state);
       if (result.status === "geometry-unavailable") {
         return { status: "geometry-unavailable", work };
       }
@@ -781,7 +859,9 @@ export function findTraversal<Id>(
           timeSeconds: request.timeSeconds + node.depth * context.dtSeconds,
         };
         work.steps++;
-        const result = stepTraversal(context, input, node.state);
+        const result = world
+          ? world.step(input, node.state)
+          : stepKernel(context, input, node.state);
         if (result.status === "geometry-unavailable") {
           return { status: "geometry-unavailable", work };
         }
@@ -815,4 +895,172 @@ export function findTraversal<Id>(
     }
   }
   return { horizonSteps: request.horizonSteps, status: "unreachable", work };
+}
+
+interface PreparedWorld<Id> {
+  readonly context: TraversalContext<Id>;
+  readonly state: TraversalState<Id>;
+  unavailable: boolean;
+  geometry?: TraversalGeometry<Id>;
+}
+interface SearchWorld<Id> {
+  readonly prepare: (
+    state: TraversalState<Id>,
+    timeSeconds: number,
+  ) => TraversalAvailability<PreparedWorld<Id>>;
+  readonly key: (state: TraversalState<Id>) => string;
+  readonly step: (input: TraversalInput, state: TraversalState<Id>) => TraversalStepResult<Id>;
+}
+
+function prepareWorld<Id, World>(
+  context: WorldTraversalContext<Id, World>,
+  timeSeconds: number,
+  state: WorldTraversalState<Id, World>,
+): TraversalAvailability<PreparedWorld<Id>> {
+  const begun = context.world.beginStep(state.world, {
+    body: box(context, state),
+    dtSeconds: context.dtSeconds,
+    timeSeconds,
+  });
+  if (begun.status === "unavailable") {
+    return begun;
+  }
+  const preparedState = { ...state, world: begun.value };
+  const prepared: PreparedWorld<Id> = {
+    context: {
+      ...context,
+      safe: (request) => {
+        const safety = context.world.safe(begun.value, request);
+        if (safety === "unavailable") {
+          prepared.unavailable = true;
+        }
+        return safety === "safe";
+      },
+      sampleColliders: (time, dt, bounds) => {
+        const geometry = context.world.sampleColliders(begun.value, time, dt, bounds);
+        prepared.geometry = geometry;
+        return geometry;
+      },
+    },
+    state: preparedState,
+    unavailable: false,
+  };
+  return { status: "available", value: prepared };
+}
+
+function stepWorld<Id, World>(
+  context: WorldTraversalContext<Id, World>,
+  input: TraversalInput,
+  state: WorldTraversalState<Id, World>,
+  frame: TraversalAvailability<PreparedWorld<Id>>,
+): WorldTraversalStepResult<Id, World> {
+  const fail = (
+    status: TraversalStepResult<Id>["status"],
+  ): WorldTraversalStepResult<Id, World> => ({
+    segments: [],
+    state,
+    status,
+  });
+  if (frame.status === "unavailable") {
+    return fail("geometry-unavailable");
+  }
+  const prepared = frame.value;
+  const result = stepKernel(prepared.context, input, state);
+  if (prepared.unavailable) {
+    return fail("geometry-unavailable");
+  }
+  if (result.status !== "ok") {
+    return fail(result.status);
+  }
+  const body = box(context, result.state);
+  const standingSupportIds = result.state.grounded
+    ? prepared
+        .geometry!.colliders.filter(
+          (c) =>
+            Math.abs(c.after.y - body.y - body.height) <= context.epsilon &&
+            c.after.x < body.x + body.width &&
+            c.after.x + c.after.width > body.x,
+        )
+        .map((c) => c.supportId)
+    : [];
+  const ended = context.world.endStep((prepared.state as WorldTraversalState<Id, World>).world, {
+    body,
+    standingSupportIds,
+    timeSeconds: input.timeSeconds + context.dtSeconds,
+  });
+  if (ended.status === "unavailable") {
+    return fail("geometry-unavailable");
+  }
+  return { ...result, state: { ...result.state, world: ended.value } };
+}
+
+export function stepTraversal<Id, World>(
+  context: WorldTraversalContext<Id, World>,
+  input: TraversalInput,
+  state: WorldTraversalState<Id, World>,
+): WorldTraversalStepResult<Id, World>;
+export function stepTraversal<Id>(
+  context: TraversalContext<Id>,
+  input: TraversalInput,
+  state: TraversalState<Id>,
+): TraversalStepResult<Id>;
+export function stepTraversal<Id, World>(
+  context: TraversalContext<Id> | WorldTraversalContext<Id, World>,
+  input: TraversalInput,
+  state: TraversalState<Id> | WorldTraversalState<Id, World>,
+): TraversalStepResult<Id> {
+  if (!("world" in context)) {
+    return stepKernel(context, input, state);
+  }
+  validate(context, state, input.timeSeconds);
+  if (![-1, 0, 1].includes(input.move) || !("world" in state)) {
+    throw new RangeError("Invalid traversal input or world state");
+  }
+  return stepWorld(context, input, state, prepareWorld(context, input.timeSeconds, state));
+}
+
+export function findTraversal<Id, World>(
+  context: WorldTraversalContext<Id, World>,
+  request: WorldTraversalRequest<Id, World>,
+): WorldTraversalResult<Id, World>;
+export function findTraversal<Id>(
+  context: TraversalContext<Id>,
+  request: TraversalRequest<Id>,
+): TraversalResult<Id>;
+export function findTraversal<Id, World>(
+  context: TraversalContext<Id> | WorldTraversalContext<Id, World>,
+  request: TraversalRequest<Id> | WorldTraversalRequest<Id, World>,
+): TraversalResult<Id> {
+  if (!("world" in context)) {
+    return findKernel(context, request);
+  }
+  if (!("world" in request.start)) {
+    throw new RangeError("Invalid traversal world state");
+  }
+  const frames = new WeakMap<TraversalState<Id>, TraversalAvailability<PreparedWorld<Id>>>();
+  const prepare = (state: TraversalState<Id>, time: number) => {
+    let frame = frames.get(state);
+    if (!frame) {
+      frame = prepareWorld(context, time, state as WorldTraversalState<Id, World>);
+      frames.set(state, frame);
+    }
+    return frame;
+  };
+  // The core replaces these callbacks with the node's immutable phase snapshot.
+  const base: TraversalContext<Id> = {
+    ...context,
+    safe: () => false,
+    sampleColliders: () => ({ colliders: [], complete: false }),
+  };
+  return findKernel(base, request, {
+    key: (state) => context.world.key((state as WorldTraversalState<Id, World>).world),
+    prepare,
+    step: (input, state) =>
+      stepWorld(
+        context,
+        input,
+        state as WorldTraversalState<Id, World>,
+        prepare(state, input.timeSeconds),
+      ),
+  });
 }

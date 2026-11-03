@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import type { Rect } from "../rect";
+import { beginCrumblingStep, type CrumblingWorld, endCrumblingStep } from "./crumbling.ts";
 import {
   findTraversal,
   stepTraversal,
@@ -764,4 +765,324 @@ describe("preferred traversal commands", () => {
     expect(state.grounded).toBe(true);
     expect(state.y).toBe(912);
   });
+});
+
+interface TestWorld {
+  readonly preparedAt: number | null;
+  readonly touched: boolean;
+}
+type Mutable<T> = { -readonly [P in keyof T]: T[P] };
+type TestContext = Omit<
+  import("./traversal.ts").WorldTraversalContext<object, TestWorld>,
+  "world"
+> & {
+  world: Mutable<import("./traversal.ts").TraversalWorldAdapter<object, TestWorld>>;
+};
+function worldContext(): TestContext {
+  return {
+    ...context([]),
+    profile: { ...context([]).profile, jumpSpeed: 0 },
+    world: {
+      beginStep: (world, request) => ({
+        status: "available",
+        value: { ...world, preparedAt: request.timeSeconds },
+      }),
+      endStep: (world, request) => ({
+        status: "available",
+        value: { ...world, touched: world.touched || request.body.x > 0 },
+      }),
+      key: (world) => `${world.preparedAt}:${world.touched}`,
+      safe: () => "safe",
+      sampleColliders: () => ({ colliders: [fixed(ground, floor)], complete: true }),
+    },
+  };
+}
+const worldStart: import("./traversal.ts").WorldTraversalState<object, TestWorld> = {
+  ...start,
+  world: { preparedAt: null, touched: false },
+};
+
+describe("world-aware terrain traversal", () => {
+  it("carries the prepared arrival world in a fully validated replayable result", () => {
+    const c = worldContext();
+    const request = {
+      goal: rect(2, 8, 2, 2),
+      horizonSteps: 2,
+      maxStates: 30,
+      maxSteps: 30,
+      preferredInputs: [
+        { jump: false, move: 1 },
+        { jump: false, move: 1 },
+      ] as const,
+      start: worldStart,
+      timeSeconds: 0,
+    };
+    const found = findTraversal(c, request);
+    expect(found.status).toBe("found");
+    if (found.status !== "found") {
+      throw new Error("Expected witness");
+    }
+    let state = worldStart;
+    for (const command of found.inputs) {
+      const step = stepTraversal(c, command, state);
+      expect(step.status).toBe("ok");
+      state = step.state;
+    }
+    const prepared = c.world.beginStep(state.world, {
+      body: rect(state.x, state.y, 2, 2),
+      dtSeconds: c.dtSeconds,
+      timeSeconds: 0.2,
+    });
+    expect(prepared.status).toBe("available");
+    if (prepared.status === "available") {
+      expect(found.state).toEqual({ ...state, world: prepared.value });
+    }
+    expect(found.state.world.preparedAt).toBe(0.2);
+    expect(found.work).toEqual({ states: 3, steps: 2 });
+  });
+
+  it("rechecks actual standing support after arrival preparation removes a platform", () => {
+    const c = worldContext();
+    c.world.sampleColliders = (world) => ({
+      colliders: world.preparedAt === 0 ? [fixed(ground, floor)] : [],
+      complete: true,
+    });
+    const request = {
+      goal: rect(1, 8, 2, 2),
+      horizonSteps: 1,
+      maxStates: 30,
+      maxSteps: 30,
+      preferredInputs: [{ jump: false, move: 1 }] as const,
+      start: worldStart,
+      timeSeconds: 0,
+    };
+    expect(findTraversal(c, request).status).toBe("unreachable");
+    const expired = { ...worldStart, world: { preparedAt: 0.1, touched: false } };
+    expect(
+      findTraversal(c, {
+        ...request,
+        goal: rect(0, 8, 2, 2),
+        horizonSteps: 0,
+        preferredInputs: [],
+        start: expired,
+        timeSeconds: 0.1,
+      }).status,
+    ).toBe("unreachable");
+  });
+
+  it("rolls back body, world and segments for unsafe, unavailable and end-phase failures", () => {
+    for (const phase of ["unsafe", "safety-unknown", "begin-unknown", "end-unknown"] as const) {
+      const c = worldContext();
+      c.world = {
+        ...c.world,
+        beginStep:
+          phase === "begin-unknown" ? () => ({ status: "unavailable" }) : c.world.beginStep,
+        endStep: phase === "end-unknown" ? () => ({ status: "unavailable" }) : c.world.endStep,
+        safe: () =>
+          phase === "unsafe" ? "unsafe" : phase === "safety-unknown" ? "unavailable" : "safe",
+      };
+      const result = stepTraversal(c, input, worldStart);
+      expect(result.status).toBe(phase === "unsafe" ? "unsafe" : "geometry-unavailable");
+      expect(result.state).toBe(worldStart);
+      expect(result.segments).toEqual([]);
+    }
+  });
+
+  it("propagates unknown terminal safety and external-actor futures instead of exhaustion", () => {
+    const c = worldContext();
+    const request = {
+      goal: rect(0, 8, 2, 2),
+      horizonSteps: 0,
+      maxStates: 1,
+      maxSteps: 0,
+      start: worldStart,
+      timeSeconds: 0,
+    };
+    c.world.safe = () => "unavailable";
+    expect(findTraversal(c, request)).toEqual({
+      status: "geometry-unavailable",
+      work: { states: 1, steps: 0 },
+    });
+    c.world.safe = () => "safe";
+    c.world.beginStep = () => ({ status: "unavailable" });
+    expect(findTraversal(c, request).status).toBe("geometry-unavailable");
+  });
+
+  it("retains distinct world histories in regular seen and preferred charging", () => {
+    const c = worldContext();
+    c.world.safe = (world, request) => (request.to.x < 0 && !world.touched ? "unsafe" : "safe");
+    const request = {
+      goal: rect(-1, 8, 2, 2),
+      horizonSteps: 3,
+      maxStates: 80,
+      maxSteps: 300,
+      start: worldStart,
+      timeSeconds: 0,
+    };
+    const regular = findTraversal(c, request);
+    const hinted = findTraversal(c, {
+      ...request,
+      preferredInputs: [
+        { jump: false, move: 0 },
+        { jump: false, move: 0 },
+      ],
+    });
+    for (const result of [regular, hinted]) {
+      expect(result.status).toBe("found");
+      if (result.status === "found") {
+        expect(result.inputs.map((i) => i.move)).toEqual([1, -1, -1]);
+        expect(result.state.world.touched).toBe(true);
+      }
+    }
+    expect(hinted.work.steps).toBe(regular.work.steps + 2);
+    expect(hinted.work.states).toBe(regular.work.states);
+    expect(
+      findTraversal(c, {
+        ...request,
+        maxSteps: 2,
+        preferredInputs: [
+          { jump: false, move: 0 },
+          { jump: false, move: 0 },
+        ],
+      }),
+    ).toEqual({ reason: "steps", status: "budget-exhausted", work: { states: 3, steps: 2 } });
+  });
+
+  it("passes all resolved standing supports in collider order and no speculative contacts", () => {
+    const c = worldContext();
+    const left = {},
+      right = {};
+    c.world.sampleColliders = () => ({
+      colliders: [fixed(right, rect(1, 10, 2, 3)), fixed(left, rect(-2, 10, 3, 3))],
+      complete: true,
+    });
+    const contacts: object[][] = [];
+    c.world.endStep = (world, request) => {
+      contacts.push([...request.standingSupportIds]);
+      return { status: "available", value: world };
+    };
+    expect(stepTraversal(c, { ...input, move: 0 }, worldStart).status).toBe("ok");
+    expect(contacts).toEqual([[right, left]]);
+    c.world.safe = () => "unsafe";
+    stepTraversal(c, input, worldStart);
+    expect(contacts).toHaveLength(1);
+  });
+});
+
+it("shares crumbling phases between traversal replay and arrival support validation", () => {
+  const actorId = {};
+  const initialWorld: CrumblingWorld<object, object> = {
+    begunAtSeconds: null,
+    pendingContacts: [],
+    standingContacts: [],
+    supports: [{ phase: { kind: "warning", removeAtSeconds: 0.1 }, supportId: ground }],
+  };
+  const c: import("./traversal.ts").WorldTraversalContext<object, CrumblingWorld<object, object>> =
+    {
+      ...context([]),
+      world: {
+        beginStep: (world, request) =>
+          beginCrumblingStep(
+            {
+              definitions: [
+                {
+                  profile: { absentSeconds: 1, warningSeconds: 1 },
+                  supportId: ground,
+                  volume: floor,
+                },
+              ],
+              occupancy: () => "unknown",
+            },
+            { branchActor: { actorId, body: request.body }, timeSeconds: request.timeSeconds },
+            world,
+          ),
+        endStep: (world, request) => ({
+          status: "available",
+          value: endCrumblingStep(
+            {
+              standingContacts: request.standingSupportIds.map((supportId) => ({
+                actorId,
+                supportId,
+              })),
+              timeSeconds: request.timeSeconds,
+            },
+            world,
+          ),
+        }),
+        key: (world) =>
+          JSON.stringify([
+            world.begunAtSeconds,
+            world.supports.map((s) => s.phase),
+            world.standingContacts.length,
+            world.pendingContacts.length,
+          ]),
+        safe: () => "safe",
+        sampleColliders: (world) => ({
+          colliders: world.supports[0]!.phase.kind === "absent" ? [] : [fixed(ground, floor)],
+          complete: true,
+        }),
+      },
+    };
+  const initialState = { ...start, world: initialWorld };
+  const step = stepTraversal(c, input, initialState);
+  expect(step.status).toBe("ok");
+  expect(step.state.grounded).toBe(true);
+  expect(step.state.world.supports[0]!.phase.kind).toBe("warning");
+  const request = {
+    goal: rect(1, 8, 2, 2),
+    horizonSteps: 1,
+    maxStates: 30,
+    maxSteps: 30,
+    preferredInputs: [{ jump: false, move: 1 }] as const,
+    start: initialState,
+    timeSeconds: 0,
+  };
+  expect(findTraversal(c, request).status).toBe("unreachable");
+  const falling = stepTraversal(c, { ...input, move: 0, timeSeconds: 0.1 }, step.state);
+  expect(falling.status).toBe("ok");
+  expect(falling.state.grounded).toBe(false);
+  expect(falling.state.world.supports[0]!.phase).toEqual({
+    kind: "absent",
+    restoreAfterSeconds: 1.1,
+  });
+  expect(stepTraversal(c, { ...input, timeSeconds: 1.1 }, falling.state).status).toBe(
+    "geometry-unavailable",
+  );
+});
+
+it("preserves stateless callback inference and infers opt-in world results", () => {
+  const legacy = stepTraversal(
+    {
+      ...context([]),
+      safe: (request) => {
+        expectTypeOf(request).toEqualTypeOf<import("./traversal.ts").TraversalSafety>();
+        return true;
+      },
+      sampleColliders: (time, dt, bounds) => {
+        expectTypeOf(time).toEqualTypeOf<number>();
+        expectTypeOf(dt).toEqualTypeOf<number>();
+        expectTypeOf(bounds).toEqualTypeOf<Readonly<Rect>>();
+        return { colliders: [fixed(ground, floor)], complete: true };
+      },
+    },
+    input,
+    start,
+  );
+  expectTypeOf(legacy).toEqualTypeOf<import("./traversal.ts").TraversalStepResult<object>>();
+  const result = stepTraversal(worldContext(), input, worldStart);
+  expectTypeOf(result).toEqualTypeOf<
+    import("./traversal.ts").WorldTraversalStepResult<object, TestWorld>
+  >();
+  const found = findTraversal(worldContext(), {
+    goal: rect(1, 8, 2, 2),
+    horizonSteps: 1,
+    maxStates: 10,
+    maxSteps: 10,
+    start: worldStart,
+    timeSeconds: 0,
+  });
+  expectTypeOf(found).toEqualTypeOf<
+    import("./traversal.ts").WorldTraversalResult<object, TestWorld>
+  >();
+  expect(result.status).toBe("ok");
 });
