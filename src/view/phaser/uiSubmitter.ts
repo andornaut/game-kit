@@ -34,6 +34,17 @@ type ObjectView = GameObjects.GameObject & {
   tintBottomRight?: number;
   frame?: Textures.Frame;
   commandBuffer?: number[];
+  charColors?: Record<
+    number,
+    | {
+        tintEffect: number;
+        tintTL: number;
+        tintTR: number;
+        tintBL: number;
+        tintBR: number;
+      }
+    | undefined
+  >;
   list?: GameObjects.GameObject[];
   lighting?: unknown;
   dropShadowX?: number;
@@ -371,11 +382,21 @@ export function createUiRecorder(ports: UiCapturePorts): {
         if (object.type === "Graphics" && !graphicsSupported(object.commandBuffer ?? [])) {
           issue("effect");
         }
-        if (
-          object.type === "BitmapText" &&
-          !ports.textStyle(object as unknown as GameObjects.BitmapText)
-        ) {
-          issue("font");
+        if (object.type === "BitmapText") {
+          const text = object as unknown as GameObjects.BitmapText;
+          const style = ports.textStyle(text);
+          if (!style || style.size !== text.fontData.size) {
+            issue("font");
+          }
+          for (const colour of Object.values(object.charColors ?? {})) {
+            if (
+              colour &&
+              (!uniform([colour.tintTL, colour.tintTR, colour.tintBL, colour.tintBR]) ||
+                (colour.tintEffect !== 0 && colour.tintEffect !== 1))
+            ) {
+              issue("effect");
+            }
+          }
         }
         if (
           ["NineSlice", "Image", "Sprite"].includes(object.type) &&

@@ -228,3 +228,42 @@ it("never overwrites a peer's replacement role during refresh", async () => {
   expect(image.value.customRenderNodes.BatchHandler).toBe(peer);
   recorder.destroy();
 });
+
+it.each(["gradient", "tint-effect", "font-size"])(
+  "rejects %s text before installing any sibling role and rolls back refresh",
+  async (failure) => {
+    const recorder = createUiRecorder(ports());
+    await Promise.resolve();
+    const image = object("Image");
+    const text = object("BitmapText");
+    const fontData = { chars: {}, size: 8 };
+    const colour = { tintBL: 1, tintBR: 1, tintEffect: 0, tintTL: 1, tintTR: 1 };
+    Object.assign(text.value, { charColors: { 0: colour }, fontData });
+    const makeInvalid = () => {
+      if (failure === "gradient") {
+        colour.tintTR = 2;
+      }
+      if (failure === "tint-effect") {
+        colour.tintEffect = 2;
+      }
+      if (failure === "font-size") {
+        fontData.size = 16;
+      }
+    };
+    makeInvalid();
+    expect(recorder.register([image.node, text.node]).status).toBe("unsupported");
+    expect(image.value.setRenderNodeRole).not.toHaveBeenCalled();
+    expect(text.value.setRenderNodeRole).not.toHaveBeenCalled();
+    colour.tintTR = 1;
+    colour.tintEffect = 0;
+    fontData.size = 8;
+    const registered = recorder.register([image.node, text.node]);
+    if (registered.status !== "ready") {
+      throw new Error("Missing registration");
+    }
+    makeInvalid();
+    expect(registered.handle.refresh().status).toBe("unsupported");
+    expect(image.value.customRenderNodes).toEqual({});
+    expect(text.value.customRenderNodes).toEqual({});
+  },
+);
