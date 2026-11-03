@@ -86,7 +86,7 @@ class CaptureNode extends Renderer.WebGL.RenderNodes.RenderNode {
 function renderManager(
   object: ObjectView,
 ): Renderer.WebGL.RenderNodes.RenderNodeManager | undefined {
-  const renderer = object.scene.sys.renderer;
+  const renderer = object.scene?.sys.renderer;
   return renderer && "renderNodes" in renderer ? renderer.renderNodes : undefined;
 }
 const kinds = new Set([
@@ -165,6 +165,13 @@ export function createUiRecorder(ports: UiCapturePorts): {
   const restore = (group: Group) => {
     for (const saved of group.saved.reverse()) {
       if (saved.object.customRenderNodes?.[saved.role] === saved.node) {
+        if (!saved.object.scene || saved.object.isDestroyed) {
+          delete saved.object.customRenderNodes[saved.role];
+          if (saved.object.renderNodeData) {
+            delete saved.object.renderNodeData[saved.node.name];
+          }
+          continue;
+        }
         saved.object.setRenderNodeRole!(saved.role, null);
         if (saved.previous) {
           saved.object.setRenderNodeRole!(saved.role, saved.previous, saved.data);

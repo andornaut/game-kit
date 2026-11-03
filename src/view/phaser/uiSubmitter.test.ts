@@ -1,3 +1,6 @@
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+
 import type { GameObjects, Renderer } from "phaser";
 import { expect, it, vi } from "vitest";
 
@@ -267,3 +270,58 @@ it.each(["gradient", "tint-effect", "font-size"])(
     expect(text.value.customRenderNodes).toEqual({});
   },
 );
+
+it("refreshes and disposes after actual Phaser object destruction without touching dead scenes", async () => {
+  const load = createRequire(import.meta.url);
+  const root = dirname(load.resolve("phaser/package.json"));
+  const components = join(root, "src/gameobjects/components/index.js");
+  const previous = load.cache[components];
+  // Renderer mixins are outside this lifecycle test; the object and destroy method are real.
+  load.cache[components] = { exports: { Filters: {}, RenderSteps: {} } } as NodeModule;
+  let RealObject: new (scene: unknown, type: string) => GameObjects.GameObject;
+  try {
+    RealObject = load(join(root, "src/gameobjects/GameObject.js"));
+  } finally {
+    if (previous) {
+      load.cache[components] = previous;
+    } else {
+      delete load.cache[components];
+    }
+  }
+  const roles = load(join(root, "src/gameobjects/components/RenderNodes.js"));
+  const real = () => {
+    const value = new RealObject(
+      { sys: { queueDepthSort() {}, renderer: { renderNodes: {} } } },
+      "NineSlice",
+    );
+    return Object.assign(value, {
+      customRenderNodes: {} as Record<string, Role | undefined>,
+      frame: object("NineSlice").value.frame,
+      renderNodeData: {} as Record<string, object>,
+      setRenderNodeRole: vi.fn(roles.setRenderNodeRole),
+    });
+  };
+  const recorder = createUiRecorder(ports());
+  await Promise.resolve();
+  const old = real();
+  const registration = recorder.register([old]);
+  if (registration.status !== "ready") {
+    throw new Error("Missing registration");
+  }
+  const owned = old.customRenderNodes.BatchHandler!;
+  old.destroy();
+  expect(old.scene).toBeUndefined();
+  expect(old.isDestroyed).toBe(true);
+  expect(old.customRenderNodes.BatchHandler).toBe(owned);
+  const calls = old.setRenderNodeRole.mock.calls.length;
+  const next = real();
+  expect(registration.handle.refresh([next]).status).toBe("ready");
+  expect(old.setRenderNodeRole).toHaveBeenCalledTimes(calls);
+  expect(old.customRenderNodes).toEqual({});
+  expect(old.renderNodeData[owned.name]).toBeUndefined();
+  expect(next.customRenderNodes.BatchHandler).toBeDefined();
+  next.destroy();
+  expect(() => recorder.destroy()).not.toThrow();
+  expect(next.customRenderNodes).toEqual({});
+  expect(next.renderNodeData).toEqual({});
+});
