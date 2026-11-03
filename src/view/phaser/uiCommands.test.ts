@@ -70,10 +70,12 @@ function text(): Extract<UiPaintCommand, { kind: "text" }> {
 function glContext(data: number[]) {
   const gl = {
     FRAMEBUFFER_BINDING: 1,
+    NO_ERROR: 0,
     RGBA: 2,
     UNSIGNED_BYTE: 3,
     drawingBufferHeight: 2,
     drawingBufferWidth: 1,
+    getError: vi.fn(() => 0),
     getParameter: vi.fn(() => null as object | null),
     isContextLost: vi.fn(() => false),
     readPixels: vi.fn(
@@ -341,4 +343,21 @@ it("uses the original raster directly for untinted MULTIPLY without scratch allo
   );
   expect(createSurface).not.toHaveBeenCalled();
   expect(target.context.drawImage).toHaveBeenCalledWith(image, 5, 6, 2, 4, 0, 0, 2, 4);
+});
+
+it.each(["pre-existing", "readback"])("rejects nonthrowing %s GL errors", (phase) => {
+  const { context, gl } = glContext([0, 0, 0, 0, 0, 0, 0, 0]);
+  if (phase === "pre-existing") {
+    gl.getError.mockReturnValueOnce(1282);
+  } else {
+    gl.getError.mockReturnValueOnce(0).mockReturnValueOnce(1282);
+  }
+  expect(
+    readUiWorldFrame(context, {
+      area: { height: 2, width: 1, x: 0, y: 0 },
+      frameId: 5,
+    }),
+  ).toEqual({ reason: "readback", status: "unavailable" });
+  expect(gl.readPixels).toHaveBeenCalledTimes(phase === "pre-existing" ? 0 : 1);
+  expect(gl.getError).toHaveBeenCalledTimes(phase === "pre-existing" ? 1 : 2);
 });

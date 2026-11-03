@@ -47,6 +47,9 @@ export function readUiWorldFrame(
     ) {
       return unavailable("framebuffer");
     }
+    if (gl.getError() !== gl.NO_ERROR) {
+      return unavailable("readback");
+    }
     const raw = new Uint8Array(width * height * 4);
     gl.readPixels(
       x,
@@ -59,6 +62,9 @@ export function readUiWorldFrame(
     );
     if (gl.isContextLost()) {
       return unavailable("context");
+    }
+    if (gl.getError() !== gl.NO_ERROR) {
+      return unavailable("readback");
     }
     const data = new Uint8Array(raw.length);
     for (let row = 0; row < height; row++) {

@@ -11,7 +11,12 @@
     "src/progress/phaser/drawProgressBar.ts",
     "src/text/phaser/phaserBitmapFont.ts",
     "src/text/phaser/registerPixelFont.ts",
+    "src/text/phaser/uiGlyphPen.ts",
     "src/view/phaser/modalBackdrop.ts",
-    "src/view/phaser/snapshotRemap.ts"
+    "src/view/phaser/snapshotRemap.ts",
+    "src/view/phaser/uiCommands.ts",
+    "src/view/phaser/uiComposite.ts",
+    "src/view/phaser/uiProjection.ts",
+    "src/view/phaser/uiSubmitter.ts"
   ]
 }

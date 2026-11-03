@@ -29,7 +29,7 @@
     "vite": "^8.3.5",
     "vitest": "^5.0.5"
   },
-  "version": "0.6.0",
+  "version": "0.7.0",
   "peerDependencies": {
     "phaser": "^4.2.1"
   },
@@ -85,6 +85,7 @@
     "./text/overflow": "./src/text/overflow.ts",
     "./text/phaser/phaserBitmapFont": "./src/text/phaser/phaserBitmapFont.ts",
     "./text/phaser/registerPixelFont": "./src/text/phaser/registerPixelFont.ts",
+    "./text/phaser/uiGlyphPen": "./src/text/phaser/uiGlyphPen.ts",
     "./text/pixelFont": "./src/text/pixelFont.ts",
     "./text/textFit": "./src/text/textFit.ts",
     "./units": "./src/units.ts",
@@ -93,6 +94,10 @@
     "./view/pagePoint": "./src/view/pagePoint.ts",
     "./view/phaser/modalBackdrop": "./src/view/phaser/modalBackdrop.ts",
     "./view/phaser/snapshotRemap": "./src/view/phaser/snapshotRemap.ts",
+    "./view/phaser/uiCommands": "./src/view/phaser/uiCommands.ts",
+    "./view/phaser/uiComposite": "./src/view/phaser/uiComposite.ts",
+    "./view/phaser/uiProjection": "./src/view/phaser/uiProjection.ts",
+    "./view/phaser/uiSubmitter": "./src/view/phaser/uiSubmitter.ts",
     "./view/settleFit": "./src/view/settleFit.ts"
   },
   "repository": {
