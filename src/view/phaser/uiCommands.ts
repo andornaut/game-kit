@@ -56,6 +56,7 @@ export interface UiProjection {
 }
 export interface UiRaster {
   readonly image: CanvasImageSource;
+  // Signed spans map the source origin to quad TL; negative axes reverse that mapping.
   readonly source: Readonly<Rect>;
 }
 export type UiPaintCommand =
@@ -256,13 +257,43 @@ function paintQuad(
   command: Extract<UiPaintCommand, { kind: "quad" }>,
 ): void {
   const { context: ctx } = ports;
-  const { image, source } = command.raster;
-  if (source.width <= 0 || source.height <= 0) {
-    throw new RangeError("UI raster requires a nonempty source rectangle");
+  const { image, source: input } = command.raster;
+  if (
+    ![
+      input.x,
+      input.y,
+      input.width,
+      input.height,
+      ...command.quad.flatMap(({ x, y }) => [x, y]),
+    ].every(Number.isFinite)
+  ) {
+    throw new RangeError("UI raster requires finite geometry");
+  }
+  const source = { ...input };
+  let destination = command.quad;
+  if (source.width < 0) {
+    source.x += source.width;
+    source.width = -source.width;
+    destination = [destination[3], destination[2], destination[1], destination[0]];
+  }
+  if (source.height < 0) {
+    source.y += source.height;
+    source.height = -source.height;
+    destination = [destination[1], destination[0], destination[3], destination[2]];
+  }
+  if (![source.x, source.y].every(Number.isFinite)) {
+    throw new RangeError("UI raster requires finite geometry");
+  }
+  if (source.width === 0 || source.height === 0) {
+    const [tl, bl, , tr] = destination;
+    if ((tr.x - tl.x) * (bl.y - tl.y) - (tr.y - tl.y) * (bl.x - tl.x) === 0) {
+      return;
+    }
+    throw new RangeError("UI raster zero spans require a degenerate destination");
   }
   const size = { height: Math.ceil(source.height), width: Math.ceil(source.width) };
   if (command.tintMode === "multiply" && command.tint.every((component) => component === 255)) {
-    const [tl, bl, , tr] = command.quad;
+    const [tl, bl, , tr] = destination;
     const { scaleX: sx, scaleY: sy } = projection;
     ctx.setTransform(
       ((tr.x - tl.x) / source.width) * sx,
@@ -314,7 +345,7 @@ function paintQuad(
       }
     }
     scratch.putImageData(pixels, 0, 0);
-    const [tl, bl, , tr] = command.quad;
+    const [tl, bl, , tr] = destination;
     const { scaleX: sx, scaleY: sy } = projection;
     ctx.setTransform(
       ((tr.x - tl.x) / size.width) * sx,

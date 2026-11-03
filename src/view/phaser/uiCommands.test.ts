@@ -361,3 +361,149 @@ it.each(["pre-existing", "readback"])("rejects nonthrowing %s GL errors", (phase
   expect(gl.readPixels).toHaveBeenCalledTimes(phase === "pre-existing" ? 0 : 1);
   expect(gl.getError).toHaveBeenCalledTimes(phase === "pre-existing" ? 1 : 2);
 });
+
+it("preserves the actual signed NineSlice UV mapping without an empty-raster failure", () => {
+  const target = surface(80, 40);
+  const image = {} as CanvasImageSource;
+  const createSurface = vi.fn();
+  const source = { height: -1.0000000000000167, width: 1, x: 1811, y: 960 };
+  presentUi(
+    { context: target.ctx, createSurface, releaseSurface: vi.fn(), resizeBacking: vi.fn() },
+    {
+      commands: [
+        {
+          alpha: 1,
+          kind: "quad",
+          owner,
+          quad: [
+            { x: 35, y: 1 },
+            { x: 35, y: 0 },
+            { x: 36, y: 0 },
+            { x: 36, y: 1 },
+          ],
+          raster: { image, source },
+          sampling: "nearest",
+          tint: [255, 255, 255],
+          tintMode: "multiply",
+        },
+      ],
+      id: 1,
+      projection,
+    },
+  );
+  expect(target.context.drawImage).toHaveBeenCalledWith(
+    image,
+    1811,
+    959,
+    1,
+    -source.height,
+    0,
+    0,
+    1,
+    -source.height,
+  );
+  expect(target.context.setTransform).toHaveBeenCalledWith(2, 0, 0, 2 / -source.height, 70, 0);
+  expect(target.ctx.imageSmoothingEnabled).toBe(false);
+  expect(createSurface).not.toHaveBeenCalled();
+  expect(source.height).toBe(-1.0000000000000167);
+});
+it.each([
+  [1, 1, "multiply"],
+  [-1, 1, "fill"],
+  [1, -1, "fill"],
+  [-1, -1, "multiply"],
+] as const)(
+  "maps signed raster axes %s/%s through %s tint without losing alpha",
+  (xSign, ySign, tintMode) => {
+    const target = surface(80, 40);
+    const scratch = surface(1, 1);
+    const image = { pixels: new Uint8ClampedArray([80, 160, 240, 128]) };
+    presentUi(
+      {
+        context: target.ctx,
+        createSurface: () => scratch.ctx,
+        releaseSurface: vi.fn(),
+        resizeBacking: vi.fn(),
+      },
+      {
+        commands: [
+          {
+            alpha: 0.45,
+            kind: "quad",
+            owner,
+            quad: points,
+            raster: {
+              image: image as unknown as CanvasImageSource,
+              source: { height: ySign, width: xSign, x: 5, y: 6 },
+            },
+            sampling: "nearest",
+            tint: [128, 128, 128],
+            tintMode,
+          },
+        ],
+        id: 1,
+        projection,
+      },
+    );
+    expect(scratch.context.drawImage).toHaveBeenCalledWith(
+      image,
+      xSign < 0 ? 4 : 5,
+      ySign < 0 ? 5 : 6,
+      1,
+      1,
+      0,
+      0,
+      1,
+      1,
+    );
+    expect(target.context.setTransform).toHaveBeenCalledWith(
+      xSign * 8,
+      0,
+      0,
+      ySign * 16,
+      xSign < 0 ? 24 : 16,
+      ySign < 0 ? 64 : 48,
+    );
+    expect([...scratch.canvas.pixels]).toEqual(
+      tintMode === "fill" ? [128, 128, 128, 128] : [40, 80, 120, 128],
+    );
+    expect(target.ctx.globalAlpha).toBe(0.45);
+  },
+);
+it("skips finite zero-ink quads but rejects invalid or nondegenerate zero-span raster mappings", () => {
+  const target = surface(80, 40);
+  const createSurface = vi.fn();
+  const command: Extract<UiPaintCommand, { kind: "quad" }> = {
+    alpha: 1,
+    kind: "quad",
+    owner,
+    quad: points,
+    raster: { image: {} as CanvasImageSource, source: { height: 1, width: 0, x: 0, y: 0 } },
+    sampling: "nearest",
+    tint: [255, 255, 255],
+    tintMode: "multiply",
+  };
+  const paint = (next: typeof command) =>
+    presentUi(
+      { context: target.ctx, createSurface, releaseSurface: vi.fn(), resizeBacking: vi.fn() },
+      { commands: [next], id: 1, projection },
+    );
+  expect(() => paint(command)).toThrow("zero spans");
+  expect(() =>
+    paint({ ...command, quad: [points[0], points[1], points[1], points[0]] }),
+  ).not.toThrow();
+  expect(() =>
+    paint({
+      ...command,
+      raster: { ...command.raster, source: { height: 1, width: Number.NaN, x: 0, y: 0 } },
+    }),
+  ).toThrow("finite geometry");
+  expect(() =>
+    paint({
+      ...command,
+      quad: [{ x: Number.POSITIVE_INFINITY, y: 0 }, points[1], points[1], points[0]],
+    }),
+  ).toThrow("finite geometry");
+  expect(target.context.drawImage).not.toHaveBeenCalled();
+  expect(createSurface).not.toHaveBeenCalled();
+});
