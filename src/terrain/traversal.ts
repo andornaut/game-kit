@@ -239,9 +239,21 @@ function validGeometry<Id>(time: number, dt: number, geometry: TraversalGeometry
       return false;
     }
     ids.add(c.supportId);
+    if (!c.segments) {
+      // The implicit single segment from before to after, checked without allocating it.
+      if (
+        !Number.isFinite(time + dt) ||
+        time + dt <= time ||
+        c.after.width !== c.before.width ||
+        c.after.height !== c.before.height
+      ) {
+        return false;
+      }
+      continue;
+    }
     let previous = c.before;
     let at = time;
-    for (const s of motions(time, dt, c)) {
+    for (const s of c.segments) {
       if (
         s.startSeconds !== at ||
         !Number.isFinite(s.endSeconds) ||
@@ -262,8 +274,17 @@ function validGeometry<Id>(time: number, dt: number, geometry: TraversalGeometry
   }
   return true;
 }
-function atTime<Id>(time: number, dt: number, collider: TraversalCollider<Id>, at: number): Rect {
+function atTime<Id>(
+  time: number,
+  dt: number,
+  collider: TraversalCollider<Id>,
+  at: number,
+): Readonly<Rect> {
   const list = collider.segments;
+  // Validated geometry has a positive span, so interpolation would reproduce the box.
+  if (!list && same(collider.before, collider.after)) {
+    return collider.before;
+  }
   let start = time;
   let end = time + dt;
   let from = collider.before;
@@ -318,6 +339,39 @@ function supports<Id>(
   }
   return undefined;
 }
+// Fractions of a relative move at which one axis interval starts and stops overlapping.
+function slabEnter(
+  epsilon: number,
+  from: number,
+  length: number,
+  start: number,
+  size: number,
+  delta: number,
+): number {
+  return delta === 0
+    ? from < start + size - epsilon && from + length > start + epsilon
+      ? -Infinity
+      : Infinity
+    : delta > 0
+      ? (start - from - length) / delta
+      : (start + size - from) / delta;
+}
+function slabExit(
+  epsilon: number,
+  from: number,
+  length: number,
+  start: number,
+  size: number,
+  delta: number,
+): number {
+  return delta === 0
+    ? from < start + size - epsilon && from + length > start + epsilon
+      ? Infinity
+      : -Infinity
+    : delta > 0
+      ? (start + size - from) / delta
+      : (start - from - length) / delta;
+}
 interface Hit {
   readonly fraction: number;
   readonly axis: "x" | "y";
@@ -349,22 +403,10 @@ function hit(
       ? { axis: "y", fraction: Math.max(0, t), velocity: sy / seconds }
       : undefined;
   }
-  const slab = (
-    from: number,
-    length: number,
-    start: number,
-    size: number,
-    delta: number,
-  ): [number, number] =>
-    delta === 0
-      ? from < start + size - epsilon && from + length > start + epsilon
-        ? [-Infinity, Infinity]
-        : [Infinity, -Infinity]
-      : delta > 0
-        ? [(start - from - length) / delta, (start + size - from) / delta]
-        : [(start + size - from) / delta, (start - from - length) / delta];
-  const [x0, x1] = slab(body.x, body.width, solid.x, solid.width, rx);
-  const [y0, y1] = slab(body.y, body.height, solid.y, solid.height, ry);
+  const x0 = slabEnter(epsilon, body.x, body.width, solid.x, solid.width, rx);
+  const x1 = slabExit(epsilon, body.x, body.width, solid.x, solid.width, rx);
+  const y0 = slabEnter(epsilon, body.y, body.height, solid.y, solid.height, ry);
+  const y1 = slabExit(epsilon, body.y, body.height, solid.y, solid.height, ry);
   const enter = Math.max(x0, y0);
   if (enter < -epsilon || enter > 1 || enter >= Math.min(x1, y1) || Math.min(x1, y1) < 0) {
     return undefined;
@@ -373,30 +415,28 @@ function hit(
   return { axis, fraction: Math.max(0, enter), velocity: (axis === "x" ? sx : sy) / seconds };
 }
 
-// Every search edge and runtime move executes this same atomic fixed step.
-function stepKernel<Id>(
+// The part of a step that depends only on the context, state and clock.
+type StepStart<Id> =
+  | { readonly status: "out-of-bounds" | "geometry-unavailable" }
+  | {
+      readonly status: "ok";
+      readonly body: Readonly<Rect>;
+      readonly colliders: readonly TraversalCollider<Id>[];
+      readonly carrier: TraversalCollider<Id> | undefined;
+    };
+function startStep<Id>(
   context: TraversalContext<Id>,
-  input: TraversalInput,
+  time: number,
   state: TraversalState<Id>,
-): TraversalStepResult<Id> {
-  validate(context, state, input.timeSeconds);
-  if (![-1, 0, 1].includes(input.move)) {
-    throw new RangeError("Invalid traversal input");
-  }
-  const fail = (status: TraversalStepResult<Id>["status"]): TraversalStepResult<Id> => ({
-    segments: [],
-    state,
-    status,
-  });
+): StepStart<Id> {
   const { dtSeconds: dt, epsilon: e } = context;
-  const time = input.timeSeconds;
-  let body = box(context, state);
+  const body = box(context, state);
   if (!inside(context.bounds, body, e)) {
-    return fail("out-of-bounds");
+    return { status: "out-of-bounds" };
   }
   const first = context.sampleColliders(time, dt, body);
   if (!validGeometry(time, dt, first)) {
-    return fail("geometry-unavailable");
+    return { status: "geometry-unavailable" };
   }
   const supported = supports(e, body, first.colliders, "before");
   const carrier =
@@ -409,6 +449,59 @@ function stepKernel<Id>(
             c.before.x + c.before.width > body.x,
         ) ?? supported)
       : undefined;
+  return { body, carrier, colliders: first.colliders, status: "ok" };
+}
+function validInput(input: TraversalInput): void {
+  if (![-1, 0, 1].includes(input.move)) {
+    throw new RangeError("Invalid traversal input");
+  }
+}
+
+// Every search edge and runtime move executes this same atomic fixed step.
+function stepKernel<Id>(
+  context: TraversalContext<Id>,
+  input: TraversalInput,
+  state: TraversalState<Id>,
+): TraversalStepResult<Id> {
+  validate(context, state, input.timeSeconds);
+  validInput(input);
+  return advanceStep(context, startStep(context, input.timeSeconds, state), input, state);
+}
+
+// Steps sibling inputs that share one state and clock, starting the step once on first use.
+function siblingSteps<Id>(
+  context: TraversalContext<Id>,
+  state: TraversalState<Id>,
+): (input: TraversalInput) => TraversalStepResult<Id> {
+  let start: StepStart<Id> | undefined;
+  return (input) => {
+    if (!start) {
+      validate(context, state, input.timeSeconds);
+    }
+    validInput(input);
+    start ??= startStep(context, input.timeSeconds, state);
+    return advanceStep(context, start, input, state);
+  };
+}
+
+function advanceStep<Id>(
+  context: TraversalContext<Id>,
+  start: StepStart<Id>,
+  input: TraversalInput,
+  state: TraversalState<Id>,
+): TraversalStepResult<Id> {
+  const fail = (status: TraversalStepResult<Id>["status"]): TraversalStepResult<Id> => ({
+    segments: [],
+    state,
+    status,
+  });
+  if (start.status !== "ok") {
+    return fail(start.status);
+  }
+  const { dtSeconds: dt, epsilon: e } = context;
+  const time = input.timeSeconds;
+  const { carrier } = start;
+  let body = start.body;
   let vy = Math.min(
     context.profile.maxFallSpeed,
     (input.jump && carrier ? -context.profile.jumpSpeed : carrier ? 0 : state.vy) +
@@ -429,7 +522,7 @@ function stepKernel<Id>(
   };
   // Incoming movers can push beyond locomotion bounds. Include their swept extents;
   // a later push outside this sampled domain is unknown rather than collision-free.
-  for (const c of first.colliders) {
+  for (const c of start.colliders) {
     if (same(c.before, c.after) && !c.segments) {
       continue;
     }
@@ -848,6 +941,8 @@ function findKernel<Id>(
     if (node.depth === request.horizonSteps) {
       continue;
     }
+    // Every child input shares the node's state and clock.
+    const step = world ? world.siblings(node.state) : siblingSteps(context, node.state);
     for (const move of [-1, 0, 1] as const) {
       for (const jump of node.state.grounded ? [false, true] : [false]) {
         if (work.steps === request.maxSteps) {
@@ -859,9 +954,7 @@ function findKernel<Id>(
           timeSeconds: request.timeSeconds + node.depth * context.dtSeconds,
         };
         work.steps++;
-        const result = world
-          ? world.step(input, node.state)
-          : stepKernel(context, input, node.state);
+        const result = step(input);
         if (result.status === "geometry-unavailable") {
           return { status: "geometry-unavailable", work };
         }
@@ -910,7 +1003,15 @@ interface SearchWorld<Id> {
   ) => TraversalAvailability<PreparedWorld<Id>>;
   readonly key: (state: TraversalState<Id>) => string;
   readonly step: (input: TraversalInput, state: TraversalState<Id>) => TraversalStepResult<Id>;
+  readonly siblings: (
+    state: TraversalState<Id>,
+  ) => (input: TraversalInput) => TraversalStepResult<Id>;
 }
+type StepKernel<Id> = (
+  context: TraversalContext<Id>,
+  input: TraversalInput,
+  state: TraversalState<Id>,
+) => TraversalStepResult<Id>;
 
 function prepareWorld<Id, World>(
   context: WorldTraversalContext<Id, World>,
@@ -950,6 +1051,7 @@ function prepareWorld<Id, World>(
 
 function stepWorld<Id, World>(
   context: WorldTraversalContext<Id, World>,
+  kernel: StepKernel<Id>,
   input: TraversalInput,
   state: WorldTraversalState<Id, World>,
   frame: TraversalAvailability<PreparedWorld<Id>>,
@@ -965,7 +1067,7 @@ function stepWorld<Id, World>(
     return fail("geometry-unavailable");
   }
   const prepared = frame.value;
-  const result = stepKernel(prepared.context, input, state);
+  const result = kernel(prepared.context, input, state);
   if (prepared.unavailable) {
     return fail("geometry-unavailable");
   }
@@ -1016,7 +1118,13 @@ export function stepTraversal<Id, World>(
   if (![-1, 0, 1].includes(input.move) || !("world" in state)) {
     throw new RangeError("Invalid traversal input or world state");
   }
-  return stepWorld(context, input, state, prepareWorld(context, input.timeSeconds, state));
+  return stepWorld(
+    context,
+    stepKernel,
+    input,
+    state,
+    prepareWorld(context, input.timeSeconds, state),
+  );
 }
 
 export function findTraversal<Id, World>(
@@ -1055,9 +1163,24 @@ export function findTraversal<Id, World>(
   return findKernel(base, request, {
     key: (state) => context.world.key((state as WorldTraversalState<Id, World>).world),
     prepare,
+    // A state's cached frame gives every sibling input the same prepared context.
+    siblings: (state) => {
+      let step: ((input: TraversalInput) => TraversalStepResult<Id>) | undefined;
+      const kernel: StepKernel<Id> = (prepared, input) =>
+        (step ??= siblingSteps(prepared, state))(input);
+      return (input) =>
+        stepWorld(
+          context,
+          kernel,
+          input,
+          state as WorldTraversalState<Id, World>,
+          prepare(state, input.timeSeconds),
+        );
+    },
     step: (input, state) =>
       stepWorld(
         context,
+        stepKernel,
         input,
         state as WorldTraversalState<Id, World>,
         prepare(state, input.timeSeconds),

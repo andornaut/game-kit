@@ -802,6 +802,59 @@ const worldStart: import("./traversal.ts").WorldTraversalState<object, TestWorld
   world: { preparedAt: null, touched: false },
 };
 
+it.each([
+  { grounded: true, steps: 6, world: false },
+  { grounded: false, steps: 3, world: false },
+  { grounded: true, steps: 6, world: true },
+  { grounded: false, steps: 3, world: true },
+])(
+  "samples an expanded node's start once for all its sibling inputs (grounded $grounded, world $world)",
+  ({ grounded, steps, world }) => {
+    const queries: string[] = [];
+    const sample = (time: number, bounds: Readonly<Rect>) => {
+      queries.push(`${time}:${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}`);
+      return { colliders: [fixed(ground, floor)], complete: true };
+    };
+    const request = {
+      goal: rect(1, 8, 2, 2),
+      horizonSteps: 1,
+      maxStates: 32,
+      maxSteps: 32,
+      timeSeconds: 0,
+    };
+    const forward = { jump: false, move: 1, timeSeconds: 0 } as const;
+    let replayed: TraversalState<object>;
+    let search: () => import("./traversal.ts").TraversalResult<object>;
+    if (world) {
+      const c = worldContext();
+      c.world.sampleColliders = (_world, time, _dt, bounds) => sample(time, bounds);
+      const state = { ...worldStart, grounded };
+      replayed = stepTraversal(c, forward, state).state;
+      search = () => findTraversal(c, { ...request, start: state });
+    } else {
+      const c = {
+        ...context([]),
+        sampleColliders: (time: number, _dt: number, bounds: Readonly<Rect>) =>
+          sample(time, bounds),
+      };
+      const state = { ...start, grounded };
+      replayed = stepTraversal(c, forward, state).state;
+      search = () => findTraversal(c, { ...request, start: state });
+    }
+    queries.length = 0;
+    const result = search();
+    expect(result).toMatchObject({
+      inputs: [{ jump: false, move: 1, timeSeconds: 0 }],
+      state: { fallFromY: replayed.fallFromY, grounded: true, vy: 0, x: 1, y: 8 },
+      status: "found",
+      work: { steps },
+    });
+    expect(replayed).toMatchObject({ grounded: true, x: 1, y: 8 });
+    // The request's initial geometry check and the one shared step start.
+    expect(queries.filter((q) => q === "0:0:8:2:2")).toHaveLength(2);
+  },
+);
+
 describe("world-aware terrain traversal", () => {
   it("carries the prepared arrival world in a fully validated replayable result", () => {
     const c = worldContext();
