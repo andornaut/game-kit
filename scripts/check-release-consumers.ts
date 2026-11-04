@@ -24,7 +24,7 @@ import {
   runContainer,
   ScriptError,
 } from "./runtime.ts";
-import { dirtyFingerprint } from "./source-fingerprint.ts";
+import { sourceFingerprint } from "./source-fingerprint.ts";
 
 const SCRATCH = "/tmp/scratch";
 const USAGE =
@@ -72,7 +72,7 @@ export function checkReleaseConsumers(env: NodeJS.ProcessEnv, kit: string, args:
   mkdirSync(join(kit, ".claude"), { recursive: true });
   const output = mkdtempSync(join(kit, ".claude/release-consumers."));
   const roots = [kit, archie, chibi];
-  const before = dirtyFingerprint(roots);
+  const before = sourceFingerprint(roots);
   writeFileSync(join(output, "source.before"), `${before}\n`);
   writeFileSync(
     join(output, "revisions.txt"),
@@ -114,7 +114,7 @@ export function checkReleaseConsumers(env: NodeJS.ProcessEnv, kit: string, args:
   }
   let after;
   try {
-    after = dirtyFingerprint(roots);
+    after = sourceFingerprint(roots);
   } catch {
     writeFileSync(join(output, "RESULT"), "INVALID: source fingerprint unavailable\n");
     throw new ScriptError(`Release consumer evidence: ${output}`);

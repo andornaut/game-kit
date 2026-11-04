@@ -21,6 +21,10 @@ export class ScriptError extends Error {
   }
 }
 
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function nodeImage(root: string): string {
   return `node:${readFileSync(join(root, ".nvmrc"), "utf8").trim().replace(/^v/, "")}`;
 }

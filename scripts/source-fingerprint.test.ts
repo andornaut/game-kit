@@ -26,7 +26,7 @@ it.each([".env", ".env.fixture", ".ssh/key", ".private/key", "git-failure"])(
     mkdirSync(join(root, "scripts"));
     const bin = join(root, "bin");
     mkdirSync(bin);
-    for (const file of ["check.ts", "runtime.ts", "source-fingerprint.ts"]) {
+    for (const file of ["check.ts", "pack.ts", "runtime.ts", "source-fingerprint.ts"]) {
       copyFileSync(join(scripts, file), join(root, "scripts", file));
     }
     writeFileSync(join(root, ".nvmrc"), "24.21.0\n");
@@ -61,27 +61,64 @@ it.each([".env", ".env.fixture", ".ssh/key", ".private/key", "git-failure"])(
   },
 );
 
-it("hashes HEAD, status and each sorted path's bytes, link target or absence", () => {
+function repository() {
   const root = mkdtempSync(join(tmpdir(), "kit-fingerprint-digest-"));
   const git = (...args: string[]) => execFileSync("git", ["-C", root, ...args]);
   git("init", "--quiet");
   writeFileSync(join(root, "b.txt"), "tracked");
+  writeFileSync(join(root, "clean.txt"), "clean, so not hashed");
   writeFileSync(join(root, "gone.txt"), "deleted later");
   git("add", ".");
   git(
     ...["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid"],
     ...["-c", "core.hooksPath=/dev/null", "commit", "--quiet", "--no-verify", "-m", "Fixture"],
   );
+  writeFileSync(join(root, "b.txt"), "edited");
   rmSync(join(root, "gone.txt"));
   symlinkSync("b.txt", join(root, "a-link"));
   writeFileSync(join(root, "c.txt"), "untracked");
+  return { git, root };
+}
+
+it("hashes the root, HEAD, status and each dirty path's bytes, link target or absence", () => {
+  const { git, root } = repository();
+  const status = git("status", "--porcelain=v1", "--untracked-files=all", "-z");
+  expect(status.toString()).toBe(" M b.txt\0 D gone.txt\0?? a-link\0?? c.txt\0");
   const expected = createHash("sha256")
+    .update(`${root}\0`)
     .update(git("rev-parse", "HEAD"))
-    .update(git("status", "--porcelain=v1", "--untracked-files=all", "-z"))
-    .update("a-link\0b.txt")
-    .update("b.txt\0tracked")
-    .update("c.txt\0untracked")
+    .update(status)
+    .update("b.txt\0edited")
     .update("gone.txt\0missing\0")
+    .update("a-link\0b.txt")
+    .update("c.txt\0untracked")
     .digest("hex");
-  expect(sourceFingerprint(root)).toBe(expected);
+  expect(sourceFingerprint([root])).toBe(expected);
+});
+
+it.each<[string, (root: string) => void]>([
+  ["a dirty file's bytes", (root) => writeFileSync(join(root, "b.txt"), "edited again")],
+  ["an untracked file's bytes", (root) => writeFileSync(join(root, "c.txt"), "changed")],
+  [
+    "an untracked link's target",
+    (root) => {
+      rmSync(join(root, "a-link"));
+      symlinkSync("c.txt", join(root, "a-link"));
+    },
+  ],
+  ["the status", (root) => writeFileSync(join(root, "d.txt"), "")],
+])("changes with %s", (_, change) => {
+  const { root } = repository();
+  const before = sourceFingerprint([root]);
+  change(root);
+  expect(sourceFingerprint([root])).not.toBe(before);
+});
+
+it("covers every root in order", () => {
+  const { root: first } = repository();
+  const { root: second } = repository();
+  const fingerprints = [[first], [second], [first, second], [second, first]].map((roots) =>
+    sourceFingerprint(roots),
+  );
+  expect(new Set(fingerprints).size).toBe(fingerprints.length);
 });

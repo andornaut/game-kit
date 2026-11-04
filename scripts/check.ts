@@ -26,7 +26,7 @@ export function check(env: NodeJS.ProcessEnv, root: string): void {
   const cache = npmCacheVolume(env);
   const image = nodeImage(root);
   mkdirSync(join(root, ".claude"), { recursive: true });
-  const before = sourceFingerprint(root);
+  const before = sourceFingerprint([root]);
   // The packed artifact and its consumer probe, kept only when the gate fails.
   const evidence = mkdtempSync(join(root, ".claude/artifact-check."));
   // The tmpfs mount points must exist in the read-only checkout.
@@ -98,7 +98,7 @@ export function check(env: NodeJS.ProcessEnv, root: string): void {
   }
   let after;
   try {
-    after = sourceFingerprint(root);
+    after = sourceFingerprint([root]);
   } catch {
     throw new ScriptError("Cannot verify source fingerprints; discard the gate result.");
   }
