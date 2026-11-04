@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   CONTAINER_UID,
   containerOptions,
+  errorMessage,
   git,
   main,
   nodeImage,
@@ -21,6 +22,7 @@ import { sourceFingerprint } from "./source-fingerprint.ts";
 const EVIDENCE = "/tmp/evidence";
 // Written to the evidence directory when the offline install cannot be satisfied from the cache.
 const CACHE_MISS = "NPM_CACHE_MISS";
+const DISCARD = "Discard the gate result.";
 
 export function check(env: NodeJS.ProcessEnv, root: string): void {
   const cache = npmCacheVolume(env);
@@ -96,14 +98,16 @@ export function check(env: NodeJS.ProcessEnv, root: string): void {
   } else {
     console.error(`Artifact evidence: ${evidence}`);
   }
+  const also = failure === undefined ? "" : `\nThe gate also failed: ${errorMessage(failure)}`;
   let after;
   try {
     after = sourceFingerprint([root]);
-  } catch {
-    throw new ScriptError("Cannot verify source fingerprints; discard the gate result.");
+  } catch (error) {
+    const cause = errorMessage(error);
+    throw new ScriptError(`Cannot verify source fingerprints: ${cause}${also}\n${DISCARD}`);
   }
   if (after !== before) {
-    throw new ScriptError("Source changed during verification; discard the gate result.");
+    throw new ScriptError(`Source changed during verification.${also}\n${DISCARD}`);
   }
   if (failure !== undefined) {
     throw failure;

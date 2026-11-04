@@ -19,47 +19,71 @@ import { sourceFingerprint } from "./source-fingerprint.ts";
 
 const scripts = dirname(fileURLToPath(import.meta.url));
 
-it.each([".env", ".env.fixture", ".ssh/key", ".private/key", "git-failure"])(
+/** Run check.ts in a checkout whose git lists through `listing` and whose Docker always fails. */
+function checkWithFakes(name: string, listing: string) {
+  const root = mkdtempSync(join(tmpdir(), "kit-fingerprint-"));
+  mkdirSync(join(root, "scripts"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  for (const file of ["check.ts", "pack.ts", "runtime.ts", "source-fingerprint.ts"]) {
+    copyFileSync(join(scripts, file), join(root, "scripts", file));
+  }
+  writeFileSync(join(root, ".nvmrc"), "24.21.0\n");
+  // An empty synthetic credential-shaped file, never real credential material.
+  mkdirSync(dirname(join(root, name)), { recursive: true });
+  writeFileSync(join(root, name), "");
+  writeFileSync(
+    join(bin, "git"),
+    [
+      "#!/bin/sh",
+      'if [ "$1" = -C ]; then shift 2; fi',
+      `case "$1" in rev-parse) echo fixture;; status) :;; ls-files) ${listing};; esac`,
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  writeFileSync(join(bin, "docker"), '#!/bin/sh\necho "container started" >&2\nexit 99\n', {
+    mode: 0o755,
+  });
+  const result = spawnSync(process.execPath, [join(root, "scripts/check.ts")], {
+    encoding: "utf8",
+    // The fake Docker runs nothing heavy, so the result must not depend on host load.
+    env: { ...process.env, GAME_KIT_LOAD: "0", PATH: `${bin}:${process.env.PATH}` },
+  });
+  return { result, root: realpathSync(root) };
+}
+
+it.each([".env", ".env.fixture", ".ssh/key", ".private/key"])(
   "refuses %s before starting the verification containers",
   (name) => {
-    const root = mkdtempSync(join(tmpdir(), "kit-fingerprint-"));
-    mkdirSync(join(root, "scripts"));
-    const bin = join(root, "bin");
-    mkdirSync(bin);
-    for (const file of ["check.ts", "pack.ts", "runtime.ts", "source-fingerprint.ts"]) {
-      copyFileSync(join(scripts, file), join(root, "scripts", file));
-    }
-    writeFileSync(join(root, ".nvmrc"), "24.21.0\n");
-    // An empty synthetic credential-shaped file, never real credential material.
-    mkdirSync(dirname(join(root, name)), { recursive: true });
-    writeFileSync(join(root, name), "");
-    const listing = name === "git-failure" ? "exit 42" : `printf '${name}\\0'`;
-    writeFileSync(
-      join(bin, "git"),
-      [
-        "#!/bin/sh",
-        'if [ "$1" = -C ]; then shift 2; fi',
-        `case "$1" in rev-parse) echo fixture;; status) :;; ls-files) ${listing};; esac`,
-        "",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-    writeFileSync(join(bin, "docker"), '#!/bin/sh\necho "container started" >&2\nexit 99\n', {
-      mode: 0o755,
-    });
-    const result = spawnSync(process.execPath, [join(root, "scripts/check.ts")], {
-      encoding: "utf8",
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
-    });
+    const { result } = checkWithFakes(name, `printf '${name}\\0'`);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain(
-      name === "git-failure"
-        ? `Cannot read source fingerprint of ${realpathSync(root)}: Command failed: git`
-        : "Refusing credential path",
-    );
+    expect(result.stderr).toContain("Refusing credential path");
     expect(result.stderr).not.toContain("container started");
   },
 );
+
+it("reports an unreadable listing before starting the verification containers", () => {
+  const { result, root } = checkWithFakes("file", "exit 42");
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain(`Cannot read source fingerprint of ${root}: Command failed: git`);
+  expect(result.stderr).not.toContain("container started");
+});
+
+it("reports both the fingerprint cause and the gate failure after a failed gate", () => {
+  // The listing before the gate succeeds; the listing after it fails.
+  const { result, root } = checkWithFakes(
+    "file",
+    'if [ -e "$0.listed" ]; then exit 42; fi; touch "$0.listed"',
+  );
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("container started");
+  expect(result.stderr).toContain(
+    `Cannot verify source fingerprints: Cannot read source fingerprint of ${root}: Command failed: git`,
+  );
+  expect(result.stderr).toContain("The gate also failed: docker create exited with status 99.");
+  expect(result.stderr).toContain("Discard the gate result.");
+});
 
 function repository() {
   const root = mkdtempSync(join(tmpdir(), "kit-fingerprint-digest-"));

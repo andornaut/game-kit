@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { committedVersion } from "./pack.ts";
 import {
   containerOptions,
+  errorMessage,
   git,
   main,
   nodeImage,
@@ -115,9 +116,11 @@ export function checkReleaseConsumers(env: NodeJS.ProcessEnv, kit: string, args:
   let after;
   try {
     after = sourceFingerprint(roots);
-  } catch {
-    writeFileSync(join(output, "RESULT"), "INVALID: source fingerprint unavailable\n");
-    throw new ScriptError(`Release consumer evidence: ${output}`);
+  } catch (error) {
+    const cause = `Cannot verify source fingerprints: ${errorMessage(error)}`;
+    const proof = failure === undefined ? "" : `\nThe proof also failed: ${errorMessage(failure)}`;
+    writeFileSync(join(output, "RESULT"), `INVALID: ${cause}${proof}\n`);
+    throw new ScriptError(`${cause}${proof}\nRelease consumer evidence: ${output}`);
   }
   writeFileSync(join(output, "source.after"), `${after}\n`);
   if (before !== after || sha256(artifact) !== hash) {
