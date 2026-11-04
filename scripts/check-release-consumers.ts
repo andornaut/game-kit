@@ -1,5 +1,5 @@
 // Prove one tarball against immutable offline consumer snapshots; preserve evidence.
-// GAME_KIT_ARCHIE_CACHE and GAME_KIT_CHIBI_CACHE override populated read-only caches.
+// GAME_KIT_ARCHIE_CACHE and GAME_KIT_CHIBI_CACHE name each game's populated offline npm cache.
 import { createHash } from "node:crypto";
 import {
   closeSync,
@@ -29,14 +29,16 @@ import { dirtyFingerprint } from "./source-fingerprint.ts";
 const SCRATCH = "/tmp/scratch";
 const USAGE =
   "Usage: check-release-consumers.ts <artifact.tgz> <sha256> <source-commit> " +
-  "<Archie repository> <Archie revision> <Chibi repository> <Chibi revision>";
+  "<Archie repository> <Archie revision> <Chibi repository> <Chibi revision>\n" +
+  "GAME_KIT_ARCHIE_CACHE and GAME_KIT_CHIBI_CACHE must name each game's populated npm cache.";
 
 const sha256 = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
 const commit = (root: string, revision: string) =>
   git(root, "rev-parse", "--verify", `${revision}^{commit}`);
 
 export function checkReleaseConsumers(env: NodeJS.ProcessEnv, kit: string, args: string[]): void {
-  if (args.length !== 7) {
+  const { GAME_KIT_ARCHIE_CACHE: archieCachePath, GAME_KIT_CHIBI_CACHE: chibiCachePath } = env;
+  if (args.length !== 7 || !archieCachePath || !chibiCachePath) {
     throw new ScriptError(USAGE, 2);
   }
   const [artifactPath, hash, source, archiePath, archieRef, chibiPath, chibiRef] = args as [
@@ -65,10 +67,8 @@ export function checkReleaseConsumers(env: NodeJS.ProcessEnv, kit: string, args:
     git(root, "rev-parse", "--path-format=absolute", "--git-common-dir");
   const archieGit = commonDir(archie);
   const chibiGit = commonDir(chibi);
-  const archieCache = realpathSync(
-    env.GAME_KIT_ARCHIE_CACHE ?? join(archie, ".claude/bus/npm-cache"),
-  );
-  const chibiCache = realpathSync(env.GAME_KIT_CHIBI_CACHE ?? join(chibi, ".claude/bus/npm-cache"));
+  const archieCache = realpathSync(archieCachePath);
+  const chibiCache = realpathSync(chibiCachePath);
   mkdirSync(join(kit, ".claude"), { recursive: true });
   const output = mkdtempSync(join(kit, ".claude/release-consumers."));
   const roots = [kit, archie, chibi];

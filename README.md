@@ -204,12 +204,13 @@ WORKAROUND: Parent-scoped development overrides pin [KaTeX](https://github.com/a
 `node scripts/pack.ts <output-directory>` builds the committed revision in an offline container from the npm cache volume. It compiles JavaScript and declarations with `tsconfig.release.json` and packages the manifest, `SOURCE_COMMIT`, README and licence, without TypeScript source, tests, scripts or development commands.
 
 ```bash
+GAME_KIT_ARCHIE_CACHE=<Archie-npm-cache> GAME_KIT_CHIBI_CACHE=<Chibi-npm-cache> \
 node scripts/check-release-consumers.ts \
   <artifact.tgz> <sha256> <source-commit> \
   <Archie-repository> <Archie-revision> <Chibi-repository> <Chibi-revision>
 ```
 
-The proof installs the exact artifact into immutable snapshots of both games' pinned revisions, offline. It checks the installed bytes, lockfile integrity, every export, native imports and declarations, each game's type check and Vite and Vitest configuration, and one caller test per game: `src/home/modalLayout.test.ts` for Archie and `src/rules/behaviourTraversalGoals.test.ts` for Chibi. It never edits a checkout or builds or deploys a game. The offline npm caches default to each game's `.claude/bus/npm-cache`; `GAME_KIT_ARCHIE_CACHE` (Archie) and `GAME_KIT_CHIBI_CACHE` (Chibi) name others. Logs, archive listings and results are kept in the printed evidence directory.
+The proof installs the exact artifact into immutable snapshots of both games' pinned revisions, offline. It checks the installed bytes, lockfile integrity, every export, native imports and declarations, each game's type check and Vite and Vitest configuration, and runs each game's `test:game-kit` npm script, which tests its kit wiring; a snapshot without that script fails. It never edits a checkout or builds or deploys a game. `GAME_KIT_ARCHIE_CACHE` and `GAME_KIT_CHIBI_CACHE` are required and name each game's populated offline npm cache, mounted read-only. Logs, archive listings and results are kept in the printed evidence directory.
 
 Tag a release only after every required workflow is green for that `main` commit and the artifact passes the consumer proof. Tags and release assets are never moved.
 

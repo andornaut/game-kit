@@ -5,7 +5,6 @@ import { createHash } from "node:crypto";
 import {
   appendFileSync,
   closeSync,
-  existsSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -22,11 +21,9 @@ const EVIDENCE = "/tmp/scratch";
 const WORK = "/tmp/work";
 const GAMES = ["archie", "chibi"] as const;
 type Game = (typeof GAMES)[number];
-/** Each game's focused test of its kit wiring, run against the installed artifact. */
-const CALLER_TESTS: Record<Game, { name: string; test: string }> = {
-  archie: { name: "Archie", test: "src/home/modalLayout.test.ts" },
-  chibi: { name: "Chibi", test: "src/rules/behaviourTraversalGoals.test.ts" },
-};
+const GAME_NAMES: Record<Game, string> = { archie: "Archie", chibi: "Chibi" };
+/** The npm script each game defines to test its kit wiring against the installed artifact. */
+export const GAME_KIT_TEST_SCRIPT = "test:game-kit";
 
 /** Archive members must stay under package/ without parent segments. */
 export function unsafeArchivePaths(listing: string): string[] {
@@ -44,13 +41,14 @@ export function unsafeArchiveModes(verboseListing: string): string[] {
     .filter((line) => !["-", "d"].includes(line.charAt(0)));
 }
 
-/** The focused caller test for one pinned consumer snapshot. */
-export function callerTest(game: Game, work: string): string {
-  const { name, test } = CALLER_TESTS[game];
-  if (!existsSync(join(work, test))) {
-    throw new ScriptError(`The pinned ${name} snapshot has no caller test ${test}`);
+/** Fail unless the pinned consumer snapshot defines its kit wiring test script. */
+export function requireGameKitTest(game: Game, work: string): void {
+  const manifest = JSON.parse(readFileSync(join(work, "package.json"), "utf8"));
+  if (typeof manifest.scripts?.[GAME_KIT_TEST_SCRIPT] !== "string") {
+    throw new ScriptError(
+      `The pinned ${GAME_NAMES[game]} snapshot defines no "${GAME_KIT_TEST_SCRIPT}" npm script`,
+    );
   }
-  return test;
 }
 
 /** Adapt only the disposable manifest to install the exact tarball. */
@@ -219,6 +217,7 @@ function proveGame(
       { maxBuffer: 1 << 30 },
     );
     execFileSync("tar", ["-x", "-C", work], { input: snapshot });
+    requireGameKitTest(game, work);
     adoptArtifact(ARTIFACT, work);
     run("npm", ["install", "--package-lock-only", ...NPM_OFFLINE]);
     run("npm", ["ci", ...NPM_OFFLINE]);
@@ -227,7 +226,7 @@ function proveGame(
     run("npm", ["run", "check"]);
     probe(NATIVE_IMPORT_PROBE);
     probe(CONFIG_BOOTSTRAP_PROBE);
-    run("node_modules/.bin/vitest", ["run", callerTest(game, work), "--maxWorkers=4"]);
+    run("npm", ["run", GAME_KIT_TEST_SCRIPT, "--", "--maxWorkers=4"]);
     return true;
   } catch (error) {
     appendFileSync(log, `${error instanceof Error ? error.message : String(error)}\n`);

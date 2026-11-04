@@ -16,7 +16,8 @@ import { expect, it } from "vitest";
 
 import {
   adoptArtifact,
-  callerTest,
+  GAME_KIT_TEST_SCRIPT,
+  requireGameKitTest,
   unsafeArchiveModes,
   unsafeArchivePaths,
 } from "./release-consumer-job.ts";
@@ -60,15 +61,23 @@ function fixture(name: string) {
   writeFileSync(artifact, "opaque artifact, not a trusted version source");
   const hash = createHash("sha256").update(readFileSync(artifact)).digest("hex");
   const capture = join(root, ".claude/captured");
-  const run = (args = [artifact, hash, revision, root, revision, root, revision]) =>
+  const caches = {
+    GAME_KIT_ARCHIE_CACHE: join(root, ".claude/cache"),
+    GAME_KIT_CHIBI_CACHE: join(root, ".claude/cache"),
+  };
+  const run = (
+    args = [artifact, hash, revision, root, revision, root, revision],
+    cacheEnv: Partial<typeof caches> = caches,
+  ) =>
     spawnSync(process.execPath, [join(root, "scripts/check-release-consumers.ts"), ...args], {
       cwd: root,
       encoding: "utf8",
       env: {
         ...process.env,
+        GAME_KIT_ARCHIE_CACHE: undefined,
+        GAME_KIT_CHIBI_CACHE: undefined,
+        ...cacheEnv,
         CAPTURE: capture,
-        GAME_KIT_ARCHIE_CACHE: join(root, ".claude/cache"),
-        GAME_KIT_CHIBI_CACHE: join(root, ".claude/cache"),
         // The fake Docker runs nothing heavy, so the result must not depend on host load.
         GAME_KIT_LOAD: "0",
         PATH: `${root}/bin:${process.env.PATH}`,
@@ -109,15 +118,29 @@ it("validates argument count and checksum shape", () => {
   expect(result.stderr).toContain("64 lowercase hex digits");
 });
 
+it.each<[string, Record<string, string>]>([
+  ["no caches", {}],
+  ["only the Archie cache", { GAME_KIT_ARCHIE_CACHE: "/cache" }],
+  ["only the Chibi cache", { GAME_KIT_CHIBI_CACHE: "/cache" }],
+])("requires both game caches before launching Docker: %s", (_, cacheEnv) => {
+  const { capture, run } = fixture("@andornaut/game-kit");
+  const result = run(undefined, cacheEnv);
+  expect(result.status).toBe(2);
+  expect(result.stderr).toContain("GAME_KIT_ARCHIE_CACHE and GAME_KIT_CHIBI_CACHE must name");
+  expect(() => readFileSync(capture)).toThrow();
+});
+
 it.each([
-  ["archie", "src/home/modalLayout.test.ts", /Archie snapshot has no caller test/],
-  ["chibi", "src/rules/behaviourTraversalGoals.test.ts", /Chibi snapshot has no caller test/],
-] as const)("selects the %s caller test only when it exists", (game, path, missing) => {
-  const root = mkdtempSync(join(tmpdir(), "kit-consumer-test-selection-"));
-  expect(() => callerTest(game, root)).toThrow(missing);
-  mkdirSync(dirname(join(root, path)), { recursive: true });
-  writeFileSync(join(root, path), "");
-  expect(callerTest(game, root)).toBe(path);
+  ["archie", /Archie snapshot defines no "test:game-kit" npm script/],
+  ["chibi", /Chibi snapshot defines no "test:game-kit" npm script/],
+] as const)("requires the %s snapshot to define its kit test script", (game, missing) => {
+  const root = mkdtempSync(join(tmpdir(), "kit-consumer-test-script-"));
+  const manifest = (scripts: Record<string, string>) =>
+    writeFileSync(join(root, "package.json"), JSON.stringify({ scripts }));
+  manifest({ test: "vitest run" });
+  expect(() => requireGameKitTest(game, root)).toThrow(missing);
+  manifest({ [GAME_KIT_TEST_SCRIPT]: "vitest run src/a.test.ts" });
+  expect(() => requireGameKitTest(game, root)).not.toThrow();
 });
 
 it("refuses archive members outside package/ or with parent segments", () => {
