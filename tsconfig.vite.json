@@ -13,6 +13,7 @@
     "src/web/build/vite/phaserSource.ts",
     "src/web/build/vite/phaserUses.ts",
     "src/web/headers/vite/securityHeadersPlugin.ts",
+    "src/web/pwa/vite/hashedIconsPlugin.ts",
     "src/web/pwa/vite/precachePlugin.ts"
   ]
 }

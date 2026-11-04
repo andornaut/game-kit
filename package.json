@@ -151,6 +151,7 @@
     "./web/pwa/serviceWorkerUrl": "./src/web/pwa/serviceWorkerUrl.ts",
     "./web/pwa/storagePersistence": "./src/web/pwa/storagePersistence.ts",
     "./web/pwa/updateReady": "./src/web/pwa/updateReady.ts",
+    "./web/pwa/vite/hashedIconsPlugin": "./src/web/pwa/vite/hashedIconsPlugin.ts",
     "./web/pwa/vite/precachePlugin": "./src/web/pwa/vite/precachePlugin.ts",
     "./web/save/dom/localSaveStorage": "./src/web/save/dom/localSaveStorage.ts",
     "./web/save/dom/pageSessionStore": "./src/web/save/dom/pageSessionStore.ts",
