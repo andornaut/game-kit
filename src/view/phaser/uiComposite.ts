@@ -1,6 +1,7 @@
 import type { RgbaImage } from "../../art/rgbaImage.ts";
 import {
   presentUi,
+  releaseUiTintCache,
   type UiCompositePorts,
   type UiCompositeRequest,
   type UiSnapshotResult,
@@ -201,6 +202,7 @@ export function createUiCompositor(ports: UiCompositePorts): {
     },
     destroy() {
       disposed = true;
+      releaseUiTintCache(ports);
     },
   };
 }
