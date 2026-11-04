@@ -22,7 +22,9 @@ function run(...args: string[]) {
   const capture = join(root, "captured");
   writeFileSync(
     join(root, "bin/docker"),
-    '#!/bin/sh\nif [ "$1" = create ]; then printf "%s\\n" "$@" > "$CAPTURE"; echo fixture; fi\n',
+    // `start -i` drains stdin as Docker does, so piping the archive cannot fail with EPIPE.
+    '#!/bin/sh\nif [ "$1" = create ]; then printf "%s\\n" "$@" > "$CAPTURE"; echo fixture; fi\n' +
+      'if [ "$1" = start ]; then cat > /dev/null; fi\n',
     { mode: 0o755 },
   );
   const result = spawnSync(process.execPath, [join(root, "scripts/npm-cache.ts"), ...args], {
