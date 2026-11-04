@@ -16,7 +16,7 @@ The compiled GitHub release archive contains JavaScript and declarations. Instal
 
 ## Version and interface policy
 
-The source package is version `0.7.0`. The explicit `exports` map and exported declarations define the public interface. Internal imports are relative and acyclic; there is no root barrel loading an engine for pure callers.
+The source package is version `0.7.1`. The explicit `exports` map and exported declarations define the public interface. Internal imports are relative and acyclic; there is no root barrel loading an engine for pure callers.
 
 Compatible fixes use patch versions; additive public facilities use minor versions. After 1.0, incompatible changes require a major version. Before 1.0, incompatible changes require a minor version and an explicit migration. Update the manifest and root lockfile together. Prove the compiled artifact against exact consumer revisions before publication. Documentation-only changes need no version bump.
 
@@ -115,10 +115,12 @@ The complete resolved contact set at tick end records newly standing actor/suppo
 ## Standalone verification
 
 ```bash
-bash scripts/check.sh
+node scripts/check.ts
 ```
 
-The host needs Bash, Docker, Git and Python 3 for source fingerprinting. The isolated gate uses Node 24.21.0, at most four CPUs and four Vitest workers. It populates the project npm cache in a container, then checks types, formatting, lint, tests and the actual compiled package offline in a fresh container. The checkout is read-only and source fingerprints must remain stable. Credential-shaped paths are refused before content reads. CI invokes the same script. Start below one-minute load 24. `GAME_KIT_NPM_CACHE` selects a populated cache; container images derive from `.nvmrc`.
+The host needs Docker, Git and the Node version in `.nvmrc`, which runs the TypeScript tooling directly without a build step. The isolated gate uses Node 24.21.0, at most four CPUs and four Vitest workers. It populates the project npm cache in a container, then checks types, formatting, lint, tests and the actual compiled package offline in a fresh container. Source fingerprints must remain stable, and credential-shaped paths are refused before content reads. CI invokes the same script. Start below one-minute load 24. Container images derive from `.nvmrc`.
+
+Every container runs as uid and gid 19001, which owns nothing on the host, with the checkout's group added for reads, `HOME=/tmp`, a read-only root file system and only read-only host mounts. Scratch and outputs live in a per-run volume; results are copied out with `docker cp`, so files in the checkout keep their host owner. The npm cache is the named Docker volume `game-kit-npm-cache`; `GAME_KIT_NPM_CACHE` names another.
 
 | Container command            | Purpose                                          |
 | ---------------------------- | ------------------------------------------------ |
@@ -135,15 +137,15 @@ WORKAROUND: Parent-scoped development overrides pin [KaTeX](https://github.com/a
 
 The public source repository is [andornaut/game-kit](https://github.com/andornaut/game-kit). GitHub releases distribute `game-kit-<version>.tgz`, `SOURCE_COMMIT` and `SHA256SUMS`, without npm registry publication. Install only an actually published version and commit the lockfile integrity. The versioned artifact URL for `0.6.0` is `https://github.com/andornaut/game-kit/releases/download/v0.6.0/game-kit-0.6.0.tgz`.
 
-`bash scripts/pack.sh <output-directory>` builds the committed revision in an isolated offline container. It emits JavaScript and declarations using `tsconfig.release.json` and packages public metadata, provenance, README and MIT licence. Runtime TypeScript source, tests and private development commands are excluded. Library-owned verification, packaging and CI scripts remain private.
+`node scripts/pack.ts <output-directory>` builds the committed revision in an isolated offline container from the populated npm cache volume. It emits JavaScript and declarations using `tsconfig.release.json` and packages public metadata, provenance, README and MIT licence. Runtime TypeScript source, tests and private development commands are excluded. Library-owned verification, packaging and CI scripts remain private.
 
 ```bash
-bash scripts/check-release-consumers.sh \
+node scripts/check-release-consumers.ts \
   <artifact.tgz> <sha256> <source-commit> \
   <Archie-repository> <Archie-revision> <Chibi-repository> <Chibi-revision>
 ```
 
-This proof checks immutable consumer snapshots with the exact compiled artifact, source revision and checksum. It validates installed bytes, lockfile integrity, every export, native imports and declarations, actual parent Vite/Vitest configuration bootstrap and focused client wiring. It never edits live checkouts or builds/deploys a game. Both pinned revisions must already use their parent-owned website/tooling implementations. Offline consumer caches are selected by `GAME_KIT_DOG_CACHE` and `GAME_KIT_DUCK_CACHE`. Evidence is retained in the printed scratch directory.
+This proof checks immutable consumer snapshots with the exact compiled artifact, source revision and checksum. It validates installed bytes, lockfile integrity, every export, native imports and declarations, actual parent Vite/Vitest configuration bootstrap and focused client wiring. It never edits live checkouts or builds/deploys a game. Both pinned revisions must already use their parent-owned website/tooling implementations. Offline consumer caches are selected by `GAME_KIT_DOG_CACHE` and `GAME_KIT_DUCK_CACHE`. Logs, archive listings and results are retained in the printed evidence directory.
 
 Publish immutable version tags only after every required workflow is green for that exact main commit and the artifact passes the pinned migrated-consumer proofs. Existing tags and release assets are never moved.
 
