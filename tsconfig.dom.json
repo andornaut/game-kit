@@ -5,6 +5,9 @@
     "types": []
   },
   "files": [
+    "src/web/crash/dom/crashScreen.ts",
+    "src/web/input/dom/pagePresses.ts",
+    "src/web/progress/dom/progressBar.ts",
     "src/web/pwa/dom/visibility.ts",
     "src/web/save/dom/localSaveStorage.ts",
     "src/web/save/dom/pageSessionStore.ts",

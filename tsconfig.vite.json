@@ -4,5 +4,14 @@
     "lib": ["ES2022"],
     "types": ["node"]
   },
-  "files": ["src/web/headers/vite/securityHeadersPlugin.ts"]
+  "files": [
+    "src/web/build/vite/buildInfo.d.ts",
+    "src/web/build/vite/contentHash.ts",
+    "src/web/build/vite/gameConfig.ts",
+    "src/web/build/vite/gitHead.ts",
+    "src/web/build/vite/phaserBuildPlugin.ts",
+    "src/web/build/vite/phaserSource.ts",
+    "src/web/build/vite/phaserUses.ts",
+    "src/web/headers/vite/securityHeadersPlugin.ts"
+  ]
 }

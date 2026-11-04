@@ -12,7 +12,7 @@ import { seededRandom } from "@andornaut/game-kit/random";
 import { memoryStorage, type SaveStorage } from "@andornaut/game-kit/save/storage";
 ```
 
-The compiled GitHub release archive contains JavaScript and declarations. Install its versioned URL and commit the consumer lockfile with URL and integrity. No npm registry publication or source aliases are required. `SOURCE_COMMIT`, inside the archive and alongside it, records the exact source revision. Tests and standalone scripts are private. Pure imports need no runtime peers; Phaser adapters require the consuming game's `phaser` dependency, and `web/**/vite/*` plugins its `vite` dependency.
+The compiled GitHub release archive contains JavaScript and declarations. Install its versioned URL and commit the consumer lockfile with URL and integrity. No npm registry publication or source aliases are required. `SOURCE_COMMIT`, inside the archive and alongside it, records the exact source revision. Tests and standalone scripts are private. Pure imports need no runtime peers; Phaser adapters require the consuming game's `phaser` dependency, `web/**/vite/*` modules its `vite` dependency, `web/build/vite/phaserUses` its `typescript` dependency and `web/build/vite/gameConfig` its `vitest` dependency.
 
 ## Version and interface policy
 
@@ -31,6 +31,11 @@ Compatible fixes use patch versions; additive public facilities use minor versio
 - `web/save/dom/pageSessionStore` keeps `sessionRead`, `sessionWrite` and `sessionRemove` over the page's `sessionStorage`. Their policy is `web/save/sessionStore.createSessionStore(lookup)`, which accepts any `SessionStorageLike`.
 - `web/view/frameTurn` holds the pure turn policy: `GameOrientation`, `FRAME_TURN_ATTRIBUTE`, `DEFAULT_TURN`, `turnedFrameQuery` and `frameTurnFor`. `web/view/dom/watchFrameTurn` holds `FrameTurnHost`, `FrameTurnWatch` and `OrientationLockable`, and takes the game orientation first: `watchFrameTurn(gameOrientation, host)` and `lockGameOrientation(gameOrientation, screen)`. The stylesheets are `web/view/frameTurnLandscapeGame.css` and `web/view/frameTurnPortraitGame.css`. `FrameTurn` and `pageToGame` remain in `view/pagePoint`.
 - `web/view/phaser/followFrameTurn` takes `followFrameTurn(watch, gameSize, parent, game)`, the game last. It lives under `web/` because it owns the page viewport lifecycle (window, document and visual viewport listeners and the `--page-height` property the stylesheets read) and depends on `web/view/dom/watchFrameTurn`; `view/` keeps geometry and engine adapters with no website imports.
+- `web/build/buildLabel` exports only `buildLabel(version, commit)`; the ambient `BUILD_LABEL` constant is gone. Kit modules take build values as parameters. `web/build/vite/buildInfo` is a types-only export declaring `__APP_VERSION__` and `__COMMIT__`, the constants `gameViteConfig` defines; a game that reads them references it with `/// <reference types="@andornaut/game-kit/web/build/vite/buildInfo" />`.
+- `build/buildVersion` splits by environment: pure `web/build/buildVersion` keeps `shortCommit`, `UNKNOWN_COMMIT` and `CI_COMMIT_VARIABLE`, and `gitHead` moves to `web/build/vite/gitHead`.
+- `build/phaserBuild` splits the same way: `phaserSourceDir` moves to `web/build/vite/phaserSource`, and the rest is pure `web/build/phaserBuild`. `phaserEntrySource` joins module paths with `/`. `contentHash`, `phaserUses`, `phaserBuildPlugin` and `gameConfig` move to `web/build/vite/*` unchanged.
+- `web/crash/dom/crashScreen` takes the page explicitly: `installCrashScreen(page, options)`, where `page` is the game window (`CrashPage`). Import `web/crash/dom/crash.css` from the game, since a script cannot add styles under a CSP without `'unsafe-inline'`. `web/crash/crashModel` is unchanged.
+- `web/input/dom/pagePresses` and `web/progress/dom/progressBar` are unchanged apart from their paths.
 
 ## Migration to 0.8.0
 
@@ -72,15 +77,23 @@ Paths are relative to `src/`. The source tree contains game mechanisms and their
 | `terrain/crumbling`, `terrain/traversal`                                                                          | Pure                     | Fixed-tick support lifecycle, bounded search and shared collision stepping       |
 | `text/*` except `text/phaser/*`                                                                                   | Pure                     | Bitmap font metrics, fixed-size wrapping, overflow and pixel atlas geometry      |
 | `view/fitCheck`, `view/modalDim`, `view/pagePoint`, `view/settleFit`                                              | Pure                     | Fit decisions, palette dimming, coordinate mapping and bounded settling          |
+| `web/build/buildLabel`, `web/build/buildVersion`, `web/build/phaserBuild`                                         | Pure                     | Build labels, commit selection, reduced Phaser entries and feature flags         |
+| `web/crash/crashModel`                                                                                            | Pure                     | Crash classification and presentation data                                       |
 | `web/headers/securityHeaders`                                                                                     | Pure                     | Content-Security-Policy rules and Cloudflare `_headers` rendering                |
 | `web/save/sessionStore`, `web/save/storage`                                                                       | Pure                     | Never-throwing session store and Web Storage save adapters                       |
 | `web/view/frameTurn` and its `frameTurn*Game.css` stylesheets                                                     | Pure, CSS                | Page frame turn policy and the turned-frame stylesheets                          |
 | `clock/phaser/*`, `input/phaser/*`, `progress/phaser/*`, `text/phaser/*`, `view/phaser/*`                         | Phaser, browser renderer | Frame caps, input guards, progress drawing, fonts, snapshots and modal backdrops |
 | `web/view/phaser/followFrameTurn`                                                                                 | Phaser, browser renderer | Phaser fitting and pointer mapping through the page frame turn                   |
+| `web/crash/dom/crashScreen`, `web/crash/dom/crash.css`                                                            | Browser DOM              | Crash screen in the game's words and colours, and its stylesheet                 |
+| `web/input/dom/pagePresses`                                                                                       | Browser DOM              | Page pointer presses followed from pointerdown until they lift or cancel         |
+| `web/progress/dom/progressBar`                                                                                    | Browser DOM              | Progress bar using the shared geometry, before Phaser loads                      |
 | `web/pwa/dom/visibility`                                                                                          | Browser DOM              | Page visibility across `visibilitychange` and the back-forward cache             |
 | `web/save/dom/localSaveStorage`, `web/save/dom/pageSessionStore`                                                  | Browser DOM              | The page's `localStorage` and `sessionStorage`                                   |
 | `web/view/dom/watchFrameTurn`                                                                                     | Browser DOM              | Marks the frame turn on `<html>` and requests the orientation lock               |
 | `web/headers/vite/securityHeadersPlugin`                                                                          | Vite, Node build time    | Writes `_headers` with per-page inline hashes                                    |
+| `web/build/vite/buildInfo`, `web/build/vite/gameConfig`                                                           | Vite, Node build time    | Build constant declarations and a game's whole Vite and Vitest config            |
+| `web/build/vite/contentHash`, `web/build/vite/gitHead`                                                            | Vite, Node build time    | Vite-compatible content hashes and the repository HEAD                           |
+| `web/build/vite/phaserBuildPlugin`, `web/build/vite/phaserSource`, `web/build/vite/phaserUses`                    | Vite, Node build time    | Reduced Phaser bundles from source, and a static check of a game's Phaser use    |
 
 A module's directory names its environment, and its `tsconfig.<environment>.json` lists it explicitly:
 
@@ -165,7 +178,7 @@ Every container runs as uid and gid 19001, which owns nothing on the host, with 
 | `npm test -- --maxWorkers=4` | Run canonical unit and contract tests                 |
 | `npm run format`             | Format a writable checkout                            |
 
-TypeScript and Vitest are development tools, not runtime peers. `@types/node` supplies tooling, test and `vite/` types. Phaser and Vite are optional peers, required when importing `phaser/` adapters or `vite/` plugins respectively. Tests belong to the canonical library suite; consumers test their own integration. A consumer that mocks `phaser` in Vitest must inline `@andornaut/game-kit` (`test.server.deps.inline`), because every `phaser/` adapter may import Phaser at runtime.
+TypeScript and Vitest are the kit's development tools. `@types/node` supplies tooling, test and `vite/` types. Phaser, TypeScript, Vite and Vitest are optional peers: Phaser for `phaser/` adapters, Vite for `vite/` modules, TypeScript for `web/build/vite/phaserUses` and Vitest for the configuration types of `web/build/vite/gameConfig`. Tests belong to the canonical library suite; consumers test their own integration. A consumer that mocks `phaser` in Vitest must inline `@andornaut/game-kit` (`test.server.deps.inline`), because every `phaser/` adapter may import Phaser at runtime.
 
 WORKAROUND: Parent-scoped development overrides pin [KaTeX](https://github.com/advisories/GHSA-238p-pmpm-9mq7) `0.18.2`, [minimatch](https://github.com/advisories/GHSA-g3hv-75wg-m249) `11.0.3` and [re2js](https://github.com/advisories/GHSA-gg6h-894w-4m9c) `2.8.7`. ESLint loads cycle detection and its resolver through exported plugin subpaths because the full plugin imports an unused rule requiring minimatch's removed `makeRe` API. Keep cycle detection enabled. Remove each override when its parent supports the patched version; restore the full plugin import when it supports minimatch 11.
 

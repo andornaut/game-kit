@@ -34,13 +34,21 @@
   "version": "0.8.0",
   "peerDependencies": {
     "phaser": "^4.2.1",
-    "vite": "^8.3.5"
+    "typescript": "^6.0.3",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
   },
   "peerDependenciesMeta": {
     "phaser": {
       "optional": true
     },
+    "typescript": {
+      "optional": true
+    },
     "vite": {
+      "optional": true
+    },
+    "vitest": {
       "optional": true
     }
   },
@@ -105,8 +113,25 @@
     "./view/phaser/uiProjection": "./src/view/phaser/uiProjection.ts",
     "./view/phaser/uiSubmitter": "./src/view/phaser/uiSubmitter.ts",
     "./view/settleFit": "./src/view/settleFit.ts",
+    "./web/build/buildLabel": "./src/web/build/buildLabel.ts",
+    "./web/build/buildVersion": "./src/web/build/buildVersion.ts",
+    "./web/build/phaserBuild": "./src/web/build/phaserBuild.ts",
+    "./web/build/vite/buildInfo": {
+      "types": "./src/web/build/vite/buildInfo.d.ts"
+    },
+    "./web/build/vite/contentHash": "./src/web/build/vite/contentHash.ts",
+    "./web/build/vite/gameConfig": "./src/web/build/vite/gameConfig.ts",
+    "./web/build/vite/gitHead": "./src/web/build/vite/gitHead.ts",
+    "./web/build/vite/phaserBuildPlugin": "./src/web/build/vite/phaserBuildPlugin.ts",
+    "./web/build/vite/phaserSource": "./src/web/build/vite/phaserSource.ts",
+    "./web/build/vite/phaserUses": "./src/web/build/vite/phaserUses.ts",
+    "./web/crash/crashModel": "./src/web/crash/crashModel.ts",
+    "./web/crash/dom/crash.css": "./src/web/crash/dom/crash.css",
+    "./web/crash/dom/crashScreen": "./src/web/crash/dom/crashScreen.ts",
     "./web/headers/securityHeaders": "./src/web/headers/securityHeaders.ts",
     "./web/headers/vite/securityHeadersPlugin": "./src/web/headers/vite/securityHeadersPlugin.ts",
+    "./web/input/dom/pagePresses": "./src/web/input/dom/pagePresses.ts",
+    "./web/progress/dom/progressBar": "./src/web/progress/dom/progressBar.ts",
     "./web/pwa/dom/visibility": "./src/web/pwa/dom/visibility.ts",
     "./web/save/dom/localSaveStorage": "./src/web/save/dom/localSaveStorage.ts",
     "./web/save/dom/pageSessionStore": "./src/web/save/dom/pageSessionStore.ts",

@@ -48,7 +48,16 @@ for (const entry of Object.values(manifest.exports)) {
   }
 }
 assert.equal(manifest.license, "MIT");
-assert.deepEqual(Object.keys(manifest.peerDependencies), ["phaser", "vite"]);
+assert.deepEqual(Object.keys(manifest.peerDependencies), [
+  "phaser",
+  "typescript",
+  "vite",
+  "vitest",
+]);
+assert.deepEqual(manifest.exports["./web/build/vite/buildInfo"], {
+  types: "./dist/web/build/vite/buildInfo.d.ts",
+});
+assert.equal(manifest.exports["./web/crash/dom/crash.css"], "./dist/web/crash/dom/crash.css");
 for (const file of result[0].files) {
   assert.ok(!file.path.endsWith(".ts") || file.path.endsWith(".d.ts"), file.path);
   assert.ok(!file.path.includes(".test."), file.path);
@@ -68,6 +77,22 @@ import { findTraversal } from '@andornaut/game-kit/terrain/traversal';
 import { beginCrumblingStep, endCrumblingStep } from '@andornaut/game-kit/terrain/crumbling';
 import { renderPolicy } from '@andornaut/game-kit/web/headers/securityHeaders';
 import { frameTurnFor } from '@andornaut/game-kit/web/view/frameTurn';
+import { buildLabel } from '@andornaut/game-kit/web/build/buildLabel';
+import { shortCommit, UNKNOWN_COMMIT } from '@andornaut/game-kit/web/build/buildVersion';
+import { replacePhaserFlags } from '@andornaut/game-kit/web/build/phaserBuild';
+import { crashGate } from '@andornaut/game-kit/web/crash/crashModel';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+assert.equal(buildLabel('1.0.0', UNKNOWN_COMMIT), 'v1.0.0 · dev');
+assert.equal(shortCommit(() => '', {}), UNKNOWN_COMMIT);
+assert.equal(replacePhaserFlags({ CANVAS_RENDERER: false }, 'typeof CANVAS_RENDERER'), 'false');
+assert.equal(crashGate()({ message: 'boom', source: '', stack: undefined }), true);
+const css = import.meta.resolve('@andornaut/game-kit/web/crash/dom/crash.css');
+assert.ok(css.endsWith('/dist/web/crash/dom/crash.css'), css);
+assert.ok(readFileSync(fileURLToPath(css), 'utf8').includes('.crash {'));
+assert.throws(() => import.meta.resolve('@andornaut/game-kit/web/build/vite/buildInfo'), {
+  code: 'ERR_PACKAGE_PATH_NOT_EXPORTED'
+});
 assert.equal(clamp(0,1,2), 1);
 assert.equal(renderPolicy({'default-src': ["'self'"]}), "default-src 'self'");
 assert.equal(frameTurnFor('landscape', true, 'portrait-secondary'), -90);
@@ -89,7 +114,15 @@ for (const path of ['src/numbers.ts', 'dist/numbers.js', 'SOURCE_COMMIT']) {
 execFileSync(process.execPath, ["bootstrap.mjs"], { cwd: consumer, stdio: "inherit" });
 writeFileSync(
   join(consumer, "types.mts"),
-  `
+  `/// <reference types="@andornaut/game-kit/web/build/vite/buildInfo" />
+import { buildLabel } from '@andornaut/game-kit/web/build/buildLabel';
+import type { PhaserBuild } from '@andornaut/game-kit/web/build/phaserBuild';
+import { crashView, type CrashView } from '@andornaut/game-kit/web/crash/crashModel';
+export const label: string = buildLabel(__APP_VERSION__, __COMMIT__);
+export const phaser: PhaserBuild = { flags: { CANVAS_RENDERER: false }, omitted: [] };
+export const view: CrashView = crashView(
+  { body: 'b', reload: 'r', title: 't' }, false, { message: 'm', source: '', stack: undefined },
+);
 import { memoryStorage, type SaveStorage } from '@andornaut/game-kit/save/storage';
 import {
   stepTraversal, findTraversal, type TraversalContext,
@@ -130,15 +163,17 @@ execFileSync(
 );
 // The parent owns its Vite configuration, which imports the kit modules and plugins it uses.
 symlinkSync(resolve(root, "node_modules/vite"), join(consumer, "node_modules/vite"));
+symlinkSync(resolve(root, "node_modules/phaser"), join(consumer, "node_modules/phaser"));
 writeFileSync(
   join(consumer, "vite.config.ts"),
   `
 import { defineConfig } from 'vite';
 import { clamp } from '@andornaut/game-kit/numbers';
 import { securityHeadersPlugin } from '@andornaut/game-kit/web/headers/vite/securityHeadersPlugin';
+import { phaserBuildPlugin } from '@andornaut/game-kit/web/build/vite/phaserBuildPlugin';
 export default defineConfig({
   define: { __KIT_CHECK__: JSON.stringify(clamp(0,1,2)) },
-  plugins: [securityHeadersPlugin({
+  plugins: [phaserBuildPlugin({ flags: {}, omitted: [] }), securityHeadersPlugin({
     base: {}, fileRules: [], hashedAssetPath: '/assets/*', heading: 'Proof.', pageRules: [],
   })],
 });
@@ -153,7 +188,8 @@ const loaded = await loadConfigFromFile(
   {command:'build',mode:'production'}, undefined, process.cwd(), 'silent', undefined, 'native');
 assert.ok(loaded);
 assert.equal(loaded.config.define.__KIT_CHECK__, '1');
-assert.deepEqual(loaded.config.plugins.map(({name}) => name), ['game-kit-security-headers']);
+assert.deepEqual(
+  loaded.config.plugins.map(({name}) => name), ['game-kit-phaser-build', 'game-kit-security-headers']);
 `,
 );
 execFileSync(process.execPath, ["vite-bootstrap.mjs"], { cwd: consumer, stdio: "inherit" });
