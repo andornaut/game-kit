@@ -1,5 +1,6 @@
 import type { Plugin } from "vite";
 
+import { mapLimit, READ_LIMIT } from "../../build/mapLimit.ts";
 import { contentHash } from "../../build/vite/contentHash.ts";
 import { hashIcons } from "../hashedIcons.ts";
 
@@ -45,7 +46,7 @@ export function hashedIconsPlugin({
       };
       const decoder = new TextDecoder();
       const iconFiles = new Map(
-        await Promise.all(icons.map(async (url) => [url, await read(url)] as const)),
+        await mapLimit(READ_LIMIT, async (url) => [url, await read(url)] as const, icons),
       );
       const pages = Object.values(bundle).filter(
         (file) => file.type === "asset" && file.fileName.endsWith(".html"),

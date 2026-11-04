@@ -48,6 +48,7 @@
     "src/view/settleFit.ts",
     "src/web/build/buildLabel.ts",
     "src/web/build/buildVersion.ts",
+    "src/web/build/mapLimit.ts",
     "src/web/build/phaserBuild.ts",
     "src/web/crash/crashModel.ts",
     "src/web/headers/securityHeaders.ts",

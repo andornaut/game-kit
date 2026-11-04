@@ -26,13 +26,15 @@ const PAGE_RULES: PageRule[] = [
 const hash = (text: string) =>
   `'sha256-${createHash("sha256").update(text, "utf8").digest("base64")}'`;
 
-// A site with a built index page and, unless publicDir is false, a public notes page.
-function site(): string {
+// A site with a built index page and, unless publicDir is false, a public notes page and the
+// extra public files, by path under the public directory.
+function site(extra: Readonly<Record<string, string>> = {}): string {
   const root = mkdtempSync(join(tmpdir(), "kit-headers-"));
   const files: Record<string, string> = {
     "index.html": INDEX,
     "main.js": "console.log('main');\n",
     "public/notes/a.html": NOTE,
+    ...Object.fromEntries(Object.entries(extra).map(([path, text]) => [`public/${path}`, text])),
   };
   for (const [path, text] of Object.entries(files)) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
@@ -54,11 +56,18 @@ interface Build {
   readonly pageRules?: readonly PageRule[];
   readonly plugins?: readonly Plugin[];
   readonly publicDir?: false | string;
+  readonly publicFiles?: Readonly<Record<string, string>>;
 }
 
 // Builds the site in memory and returns its _headers text.
-async function headers({ checkPage, pageRules = PAGE_RULES, plugins = [], publicDir }: Build) {
-  const root = site();
+async function headers({
+  checkPage,
+  pageRules = PAGE_RULES,
+  plugins = [],
+  publicDir,
+  publicFiles,
+}: Build) {
+  const root = site(publicFiles);
   const result = await build({
     build: { minify: false, write: false },
     configFile: false,
@@ -120,6 +129,43 @@ describe("securityHeadersPlugin", { timeout: 60_000 }, () => {
   ])("builds only the bundle's pages when the public directory is %s", async (_, publicDir) => {
     const { text } = await headers({ publicDir });
     expect(text).toContain("/notes/*\n  Content-Security-Policy: default-src 'self'\n");
+  });
+
+  // More public pages than a low file descriptor limit (256) allows open at once.
+  it.each<[string, (index: number) => string]>([
+    ["in one directory", (index) => `notes/many/${index}.html`],
+    [
+      "across nested directories",
+      (index) => `notes/${index % 10}/${Math.floor(index / 10) % 10}/${index}.html`,
+    ],
+  ])("reads 2000 public pages %s", async (_, pathOf) => {
+    const count = 2000;
+    const styleOf = (index: number) => `p { order: ${index}; }`;
+    const publicFiles = Object.fromEntries(
+      Array.from({ length: count }, (__, index) => [
+        pathOf(index),
+        `<!doctype html><html><head><style>${styleOf(index)}</style></head></html>\n`,
+      ]),
+    );
+    const seen = new Map<string, string>();
+    const { text } = await headers({
+      checkPage: ({ fileName, html }) => {
+        seen.set(fileName, html);
+        return undefined;
+      },
+      publicFiles,
+    });
+    expect(seen).toEqual(
+      new Map([
+        ["index.html", expect.any(String)],
+        ["notes/a.html", NOTE],
+        ...Object.entries(publicFiles),
+      ]),
+    );
+    const notesPolicy = text.split("\n").find((line) => line.includes("style-src")) ?? "";
+    for (let index = 0; index < count; index += 1) {
+      expect(notesPolicy).toContain(hash(styleOf(index)));
+    }
   });
 
   it.each<[string, Build, string]>([

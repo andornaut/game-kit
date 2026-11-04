@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { Plugin } from "vite";
 
+import { mapLimit, READ_LIMIT } from "../../build/mapLimit.ts";
 import {
   type Directives,
   headersFile,
@@ -59,18 +60,21 @@ export function securityHeadersPlugin(options: SecurityHeadersOptions): Plugin {
         const readPublic = async (path: string): Promise<string> =>
           decoder.decode(await this.fs.readFile(`${publicDir}/${path}`));
 
+        // The public directory's HTML files, depth first in directory order, listing one
+        // directory at a time.
         const publicHtml = async (dir: string): Promise<string[]> => {
           const entries = await this.fs.readdir(`${publicDir}/${dir}`, { withFileTypes: true });
-          const nested = await Promise.all(
-            entries.map(async (entry) => {
-              const path = dir === "" ? entry.name : `${dir}/${entry.name}`;
-              if (entry.isDirectory()) {
-                return publicHtml(path);
-              }
-              return entry.isFile() && path.endsWith(".html") ? [path] : [];
-            }),
-          );
-          return nested.flat();
+          const found: string[] = [];
+          for (const entry of entries) {
+            const path = dir === "" ? entry.name : `${dir}/${entry.name}`;
+            if (entry.isDirectory()) {
+              // eslint-disable-next-line no-await-in-loop
+              found.push(...(await publicHtml(path)));
+            } else if (entry.isFile() && path.endsWith(".html")) {
+              found.push(path);
+            }
+          }
+          return found;
         };
 
         // Vite resolves a disabled public directory to "", and keeps the path of a missing one.
@@ -91,8 +95,10 @@ export function securityHeadersPlugin(options: SecurityHeadersOptions): Plugin {
               ? [{ fileName: file.fileName, html: file.source }]
               : [],
           ),
-          ...(await Promise.all(
-            publicFiles.map(async (fileName) => ({ fileName, html: await readPublic(fileName) })),
+          ...(await mapLimit(
+            READ_LIMIT,
+            async (fileName) => ({ fileName, html: await readPublic(fileName) }),
+            publicFiles,
           )),
         ];
 
