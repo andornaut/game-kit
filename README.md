@@ -33,6 +33,7 @@ Compatible fixes use patch versions; additive public facilities use minor versio
 - `UiFrame.commands` now holds fewer commands; painted pixels are unchanged. Consecutive glyphs from one `BitmapText` with the same face, size, tint, tint mode and alpha share one text command, listed in its `glyphs`. A `viewport-clip` command is emitted only when the camera or its viewport rect changes, and stays in effect for every later command until the next one. Consumers that count commands per glyph or expect a clip before every command must iterate `glyphs` and track the latest clip. `releaseUiTintCache` is a new export.
 - `view/phaser/snapshotRemap` reads WebGL pixels directly instead of through a PNG round trip. Opaque pixels are unchanged; translucent pixels now match Phaser's own readback, so a canvas with alpha can differ slightly from 0.7.
 - `text/phaser/registerPixelFont` throws an `Error` naming the key when the texture key is invalid or already in use without a cached font, instead of returning without registering. Use a key no other texture uses.
+- `view/phaser/modalBackdrop` and `view/phaser/snapshotRemap` now import `phaser` at runtime, as `clock/phaser/capFrameRate` and `input/phaser/guardSceneInput` already do. Vitest externalizes dependencies, so a consumer test that replaces Phaser with `vi.mock("phaser")` must inline the kit with `test.server.deps.inline: ["@andornaut/game-kit"]`; otherwise the kit loads the real Phaser.
 
 ## Migration to 0.4.0
 
@@ -155,7 +156,7 @@ Every container runs as uid and gid 19001, which owns nothing on the host, with 
 | `npm test -- --maxWorkers=4` | Run canonical unit and contract tests                 |
 | `npm run format`             | Format a writable checkout                            |
 
-TypeScript and Vitest are development tools, not runtime peers. `@types/node` supplies tooling, test and `vite/` types. Phaser and Vite are optional peers, required when importing `phaser/` adapters or `vite/` plugins respectively. Tests belong to the canonical library suite; consumers test their own integration.
+TypeScript and Vitest are development tools, not runtime peers. `@types/node` supplies tooling, test and `vite/` types. Phaser and Vite are optional peers, required when importing `phaser/` adapters or `vite/` plugins respectively. Tests belong to the canonical library suite; consumers test their own integration. A consumer that mocks `phaser` in Vitest must inline `@andornaut/game-kit` (`test.server.deps.inline`), because every `phaser/` adapter may import Phaser at runtime.
 
 WORKAROUND: Parent-scoped development overrides pin [KaTeX](https://github.com/advisories/GHSA-238p-pmpm-9mq7) `0.18.2`, [minimatch](https://github.com/advisories/GHSA-g3hv-75wg-m249) `11.0.3` and [re2js](https://github.com/advisories/GHSA-gg6h-894w-4m9c) `2.8.7`. ESLint loads cycle detection and its resolver through exported plugin subpaths because the full plugin imports an unused rule requiring minimatch's removed `makeRe` API. Keep cycle detection enabled. Remove each override when its parent supports the patched version; restore the full plugin import when it supports minimatch 11.
 
