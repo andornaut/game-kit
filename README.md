@@ -40,6 +40,7 @@ Paths are relative to `src/`, and tests sit beside their modules. Every module i
 | Modules                                                                                                           | Environment              | Responsibility                                                                   |
 | ----------------------------------------------------------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------- |
 | `achievements`, `achievements/preview`                                                                            | Pure                     | Badge judging, tier order, awarding, the earned record and unlock notices        |
+| `ai/utility`                                                                                                      | Pure                     | Scored action choice with hysteresis and a seeded tie-break                      |
 | `arrays`, `assertNever`, `lines`, `maps`, `numbers`, `opaqueBounds`, `random`, `records`, `rect`, `rgba`, `units` | Pure                     | Collections, text fields, geometry, randomness, pixels and units                 |
 | `art/aseprite`, `art/rgbaImage`                                                                                   | Pure                     | Animation specifications and RGBA primitives                                     |
 | `clock/fixedStep`, `clock/frameCap`                                                                               | Pure                     | Fixed-step timing and frame-cap decisions                                        |
@@ -166,6 +167,15 @@ The canonical form is newline-joined lines, numbers in JavaScript's shortest rou
 - **Notices:** `CelebrationQueue` keeps ids in push order, ignoring an id already waiting. `takeWhen(blocked)` returns `undefined` and keeps every id waiting while `blocked()` is true, and does not call it when nothing waits. Push the loaded record's `unannounced` ids at start, and call `announced` when a notice starts.
 
 `achievements/preview` previews, during a run, the badges ending it now would earn, each once a run and without awarding anything. `previewAchievements(keyOf, earned, preview, subject)` calls `earned(subject)` only when `keyOf(subject)` differs from the last look's key, and returns the ids not yet shown with the next `AchievementPreview` (`key` and `shown`). Start each run from `NOTHING_PREVIEWED`. The key names every fact that can earn a previewed badge, and `earned` leaves out badges that must not be previewed.
+
+## Utility scoring
+
+`ai/utility` exports `curveValue(curve, x)`, `candidateScore(candidate)` and `scoreActions(options, random, previous, candidates)`, generic over `Input extends string` and `Action extends string`. Games own the input names, actions, values, gates, multipliers and the mapping from a chosen action to behaviour.
+
+- **Curves:** a `ScoreCurve` has a `kind` and a `from`/`to` input range, and `t = clamp01((x - from) / (to - from))`. `linear` is `t`, `inverse` is `1 - t`, `smooth` is `3t² - 2t³` and `step` is 1 once `x` reaches `to` and 0 before. `from` above `to` gives a falling range; `from` equal to `to` gives `t = 1` at or past that point and 0 before it. Infinite input reaches an end of the range; NaN input and non-finite ends throw `RangeError`.
+- **Score:** each candidate has an `action`, a boolean `gate`, a `base`, `considerations` (an input read through a curve), an optional `multiplier` (1 when omitted) and its own `values` by input. The score is `gate × base × Π curveValue × multiplier`; a curve value of 0 vetoes. `base` and `multiplier` must be finite and at least 0, and duplicate actions throw `RangeError`.
+- **Choice:** `options.hysteresis` holds `bonus`, `epsilon` and `minHoldSeconds`, and `previous` is `{ action, heldSeconds }` or `undefined`. The previous action, while it scores above 0, gains `bonus` and is kept until `heldSeconds` reaches `minHoldSeconds`; a closed gate or a veto releases it at once. Otherwise the candidates scoring above 0 and within `epsilon` of the best compete: one alone wins, exactly equal scores go to the first in candidate order, and unequal scores go to one uniform `randomPick` draw over the competitors in candidate order. `random` is called at most once, and only for that draw, so a replay from the same seed and inputs makes the same choices.
+- **Result:** `{ action, reason, scores }`, where `reason` is `hold`, `best`, `order`, `draw` or `none` (nothing scored above 0, so `action` is `undefined`), and `scores` lists every candidate's score, including the bonus, in candidate order.
 
 ## Numeric and text measurement contracts
 

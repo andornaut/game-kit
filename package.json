@@ -53,6 +53,7 @@
   "exports": {
     "./achievements": "./src/achievements.ts",
     "./achievements/preview": "./src/achievements/preview.ts",
+    "./ai/utility": "./src/ai/utility.ts",
     "./arrays": "./src/arrays.ts",
     "./art/aseprite": "./src/art/aseprite.ts",
     "./art/rgbaImage": "./src/art/rgbaImage.ts",

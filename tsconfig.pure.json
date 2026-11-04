@@ -7,6 +7,7 @@
   "files": [
     "src/achievements.ts",
     "src/achievements/preview.ts",
+    "src/ai/utility.ts",
     "src/arrays.ts",
     "src/art/aseprite.ts",
     "src/art/rgbaImage.ts",
