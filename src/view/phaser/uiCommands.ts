@@ -82,6 +82,8 @@ export interface UiFrame {
 export type UiIssue = Readonly<{
   owner: Owner;
   reason: "renderer" | "object-kind" | "mask" | "blend" | "effect" | "raster" | "font" | "viewport";
+  // The value thrown when the issue comes from an exception, for the game to log.
+  cause?: unknown;
 }>;
 export type UiRefreshResult =
   | Readonly<{ status: "ready" }>
@@ -124,7 +126,8 @@ export interface WorldCapture {
 export type UiWorldReadFailure = "frame" | "framebuffer" | "context" | "bounds" | "readback";
 export type UiWorldReadResult =
   | Readonly<{ status: "captured"; capture: WorldCapture }>
-  | Readonly<{ status: "unavailable"; reason: UiWorldReadFailure }>;
+  // cause is the value thrown when the failure comes from an exception, for the game to log.
+  | Readonly<{ status: "unavailable"; reason: UiWorldReadFailure; cause?: unknown }>;
 export interface UiWorldReadContext {
   readonly gl: WebGLRenderingContext | WebGL2RenderingContext;
   readonly frameId: number;
@@ -144,7 +147,8 @@ export type UiSnapshotResult =
       pixels: RgbaImage;
       captureArea: Readonly<Rect>;
     }>
-  | Readonly<{ status: "unavailable"; reason: UiWorldReadFailure | "raster" }>
+  // cause is the value thrown when the failure comes from an exception, for the game to log.
+  | Readonly<{ status: "unavailable"; reason: UiWorldReadFailure | "raster"; cause?: unknown }>
   | Readonly<{ status: "disposed" }>;
 export interface UiCompositeRequest {
   readonly frame: UiFrame;

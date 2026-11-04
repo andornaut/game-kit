@@ -466,6 +466,22 @@ it.each([
   expect(issues.map((issue) => issue.reason)).toEqual(reasons);
   recorder.destroy();
 });
+it("reports a role install that throws as a renderer issue with its cause", async () => {
+  const recorder = createUiRecorder(ports());
+  await Promise.resolve();
+  const image = object("Image");
+  const cause = new Error("role refused");
+  image.value.setRenderNodeRole.mockImplementationOnce(() => {
+    throw cause;
+  });
+  const result = recorder.register([image.node]);
+  expect(result).toEqual({
+    issues: [{ cause, owner: expect.any(Object), reason: "renderer" }],
+    status: "unsupported",
+  });
+  expect(image.value.customRenderNodes).toEqual({});
+  recorder.destroy();
+});
 it("never overwrites a peer's replacement role during refresh", async () => {
   const recorder = createUiRecorder(ports());
   await Promise.resolve();

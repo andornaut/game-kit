@@ -92,8 +92,8 @@ export function readUiWorldFrame(
       },
       status: "captured",
     };
-  } catch {
-    return unavailable("readback");
+  } catch (cause) {
+    return { cause, reason: "readback", status: "unavailable" };
   }
 }
 
@@ -192,8 +192,8 @@ export function createUiCompositor(ports: UiCompositePorts): {
               pixels,
               status: "captured",
             };
-      } catch {
-        return { reason: "raster", status: "unavailable" };
+      } catch (cause) {
+        return { cause, reason: "raster", status: "unavailable" };
       } finally {
         for (const ctx of surfaces.reverse()) {
           ports.releaseSurface(ctx);

@@ -251,10 +251,48 @@ it("rejects independent WebGL2 read targets and readback errors without stale pi
   });
   expect(gl.readPixels).not.toHaveBeenCalled();
   gl.getParameter.mockReturnValue(null);
+  const cause = new Error("read unavailable");
   gl.readPixels.mockImplementation(() => {
-    throw new Error("read unavailable");
+    throw cause;
   });
-  expect(readUiWorldFrame(context, request)).toEqual({ reason: "readback", status: "unavailable" });
+  expect(readUiWorldFrame(context, request)).toEqual({
+    cause,
+    reason: "readback",
+    status: "unavailable",
+  });
+});
+it("reports a thrown composite failure as raster with its cause and releases its surfaces", () => {
+  const cause = new Error("remap failed");
+  const created: CanvasRenderingContext2D[] = [];
+  const releaseSurface = vi.fn();
+  const compositor = createUiCompositor({
+    captureWorld: ({ area, frameId }) => ({
+      capture: {
+        captureArea: area,
+        frameId,
+        pixels: { data: new Uint8Array(4), height: 1, width: 1 },
+      },
+      status: "captured",
+    }),
+    createSurface: ({ height, width }) => {
+      const { ctx } = surface(width, height);
+      created.push(ctx);
+      return ctx;
+    },
+    releaseSurface,
+    remap: () => {
+      throw cause;
+    },
+  });
+  expect(
+    compositor.capture({
+      area: { height: 1, width: 1, x: 0, y: 0 },
+      exclude: new Set(),
+      frame: { commands: [], id: 1, projection },
+    }),
+  ).toEqual({ cause, reason: "raster", status: "unavailable" });
+  expect(created.length).toBeGreaterThan(0);
+  expect(releaseSurface.mock.calls.map(([ctx]) => ctx)).toEqual(created.reverse());
 });
 it("does not remap or allocate after reentrant compositor disposal", () => {
   const remap = vi.fn();

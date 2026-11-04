@@ -552,9 +552,9 @@ export function createUiRecorder(ports: UiCapturePorts): {
           fail(group, "renderer");
         }
       }
-    } catch {
+    } catch (cause) {
       restore(group);
-      return { issues: [{ owner: group.owner, reason: "renderer" }], status: "unsupported" };
+      return { issues: [{ cause, owner: group.owner, reason: "renderer" }], status: "unsupported" };
     }
     group.members = seen;
     group.roots = [...roots];
