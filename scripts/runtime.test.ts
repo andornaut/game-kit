@@ -37,11 +37,11 @@ it.each(["/home/cache", "./cache", "cache/sub"])("refuses the host path %s as a 
   expect(() => npmCacheVolume({ GAME_KIT_NPM_CACHE: path })).toThrow(/Docker volume/);
 });
 
-it("runs every container as the dedicated read-only identity with the checkout group", () => {
+it("runs every container as the dedicated read-only identity with each checkout group", () => {
   const root = mkdtempSync(join(tmpdir(), "kit-identity-"));
-  const options = containerOptions(root).join(" ");
+  const options = containerOptions(root, root).join(" ");
   expect(options).toContain("--read-only --cpus 4 --user 19001:19001");
-  expect(options).toContain(`--group-add ${statSync(root).gid} -e HOME=/tmp`);
+  expect(options).toContain(`--user 19001:19001 --group-add ${statSync(root).gid} -e HOME=/tmp`);
   expect(options).toContain("--mount type=volume,dst=/tmp");
 });
 

@@ -41,12 +41,14 @@ export function npmCacheVolume(env: NodeJS.ProcessEnv): string {
   return name;
 }
 
-/** Identity, CPU and read-only options shared by every container; the checkout group grants reads. */
-export function containerOptions(checkout: string): string[] {
+/** Identity, CPU and read-only options shared by every container; checkout groups grant reads. */
+export function containerOptions(...checkouts: string[]): string[] {
   const id = `${CONTAINER_UID}:${CONTAINER_UID}`;
+  const groups = new Set(checkouts.map((checkout) => String(statSync(checkout).gid)));
   return [
     ...["--read-only", "--cpus", "4", "--user", id],
-    ...["--group-add", String(statSync(checkout).gid), "-e", "HOME=/tmp"],
+    ...[...groups].flatMap((group) => ["--group-add", group]),
+    ...["-e", "HOME=/tmp"],
     // A per-run volume rather than tmpfs, so results survive for docker cp after exit.
     ...["--mount", "type=volume,dst=/tmp"],
   ];
