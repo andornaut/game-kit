@@ -85,6 +85,7 @@
     "./save/saveStore": "./src/save/saveStore.ts",
     "./save/storage": "./src/save/storage.ts",
     "./save/versionedSave": "./src/save/versionedSave.ts",
+    "./terrain/airMap": "./src/terrain/airMap.ts",
     "./terrain/crumbling": "./src/terrain/crumbling.ts",
     "./terrain/movementMap": "./src/terrain/movementMap.ts",
     "./terrain/traversal": "./src/terrain/traversal.ts",

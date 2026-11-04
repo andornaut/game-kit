@@ -35,6 +35,7 @@
     "src/save/saveStore.ts",
     "src/save/storage.ts",
     "src/save/versionedSave.ts",
+    "src/terrain/airMap.ts",
     "src/terrain/crumbling.ts",
     "src/terrain/movementMap.ts",
     "src/terrain/traversal.ts",
