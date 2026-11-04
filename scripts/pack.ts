@@ -1,7 +1,7 @@
-// Build a committed npm-compatible release asset without registry publication.
+// Build the committed npm-compatible release assets without registry publication.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -30,11 +30,11 @@ export function committedVersion(root: string, revision: string): string {
   return manifest.version;
 }
 
-export function pack(env: NodeJS.ProcessEnv, root: string, args: string[]): void {
-  const [destination] = args;
-  if (args.length !== 1 || destination === undefined) {
-    throw new ScriptError("Usage: pack.ts <output-directory>", 2);
-  }
+/**
+ * Build the committed HEAD offline into `destination` as `game-kit-<version>.tgz`,
+ * `SOURCE_COMMIT` and `SHA256SUMS`, and return the tarball's path.
+ */
+export function pack(env: NodeJS.ProcessEnv, root: string, destination: string): string {
   const cache = npmCacheVolume(env);
   requireLoad();
   const image = nodeImage(root);
@@ -69,8 +69,13 @@ export function pack(env: NodeJS.ProcessEnv, root: string, args: string[]): void
     ].join("\n"),
   ]);
   console.log(`Release artifacts: ${output}`);
+  return join(output, `game-kit-${version}.tgz`);
 }
 
-main(import.meta.url, (args) =>
-  pack(process.env, resolve(dirname(fileURLToPath(import.meta.url)), ".."), args),
-);
+main(import.meta.url, (args) => {
+  const [destination] = args;
+  if (args.length !== 1 || destination === undefined) {
+    throw new ScriptError("Usage: pack.ts <output-directory>", 2);
+  }
+  pack(process.env, resolve(dirname(fileURLToPath(import.meta.url)), ".."), destination);
+});

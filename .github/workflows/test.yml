@@ -33,13 +33,12 @@ jobs:
       - name: Load the cached npm cache into its Docker volume
         if: steps.npm-cache.outputs.cache-hit == 'true'
         run: node scripts/npm-cache.ts load "$RUNNER_TEMP/game-kit-npm-cache"
-      - name: Verify source and packed native bootstrap in isolated containers
-        run: node scripts/check.ts
+      # The gate packs the committed revision and checks that tarball; the same files are uploaded.
+      - name: Verify source and the packed release in isolated containers
+        run: node scripts/check.ts .claude/release-output
       - name: Copy the npm cache volume out for saving
         if: steps.npm-cache.outputs.cache-hit != 'true'
         run: node scripts/npm-cache.ts save "$RUNNER_TEMP/game-kit-npm-cache"
-      - name: Build committed release artifacts offline
-        run: node scripts/pack.ts .claude/release-output
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: game-kit-${{ github.sha }}

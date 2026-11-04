@@ -1,4 +1,4 @@
-// Exercise the compiled package through native node_modules resolution.
+// Exercise a packed release tarball through native node_modules resolution.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
@@ -12,10 +12,6 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-interface PackResult {
-  filename: string;
-  files: { path: string }[];
-}
 interface Manifest {
   exports: Record<string, string | Record<string, string>>;
   license: string;
@@ -23,6 +19,10 @@ interface Manifest {
   version: string;
 }
 
+const [artifact] = process.argv.slice(2);
+if (artifact === undefined) {
+  throw new Error("Usage: release-artifact.ts <artifact.tgz>");
+}
 const sourceCommit = process.env.SOURCE_COMMIT;
 if (sourceCommit === undefined || !/^[0-9a-f]{40}$/.test(sourceCommit)) {
   throw new Error("SOURCE_COMMIT must name the full source commit.");
@@ -32,28 +32,15 @@ const scratch = mkdtempSync(
   join(process.env.GAME_KIT_ARTIFACT_EVIDENCE ?? tmpdir(), "game-kit-artifact-"),
 );
 console.log(`Artifact evidence: ${scratch}`);
-const payload = join(scratch, "payload");
-mkdirSync(payload);
-execFileSync(process.execPath, ["scripts/release-build.ts", payload], { stdio: "inherit" });
-writeFileSync(join(payload, "SOURCE_COMMIT"), `${sourceCommit}\n`);
-const [result] = JSON.parse(
-  execFileSync(
-    "npm",
-    ["pack", payload, "--offline", "--ignore-scripts", "--json", "--pack-destination", scratch],
-    { encoding: "utf8" },
-  ),
-) as PackResult[];
-assert.ok(result, "npm pack reported no package");
 const consumer = join(scratch, "consumer");
 const installed = join(consumer, "node_modules/@andornaut/game-kit");
 mkdirSync(installed, { recursive: true });
-execFileSync("tar", [
-  "-xzf",
-  join(scratch, result.filename),
-  "--strip-components=1",
-  "-C",
-  installed,
-]);
+const files = execFileSync("tar", ["-tzf", artifact], { encoding: "utf8" })
+  .split("\n")
+  .filter((path) => path !== "");
+writeFileSync(join(scratch, "artifact-files.txt"), `${files.join("\n")}\n`);
+execFileSync("tar", ["-xzf", artifact, "--strip-components=1", "-C", installed]);
+assert.equal(readFileSync(join(installed, "SOURCE_COMMIT"), "utf8"), `${sourceCommit}\n`);
 const source = JSON.parse(readFileSync("package.json", "utf8")) as Manifest;
 const manifest = JSON.parse(readFileSync(join(installed, "package.json"), "utf8")) as Manifest;
 assert.equal(manifest.version, source.version);
@@ -61,6 +48,9 @@ assert.deepEqual(Object.keys(manifest.exports), Object.keys(source.exports));
 for (const entry of Object.values(manifest.exports)) {
   for (const target of typeof entry === "string" ? [entry] : Object.values(entry)) {
     assert.ok(existsSync(resolve(installed, target)), target);
+    if (target.endsWith(".css")) {
+      assert.ok(readFileSync(resolve(installed, target), "utf8").trim() !== "", target);
+    }
   }
 }
 assert.equal(manifest.license, "MIT");
@@ -74,9 +64,9 @@ assert.deepEqual(manifest.exports["./web/build/vite/buildInfo"], {
   types: "./dist/web/build/vite/buildInfo.d.ts",
 });
 assert.equal(manifest.exports["./web/crash/dom/crash.css"], "./dist/web/crash/dom/crash.css");
-for (const file of result.files) {
-  assert.ok(!file.path.endsWith(".ts") || file.path.endsWith(".d.ts"), file.path);
-  assert.ok(!file.path.includes(".test."), file.path);
+for (const path of files) {
+  assert.ok(!path.endsWith(".ts") || path.endsWith(".d.ts"), path);
+  assert.ok(!path.includes(".test."), path);
 }
 writeFileSync(join(consumer, "package.json"), JSON.stringify({ type: "module" }));
 // No peers are present during the pure runtime and declaration checks.

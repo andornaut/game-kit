@@ -1,8 +1,10 @@
-// Verify types, lint, tests and the compiled artifact in isolated containers.
+// Verify types, lint and tests, then pack the committed release and check that exact tarball,
+// each in an isolated container.
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { pack } from "./pack.ts";
 import {
   CONTAINER_UID,
   containerOptions,
@@ -20,16 +22,21 @@ import {
 import { sourceFingerprint } from "./source-fingerprint.ts";
 
 const EVIDENCE = "/tmp/evidence";
+const ARTIFACT = "/assets/release.tgz";
 // Written to the evidence directory when the offline install cannot be satisfied from the cache.
 const CACHE_MISS = "NPM_CACHE_MISS";
 const DISCARD = "Discard the gate result.";
 
-export function check(env: NodeJS.ProcessEnv, root: string): void {
+/**
+ * Run the gate. The release artifacts go to `releaseDirectory` when given, so a caller can
+ * publish the checked tarball; otherwise they are evidence, kept only when the gate fails.
+ */
+export function check(env: NodeJS.ProcessEnv, root: string, releaseDirectory?: string): void {
   const cache = npmCacheVolume(env);
   const image = nodeImage(root);
   mkdirSync(join(root, ".claude"), { recursive: true });
   const before = sourceFingerprint([root]);
-  // The packed artifact and its consumer probe, kept only when the gate fails.
+  // The release artifacts and their consumer probe, kept only when the gate fails.
   const evidence = mkdtempSync(join(root, ".claude/artifact-check."));
   // The tmpfs mount points must exist in the read-only checkout.
   mkdirSync(join(root, "node_modules"), { recursive: true });
@@ -64,7 +71,6 @@ export function check(env: NodeJS.ProcessEnv, root: string): void {
       "npm run check",
       "npm run lint",
       "npm test -- --maxWorkers=4",
-      "node scripts/release-artifact.ts",
     ].join("\n"),
   ];
   const runGate = () => runContainer({ copyOut: { from: EVIDENCE, to: evidence } }, gate);
@@ -90,6 +96,20 @@ export function check(env: NodeJS.ProcessEnv, root: string): void {
       console.log("Checking types, lint and tests offline in a fresh container.");
       runGate();
     }
+    // The cache is complete once the gate has installed from it offline.
+    const tarball = pack(env, root, releaseDirectory ?? join(evidence, "release"));
+    requireLoad();
+    console.log("Checking the packed tarball offline in a fresh container.");
+    runContainer({ copyOut: { from: EVIDENCE, to: evidence } }, [
+      ...options,
+      ...readOnlyMount(tarball, ARTIFACT),
+      ...["--network", "none", image, "sh", "-ec"],
+      [
+        `mkdir ${EVIDENCE}`,
+        "npm ci --offline --ignore-scripts --no-audit --no-fund",
+        `node scripts/release-artifact.ts ${ARTIFACT}`,
+      ].join("\n"),
+    ]);
   } catch (error) {
     failure = error;
   }
@@ -114,6 +134,9 @@ export function check(env: NodeJS.ProcessEnv, root: string): void {
   }
 }
 
-main(import.meta.url, () =>
-  check(process.env, resolve(dirname(fileURLToPath(import.meta.url)), "..")),
-);
+main(import.meta.url, (args) => {
+  if (args.length > 1) {
+    throw new ScriptError("Usage: check.ts [release-directory]", 2);
+  }
+  check(process.env, resolve(dirname(fileURLToPath(import.meta.url)), ".."), args[0]);
+});
