@@ -1,6 +1,6 @@
 # game-kit
 
-Game-independent TypeScript mechanisms and Phaser adapters. Games supply content, strings, palettes, dimensions, schemas, tuning and lifecycle policy. Parent projects own their websites, PWA integration and asset/build tooling.
+Game-independent TypeScript mechanisms, Phaser adapters and website infrastructure. Games supply content, strings, palettes, dimensions, schemas, tuning, policies and lifecycle. Parent projects own their asset tooling and wire `web/*` modules into their own pages and Vite configuration.
 
 ## Importing
 
@@ -12,13 +12,21 @@ import { seededRandom } from "@andornaut/game-kit/random";
 import { memoryStorage, type SaveStorage } from "@andornaut/game-kit/save/storage";
 ```
 
-The compiled GitHub release archive contains JavaScript and declarations. Install its versioned URL and commit the consumer lockfile with URL and integrity. No npm registry publication or source aliases are required. `SOURCE_COMMIT`, inside the archive and alongside it, records the exact source revision. Tests and standalone scripts are private. Pure imports need no runtime peers; Phaser adapters require the consuming game's `phaser` dependency.
+The compiled GitHub release archive contains JavaScript and declarations. Install its versioned URL and commit the consumer lockfile with URL and integrity. No npm registry publication or source aliases are required. `SOURCE_COMMIT`, inside the archive and alongside it, records the exact source revision. Tests and standalone scripts are private. Pure imports need no runtime peers; Phaser adapters require the consuming game's `phaser` dependency, and `web/**/vite/*` plugins its `vite` dependency.
 
 ## Version and interface policy
 
 The source package is version `0.8.0`. The explicit `exports` map and exported declarations define the public interface. Internal imports are relative and acyclic; there is no root barrel loading an engine for pure callers.
 
 Compatible fixes use patch versions; additive public facilities use minor versions. After 1.0, incompatible changes require a major version. Before 1.0, incompatible changes require a minor version and an explicit migration. Update the manifest and root lockfile together. Prove the compiled artifact against exact consumer revisions before publication. Documentation-only changes need no version bump.
+
+## Addition in 0.9.0
+
+`web/*` replaces the `src/platform/` code each game copied from 0.3.x. Game-specific values, such as page rules, header policies and page checks, are parameters. Adopting it is optional per module: replace a copied module's imports with its `web/*` path and delete the copy.
+
+- `web/headers/securityHeaders` keeps the copied interface, except that `cspHash(text)` is now `sha256Source(base64Digest)` and `unhashedAssets(context, fileNames)` takes the content-hashed name pattern (`VITE_HASHED_NAME` for Vite's default) as its second argument. Hashing moved into the Vite plugin.
+- `web/headers/vite/securityHeadersPlugin` takes the same options plus an optional `hashedName`, and also builds without a public directory.
+- `web/pwa/dom/visibility` defines `VisibilitySource`, takes `watchVisibility(eventTarget, visibilitySource, onChange)` and returns a function that removes its listeners.
 
 ## Migration to 0.8.0
 
@@ -59,9 +67,21 @@ Paths are relative to `src/`. The source tree contains game mechanisms and their
 | `terrain/crumbling`, `terrain/traversal`                                                                          | Pure                     | Fixed-tick support lifecycle, bounded search and shared collision stepping       |
 | `text/*` except `text/phaser/*`                                                                                   | Pure                     | Bitmap font metrics, fixed-size wrapping, overflow and pixel atlas geometry      |
 | `view/fitCheck`, `view/modalDim`, `view/pagePoint`, `view/settleFit`                                              | Pure                     | Fit decisions, palette dimming, coordinate mapping and bounded settling          |
+| `web/headers/securityHeaders`                                                                                     | Pure                     | Content-Security-Policy rules and Cloudflare `_headers` rendering                |
 | `clock/phaser/*`, `input/phaser/*`, `progress/phaser/*`, `text/phaser/*`, `view/phaser/*`                         | Phaser, browser renderer | Frame caps, input guards, progress drawing, fonts, snapshots and modal backdrops |
+| `web/pwa/dom/visibility`                                                                                          | Browser DOM              | Page visibility across `visibilitychange` and the back-forward cache             |
+| `web/headers/vite/securityHeadersPlugin`                                                                          | Vite, Node build time    | Writes `_headers` with per-page inline hashes                                    |
 
-Only `phaser/` directories import Phaser. Pure environment compilation rejects browser and Node ambient globals. Renderer compilation rejects Node globals. The combined test/config project has the development types it needs.
+A module's directory names its environment, and its `tsconfig.<environment>.json` lists it explicitly:
+
+| Directory         | Project                | Globals and imports           |
+| ----------------- | ---------------------- | ----------------------------- |
+| none of the below | `tsconfig.pure.json`   | ES2022 only                   |
+| `phaser/`         | `tsconfig.phaser.json` | ES2022, DOM and Phaser        |
+| `dom/`            | `tsconfig.dom.json`    | ES2022 and DOM, no Phaser     |
+| `vite/`           | `tsconfig.vite.json`   | ES2022, Node and Vite, no DOM |
+
+Each compilation rejects the other environments' ambient globals, and ESLint rejects imports across them: pure modules import no environment directory, `dom/` imports no Phaser or `vite/`, `vite/` imports no Phaser or `dom/`, and nothing outside `vite/` imports Vite. `web/<area>/` holds website infrastructure in the same layout: pure policy such as headers, cache policy and precache lists at the top, browser bindings in `dom/` and build plugins in `vite/`. Public paths mirror source paths, for example `@andornaut/game-kit/web/headers/vite/securityHeadersPlugin`. The combined test/config project has the development types it needs.
 
 ## Integration contracts
 
@@ -128,14 +148,14 @@ The host needs Docker, Git and the Node version in `.nvmrc`, which runs the Type
 
 Every container runs as uid and gid 19001, which owns nothing on the host, with the group of each mounted checkout added for reads, `HOME=/tmp`, a read-only root file system and only read-only host mounts. Scratch and outputs live in a per-run volume; results are copied out with `docker cp`, so files in the checkout keep their host owner. The gate masks ignored `.claude/` state, where it retains artifact evidence, and ignored `.worktrees/` role worktrees; ESLint ignores both. The npm cache is the named Docker volume `game-kit-npm-cache`; `GAME_KIT_NPM_CACHE` names another. `node scripts/npm-cache.ts load|save <directory>` streams a host directory into the volume through a container, or copies the volume out with `docker cp`; CI uses it to carry the cache between runs, keyed on the `package-lock.json` hash.
 
-| Container command            | Purpose                                            |
-| ---------------------------- | -------------------------------------------------- |
-| `npm run check`              | Check combined, pure and Phaser types concurrently |
-| `npm run lint`               | Check formatting, ESLint boundaries and Markdown   |
-| `npm test -- --maxWorkers=4` | Run canonical unit and contract tests              |
-| `npm run format`             | Format a writable checkout                         |
+| Container command            | Purpose                                               |
+| ---------------------------- | ----------------------------------------------------- |
+| `npm run check`              | Check combined and per-environment types concurrently |
+| `npm run lint`               | Check formatting, ESLint boundaries and Markdown      |
+| `npm test -- --maxWorkers=4` | Run canonical unit and contract tests                 |
+| `npm run format`             | Format a writable checkout                            |
 
-TypeScript, Vite and Vitest are development tools, not runtime peers. `@types/node` supplies private tooling/test types. Phaser is the only optional runtime peer and is required when importing its adapters. Tests belong to the canonical library suite; consumers test their own integration.
+TypeScript and Vitest are development tools, not runtime peers. `@types/node` supplies tooling, test and `vite/` types. Phaser and Vite are optional peers, required when importing `phaser/` adapters or `vite/` plugins respectively. Tests belong to the canonical library suite; consumers test their own integration.
 
 WORKAROUND: Parent-scoped development overrides pin [KaTeX](https://github.com/advisories/GHSA-238p-pmpm-9mq7) `0.18.2`, [minimatch](https://github.com/advisories/GHSA-g3hv-75wg-m249) `11.0.3` and [re2js](https://github.com/advisories/GHSA-gg6h-894w-4m9c) `2.8.7`. ESLint loads cycle detection and its resolver through exported plugin subpaths because the full plugin imports an unused rule requiring minimatch's removed `makeRe` API. Keep cycle detection enabled. Remove each override when its parent supports the patched version; restore the full plugin import when it supports minimatch 11.
 

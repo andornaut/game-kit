@@ -48,7 +48,7 @@ for (const entry of Object.values(manifest.exports)) {
   }
 }
 assert.equal(manifest.license, "MIT");
-assert.deepEqual(Object.keys(manifest.peerDependencies), ["phaser"]);
+assert.deepEqual(Object.keys(manifest.peerDependencies), ["phaser", "vite"]);
 for (const file of result[0].files) {
   assert.ok(!file.path.endsWith(".ts") || file.path.endsWith(".d.ts"), file.path);
   assert.ok(!file.path.includes(".test."), file.path);
@@ -66,7 +66,9 @@ import * as storageModule from '@andornaut/game-kit/save/storage';
 assert.deepEqual(Object.keys(storageModule), ['memoryStorage']);
 import { findTraversal } from '@andornaut/game-kit/terrain/traversal';
 import { beginCrumblingStep, endCrumblingStep } from '@andornaut/game-kit/terrain/crumbling';
+import { renderPolicy } from '@andornaut/game-kit/web/headers/securityHeaders';
 assert.equal(clamp(0,1,2), 1);
+assert.equal(renderPolicy({'default-src': ["'self'"]}), "default-src 'self'");
 assert.equal(typeof findTraversal, 'function');
 assert.equal(typeof beginCrumblingStep, 'function');
 assert.equal(typeof endCrumblingStep, 'function');
@@ -121,14 +123,20 @@ execFileSync(
   ],
   { cwd: consumer, stdio: "inherit" },
 );
-// The parent owns its Vite configuration, which imports only the game mechanisms it uses.
+// The parent owns its Vite configuration, which imports the kit modules and plugins it uses.
 symlinkSync(resolve(root, "node_modules/vite"), join(consumer, "node_modules/vite"));
 writeFileSync(
   join(consumer, "vite.config.ts"),
   `
 import { defineConfig } from 'vite';
 import { clamp } from '@andornaut/game-kit/numbers';
-export default defineConfig({ define: { __KIT_CHECK__: JSON.stringify(clamp(0,1,2)) } });
+import { securityHeadersPlugin } from '@andornaut/game-kit/web/headers/vite/securityHeadersPlugin';
+export default defineConfig({
+  define: { __KIT_CHECK__: JSON.stringify(clamp(0,1,2)) },
+  plugins: [securityHeadersPlugin({
+    base: {}, fileRules: [], hashedAssetPath: '/assets/*', heading: 'Proof.', pageRules: [],
+  })],
+});
 `,
 );
 writeFileSync(
@@ -140,6 +148,7 @@ const loaded = await loadConfigFromFile(
   {command:'build',mode:'production'}, undefined, process.cwd(), 'silent', undefined, 'native');
 assert.ok(loaded);
 assert.equal(loaded.config.define.__KIT_CHECK__, '1');
+assert.deepEqual(loaded.config.plugins.map(({name}) => name), ['game-kit-security-headers']);
 `,
 );
 execFileSync(process.execPath, ["vite-bootstrap.mjs"], { cwd: consumer, stdio: "inherit" });

@@ -1,9 +1,11 @@
-// Check the combined, pure and Phaser type environments concurrently.
+// Check the combined, pure, Phaser, DOM and Vite type environments concurrently.
 import { spawn } from "node:child_process";
 
 import { main } from "./runtime.ts";
 
-export const PROJECTS = [[], ["-p", "tsconfig.pure.json"], ["-p", "tsconfig.phaser.json"]];
+export const ENVIRONMENTS = ["pure", "phaser", "dom", "vite"] as const;
+
+export const PROJECTS = [[], ...ENVIRONMENTS.map((name) => ["-p", `tsconfig.${name}.json`])];
 
 export interface TypeCheck {
   args: string[];

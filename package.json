@@ -33,10 +33,14 @@
   },
   "version": "0.8.0",
   "peerDependencies": {
-    "phaser": "^4.2.1"
+    "phaser": "^4.2.1",
+    "vite": "^8.3.5"
   },
   "peerDependenciesMeta": {
     "phaser": {
+      "optional": true
+    },
+    "vite": {
       "optional": true
     }
   },
@@ -100,7 +104,10 @@
     "./view/phaser/uiComposite": "./src/view/phaser/uiComposite.ts",
     "./view/phaser/uiProjection": "./src/view/phaser/uiProjection.ts",
     "./view/phaser/uiSubmitter": "./src/view/phaser/uiSubmitter.ts",
-    "./view/settleFit": "./src/view/settleFit.ts"
+    "./view/settleFit": "./src/view/settleFit.ts",
+    "./web/headers/securityHeaders": "./src/web/headers/securityHeaders.ts",
+    "./web/headers/vite/securityHeadersPlugin": "./src/web/headers/vite/securityHeadersPlugin.ts",
+    "./web/pwa/dom/visibility": "./src/web/pwa/dom/visibility.ts"
   },
   "repository": {
     "type": "git",

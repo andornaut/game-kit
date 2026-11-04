@@ -44,6 +44,7 @@
     "src/view/fitCheck.ts",
     "src/view/modalDim.ts",
     "src/view/pagePoint.ts",
-    "src/view/settleFit.ts"
+    "src/view/settleFit.ts",
+    "src/web/headers/securityHeaders.ts"
   ]
 }

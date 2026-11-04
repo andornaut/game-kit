@@ -8,7 +8,11 @@ import ts from "typescript-eslint";
 import { plugins, sourceRules, toolingRules } from "./eslint.config.base.mjs";
 
 const KIT_FILES = ["src/**/*.ts"];
+// Each environment directory: phaser/ (Phaser and the browser), dom/ (the browser without
+// Phaser) and vite/ (Node and Vite at build time). Everything else is pure.
 const PHASER_FILES = ["src/**/phaser/**"];
+const DOM_FILES = ["src/**/dom/**"];
+const VITE_FILES = ["src/**/vite/**"];
 
 // Source modules import their own modules by relative path and never import a game.
 const OUTSIDE_KIT = {
@@ -21,6 +25,18 @@ const OUTSIDE_KIT = {
 const PHASER = {
   group: ["**/phaser", "**/phaser/*"],
   message: "Only phaser/ folders may import Phaser or a phaser/ folder.",
+};
+
+const DOM = {
+  group: ["**/dom", "**/dom/*"],
+  message: "Only dom/ and phaser/ folders may import a dom/ folder.",
+};
+
+// Vite runs only at build time, so no runtime module may load it. The type environments reject
+// Node imports outside vite/.
+const VITE = {
+  group: ["**/vite", "**/vite/*"],
+  message: "Only vite/ folders may import Vite or a vite/ folder.",
 };
 
 export default defineConfig(
@@ -42,12 +58,20 @@ export default defineConfig(
   // A later no-restricted-imports replaces an earlier one, so each file gets one list.
   {
     files: KIT_FILES,
-    ignores: PHASER_FILES,
-    rules: { "no-restricted-imports": ["error", { patterns: [OUTSIDE_KIT, PHASER] }] },
+    ignores: [...PHASER_FILES, ...DOM_FILES, ...VITE_FILES],
+    rules: { "no-restricted-imports": ["error", { patterns: [OUTSIDE_KIT, PHASER, DOM, VITE] }] },
   },
   {
     files: PHASER_FILES,
-    rules: { "no-restricted-imports": ["error", { patterns: [OUTSIDE_KIT] }] },
+    rules: { "no-restricted-imports": ["error", { patterns: [OUTSIDE_KIT, VITE] }] },
+  },
+  {
+    files: DOM_FILES,
+    rules: { "no-restricted-imports": ["error", { patterns: [OUTSIDE_KIT, PHASER, VITE] }] },
+  },
+  {
+    files: VITE_FILES,
+    rules: { "no-restricted-imports": ["error", { patterns: [OUTSIDE_KIT, PHASER, DOM] }] },
   },
   // No import cycles: a module in a cycle can run before what it imports has loaded. Type-only
   // imports are erased at build time, so they never form one.
