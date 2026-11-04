@@ -6,13 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { expect, it } from "vitest";
 
-import {
-  containerOptions,
-  hostLoad,
-  nodeImage,
-  npmCacheVolume,
-  requireLoad,
-} from "./runtime.ts";
+import { containerOptions, hostLoad, nodeImage, npmCacheVolume, requireLoad } from "./runtime.ts";
 
 it.each([
   { env: { GAME_KIT_LOAD: "0" }, load: 0 },
