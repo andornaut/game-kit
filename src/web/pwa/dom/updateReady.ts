@@ -87,10 +87,9 @@ export interface UpdateFlow {
   noteInteraction(): void;
   // The registration failed, so there is no newer version to wait for.
   noRegistration(): void;
-  // Legacy eligibility hook: a false-to-true arrival also begins a new offer visit.
-  // Each arrival after input checks for a newer version.
-  setOnHome(onHome: boolean): void;
-  // Offer eligibility and arrival/resume checks, independent of registration and visit lifetime.
+  // Offer eligibility: whether the home screen, the only place the offer shows, is in front. Each
+  // arrival after input checks for a newer version. Independent of registration and visit
+  // lifetime.
   setOfferVisible(visible: boolean): void;
   // Whether the page is in view. Coming back into view on the home screen checks for a newer
   // version, at most once per RESUME_CHECK_MS.
@@ -196,12 +195,6 @@ export function createUpdateFlow(
       }
     },
     setOfferVisible,
-    setOnHome(onHome) {
-      if (onHome && !state.onHome) {
-        dismissed = false;
-      }
-      setOfferVisible(onHome);
-    },
     setVisible(visible) {
       const due = resumeCheckDue({
         lastCheck,
@@ -244,35 +237,5 @@ export function createUpdateFlow(
       }
       check(registration).then(read, read);
     },
-  };
-}
-
-// Registers the service worker through register and hands the registration to flow.watch, or
-// tells flow there is none when register rejects. A page some version controls registers at once,
-// so its update check runs while the game loads. A first visit registers on the game's first
-// arrival home, so the precache's downloads do not compete with the game's own. Returns the
-// game's home hook, to call in place of flow.setOnHome on each change of whether the home screen
-// is in front.
-export function registerWhenDue(
-  container: ContainerLike,
-  flow: UpdateFlow,
-  register: () => Promise<RegistrationLike>,
-): (onHome: boolean) => void {
-  let registered = false;
-  const start = () => {
-    registered = true;
-    register().then(
-      (registration) => flow.watch(registration),
-      () => flow.noRegistration(),
-    );
-  };
-  if (container.controller !== null) {
-    start();
-  }
-  return (onHome) => {
-    flow.setOnHome(onHome);
-    if (onHome && !registered) {
-      start();
-    }
   };
 }

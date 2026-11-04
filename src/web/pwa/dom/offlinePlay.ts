@@ -51,8 +51,6 @@ export interface OfflinePlay {
   // The update flow: accept() is the update offer's button, and noteInteraction() counts play
   // that started without input.
   readonly flow: UpdateFlow;
-  // Legacy home hook: combines offer visits, eligibility and first-install readiness.
-  readonly setOnHome: (onHome: boolean) => void;
   // First-install readiness, after the client has prepared its first playable frame.
   // Controlled pages register immediately regardless of this value.
   setRegistrationReady(ready: boolean): void;
@@ -154,10 +152,6 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
     bootable: flow.bootable,
     flow,
     setOfferVisible: (visible) => flow.setOfferVisible(visible),
-    setOnHome(onHome) {
-      flow.setOnHome(onHome);
-      setRegistrationReady(onHome);
-    },
     setRegistrationReady,
   };
 }

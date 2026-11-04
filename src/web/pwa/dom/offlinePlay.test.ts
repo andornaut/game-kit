@@ -5,6 +5,7 @@ import {
   INTERACTION_EVENTS,
   type OfflineActivity,
   type OfflinePage,
+  type OfflinePlay,
   type OfflinePlayOptions,
   type RegisteringContainer,
   startOfflinePlay,
@@ -118,6 +119,13 @@ function openPage(
   return { clock, container, page, play, registration, shown, timers, visibilitySource };
 }
 
+// The home screen coming to the front or leaving it, as a game reports it: it shows or hides the
+// update offer, and readies first registration.
+function showHome(play: OfflinePlay, onHome: boolean): void {
+  play.setOfferVisible(onHome);
+  play.setRegistrationReady(onHome);
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -220,7 +228,7 @@ describe("startOfflinePlay", () => {
     worker.state = "installing";
     await expect(play.bootable).resolves.toBeUndefined();
     expect(activities).toEqual(["idle"]);
-    play.setOnHome(true);
+    showHome(play, true);
     expect(activities).toEqual(["idle", "registering"]);
     await settle();
     expect(activities.at(-1)).toBe("installing");
@@ -232,7 +240,7 @@ describe("startOfflinePlay", () => {
   it("observes a later install and clears activity when that worker becomes redundant", async () => {
     const activities: OfflineActivity[] = [];
     const { play, registration } = openPage(false, "none", (activity) => activities.push(activity));
-    play.setOnHome(true);
+    showHome(play, true);
     await settle();
     if (registration === undefined) {
       throw new Error("Missing test registration");
@@ -252,7 +260,7 @@ describe("startOfflinePlay", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const activities: OfflineActivity[] = [];
     const failed = openPage(false, "fails", (activity) => activities.push(activity));
-    failed.play.setOnHome(true);
+    showHome(failed.play, true);
     await expect(failed.play.bootable).resolves.toBeUndefined();
     await settle();
     expect(activities).toEqual(["idle", "registering", "idle"]);
@@ -261,7 +269,7 @@ describe("startOfflinePlay", () => {
     const observed = openPage(false, "none", () => {
       throw new Error("observer");
     });
-    observed.play.setOnHome(true);
+    showHome(observed.play, true);
     await settle();
     expect(observed.container.registered).toHaveLength(1);
     await expect(observed.play.bootable).resolves.toBeUndefined();
@@ -274,7 +282,7 @@ describe("startOfflinePlay", () => {
     ["registers a first visit on its first arrival home", false, [false, true], 1],
   ])("%s", async (_, controlled, steps, registrations) => {
     const { container, play } = openPage(controlled, "none");
-    steps.forEach((step) => play.setOnHome(step));
+    steps.forEach((step) => showHome(play, step));
     await settle();
     expect(container.registered).toEqual(
       Array.from({ length: registrations }, () => [OPTIONS.serviceWorkerUrl, { scope: "/" }]),
@@ -292,7 +300,7 @@ describe("startOfflinePlay", () => {
       page.eventTarget.dispatchEvent(new Event(interaction));
     }
     await settle();
-    play.setOnHome(true);
+    showHome(play, true);
     expect({ messages: registration?.waiting?.messages, shown }).toEqual(
       interaction === undefined
         ? { messages: [SKIP_WAITING_MESSAGE], shown: [] }
@@ -359,7 +367,7 @@ describe("startOfflinePlay", () => {
     if (interacted) {
       page.eventTarget.dispatchEvent(new Event("pointerdown"));
     }
-    play.setOnHome(true);
+    showHome(play, true);
     await settle();
     const advance = (worker: FakeWorker, state: string) => {
       worker.state = state;
@@ -426,7 +434,7 @@ describe("startOfflinePlay", () => {
   ])("after %s, checks for a newer version %i more times", async (_, checks, resume) => {
     const opened = openPage(true, "none");
     await settle();
-    opened.play.setOnHome(true);
+    showHome(opened.play, true);
     const before = opened.registration?.updates ?? 0;
     opened.clock.now = RESUME_CHECK_MS;
     resume(opened);

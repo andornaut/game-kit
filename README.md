@@ -22,19 +22,11 @@ The `exports` map and the exported declarations define the public interface. Int
 
 Compatible fixes are patch versions and additions are minor versions. Incompatible changes are major versions after 1.0, and minor versions with a migration section below before 1.0. Update the manifest and lockfile together. Documentation-only changes need no version bump.
 
-## Migration to 0.13.0
+## Migration to 0.14.0
 
-- `save/contracts` is removed. Import `SaveStorage` from `@andornaut/game-kit/save/storage`, which defines it.
-- `web/pwa/vite/precachePlugin`: a public file the page links, or an icon a linked web app manifest names, that is missing from the public directory now fails the build instead of being left out with a warning. Add the file or remove the link.
-
-## Migration to 0.12.0
-
-- `web/pwa/cachePolicy`: `CachePolicy.revalidatedUrls` is now optional and ignored, and a later release removes it; delete it from each game's policy. The worker serves content-hashed build output and every sound file cache-first, and the page and every other precached file network-first, with the cached copy answering offline. An unhashed file can change under its name, so code that reads it must see the deploy the page came from. A file that was revalidated but is not precached is now network-only, so precache it to keep it offline. `cachedUrlsOf` returns `CachedUrls`, the precache list and the sound files as separate sets, which `strategyFor` takes in place of one set.
-- `web/crash/dom/crashScreen`: Reload activates a waiting service worker before it reloads, when a worker controls the page, so the reload runs the newer version. Without a service worker, a waiting worker or a readable registration, it reloads at once.
-
-## Addition in 0.11.0
-
-`achievements` and `achievements/preview` are new pure modules; nothing existing changes. The earned store reports `saveStore` load and write statuses, and `progress` is never full while a badge is not earned. See [Achievements](#achievements).
+- `web/pwa/cachePolicy`: `CachePolicy.revalidatedUrls` is removed. Delete it from the game's policy.
+- `web/pwa/dom/offlinePlay`: `OfflinePlay.setOnHome` is removed. Call `setOfferVisible` with whether the home screen is in front, and `setRegistrationReady(true)` once the first screen is ready to register the service worker.
+- `web/pwa/dom/updateReady`: `UpdateFlow.setOnHome` and `registerWhenDue` are removed. Call `setOfferVisible` for offer eligibility and `beginOfferVisit` to start an offer visit and clear its dismissal; `startOfflinePlay` registers the service worker.
 
 ## Modules and environments
 

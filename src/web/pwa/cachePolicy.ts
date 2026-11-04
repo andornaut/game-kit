@@ -16,9 +16,6 @@ export interface CachePolicy {
   readonly cacheNamePrefix: string;
   // The path every content-hashed build file starts with, e.g. "/assets/".
   readonly hashedAssetPrefix: string;
-  // CLEANUP (added 2026-11-04): ignored, so a policy written for 0.11.0 still compiles. Remove
-  // once Archie and Chibi have dropped it from their policies.
-  readonly revalidatedUrls?: readonly string[];
 }
 
 // Content-hashed build output, safe to serve from cache for as long as it is referenced.
