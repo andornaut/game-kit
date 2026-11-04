@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+# A newer run on the same ref cancels a superseded one. Runs on main and tags each get their own
+# group, so none of them is cancelled or displaced while queued.
+concurrency:
+  group: test-${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) && github.run_id || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -19,8 +25,19 @@ jobs:
       - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .nvmrc
+      - id: npm-cache
+        uses: actions/cache@v6.1.0
+        with:
+          path: ${{ runner.temp }}/game-kit-npm-cache
+          key: game-kit-npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - name: Load the cached npm cache into its Docker volume
+        if: steps.npm-cache.outputs.cache-hit == 'true'
+        run: node scripts/npm-cache.ts load "$RUNNER_TEMP/game-kit-npm-cache"
       - name: Verify source and packed native bootstrap in isolated containers
         run: node scripts/check.ts
+      - name: Copy the npm cache volume out for saving
+        if: steps.npm-cache.outputs.cache-hit != 'true'
+        run: node scripts/npm-cache.ts save "$RUNNER_TEMP/game-kit-npm-cache"
       - name: Build committed release artifacts offline
         run: node scripts/pack.ts .claude/release-output
       - uses: actions/upload-artifact@v7.0.2

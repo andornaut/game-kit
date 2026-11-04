@@ -7,7 +7,7 @@
     "node": ">=24.21.0"
   },
   "scripts": {
-    "check": "tsc && tsc -p tsconfig.pure.json && tsc -p tsconfig.phaser.json",
+    "check": "node scripts/typecheck.ts",
     "format": "prettier --write . && eslint --fix .",
     "lint": "prettier --check . && eslint --max-warnings 0 . && markdownlint-cli2",
     "test": "vitest run",

@@ -122,16 +122,16 @@ The complete resolved contact set at tick end records newly standing actor/suppo
 node scripts/check.ts
 ```
 
-The host needs Docker, Git and the Node version in `.nvmrc`, which runs the TypeScript tooling directly without a build step. The isolated gate uses Node 24.21.0, at most four CPUs and four Vitest workers. It populates the project npm cache in a container, then checks types, formatting, lint, tests and the actual compiled package offline in a fresh container. Source fingerprints must remain stable, and credential-shaped paths are refused before content reads. CI invokes the same script. Start below one-minute load 24. Container images derive from `.nvmrc`.
+The host needs Docker, Git and the Node version in `.nvmrc`, which runs the TypeScript tooling directly without a build step. The isolated gate uses Node 24.21.0, at most four CPUs and four Vitest workers. It installs dependencies offline from the project npm cache and checks types, formatting, lint, tests and the actual compiled package in a container without network access. Only when the offline install fails does it populate the cache in a networked container and repeat the offline gate. Source fingerprints must remain stable, and credential-shaped paths are refused before content reads. CI invokes the same script. Start below one-minute load 24. Container images derive from `.nvmrc`.
 
-Every container runs as uid and gid 19001, which owns nothing on the host, with the group of each mounted checkout added for reads, `HOME=/tmp`, a read-only root file system and only read-only host mounts. Scratch and outputs live in a per-run volume; results are copied out with `docker cp`, so files in the checkout keep their host owner. The gate masks ignored `.claude/` state, where it retains artifact evidence. The npm cache is the named Docker volume `game-kit-npm-cache`; `GAME_KIT_NPM_CACHE` names another.
+Every container runs as uid and gid 19001, which owns nothing on the host, with the group of each mounted checkout added for reads, `HOME=/tmp`, a read-only root file system and only read-only host mounts. Scratch and outputs live in a per-run volume; results are copied out with `docker cp`, so files in the checkout keep their host owner. The gate masks ignored `.claude/` state, where it retains artifact evidence, and ignored `.worktrees/` role worktrees; ESLint ignores both. The npm cache is the named Docker volume `game-kit-npm-cache`; `GAME_KIT_NPM_CACHE` names another. `node scripts/npm-cache.ts load|save <directory>` streams a host directory into the volume through a container, or copies the volume out with `docker cp`; CI uses it to carry the cache between runs, keyed on the `package-lock.json` hash.
 
-| Container command            | Purpose                                          |
-| ---------------------------- | ------------------------------------------------ |
-| `npm run check`              | Check combined, pure and Phaser types            |
-| `npm run lint`               | Check formatting, ESLint boundaries and Markdown |
-| `npm test -- --maxWorkers=4` | Run canonical unit and contract tests            |
-| `npm run format`             | Format a writable checkout                       |
+| Container command            | Purpose                                            |
+| ---------------------------- | -------------------------------------------------- |
+| `npm run check`              | Check combined, pure and Phaser types concurrently |
+| `npm run lint`               | Check formatting, ESLint boundaries and Markdown   |
+| `npm test -- --maxWorkers=4` | Run canonical unit and contract tests              |
+| `npm run format`             | Format a writable checkout                         |
 
 TypeScript, Vite and Vitest are development tools, not runtime peers. `@types/node` supplies private tooling/test types. Phaser is the only optional runtime peer and is required when importing its adapters. Tests belong to the canonical library suite; consumers test their own integration.
 

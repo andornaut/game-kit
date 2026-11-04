@@ -25,7 +25,7 @@ const PHASER = {
 
 export default defineConfig(
   {
-    ignores: [".claude/", "node_modules/"],
+    ignores: [".claude/", ".worktrees/", "node_modules/"],
   },
   js.configs.recommended,
   ts.configs.recommended,
