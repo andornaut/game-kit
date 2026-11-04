@@ -244,6 +244,98 @@ it("fails the group and restores its roles when a glyph is not in the font", asy
   expect(text.value.customRenderNodes).toEqual({});
   recorder.destroy();
 });
+async function registered(kind: string) {
+  const recorder = createUiRecorder(ports());
+  await Promise.resolve();
+  const value = object(kind);
+  const registration = recorder.register([value.node]);
+  if (registration.status !== "ready") {
+    throw new Error("Missing registration");
+  }
+  return { owner: registration.handle.owner, recorder, value };
+}
+it.each([
+  [0, 0, 0x80ff0000, [255, 0, 0], 128 / 255, "multiply", "linear"],
+  [1, 1, 0xff102030, [16, 32, 48], 1, "fill", "nearest"],
+] as const)(
+  "maps quad batch args by index with tint mode %s and scale mode %s",
+  async (tintMode, scaleMode, colour, tint, alpha, mode, sampling) => {
+    const { owner, recorder, value } = await registered("Image");
+    Object.assign(value.frame, { u0: 0.25, u1: 0.75, v0: 0, v1: 0.5 });
+    value.frame.source.scaleMode = scaleMode;
+    recorder.begin(1, projection);
+    const corners = [1, 2, 3, 4, 5, 6, 7, 8];
+    const uv = [0.5, 0.25, 0.25, -0.25];
+    value.customRenderNodes.BatchHandler!.batch(
+      context,
+      {},
+      ...corners,
+      ...uv,
+      tintMode,
+      ...[colour, colour, colour, colour],
+      {},
+    );
+    expect(recorder.finish().commands[1]).toEqual({
+      alpha,
+      kind: "quad",
+      owner,
+      quad: [
+        { x: 1, y: 2 },
+        { x: 3, y: 4 },
+        { x: 7, y: 8 },
+        { x: 5, y: 6 },
+      ],
+      raster: { image: {}, source: { height: -4, width: 4, x: 4, y: 4 } },
+      sampling,
+      tint,
+      tintMode: mode,
+    });
+    recorder.destroy();
+  },
+);
+it("shares one frozen colour tuple across every triangle vertex of a command", async () => {
+  const { owner, recorder, value } = await registered("Rectangle");
+  recorder.begin(1, projection);
+  const positions = [0, 0, 4, 0, 4, 4, 0, 4];
+  value.customRenderNodes.Submitter!.batch(
+    context,
+    [0, 1, 2, 0, 2, 3],
+    positions,
+    Array(4).fill(0x40102030),
+    false,
+  );
+  const command = recorder.finish().commands[1]!;
+  if (command.kind !== "triangles") {
+    throw new Error("Missing triangles");
+  }
+  const colour = [16, 32, 48, 64 / 255];
+  expect(command).toEqual({
+    kind: "triangles",
+    owner,
+    vertices: [0, 1, 2, 0, 2, 3].map((index) => ({
+      at: { x: positions[index * 2], y: positions[index * 2 + 1] },
+      colour,
+    })),
+  });
+  expect(new Set(command.vertices.map((vertex) => vertex.colour)).size).toBe(1);
+  expect(Object.isFrozen(command.vertices[0]!.colour)).toBe(true);
+  recorder.destroy();
+});
+it.each([
+  ["triangles", "Rectangle", "Submitter"],
+  ["quad", "Image", "BatchHandler"],
+] as const)("fails %s with non-uniform corner colours", async (_, kind, role) => {
+  const { recorder, value } = await registered(kind);
+  recorder.begin(1, projection);
+  const node = value.customRenderNodes[role]!;
+  const draw =
+    kind === "Rectangle"
+      ? () => node.batch(context, [0, 1, 2], [0, 0, 1, 0, 1, 1], [1, 1, 2], false)
+      : () => node.batch(context, {}, ...Array(12).fill(0), 0, 1, 1, 2, 1, {});
+  expect(draw).toThrow("UI group capture unavailable: effect");
+  expect(value.customRenderNodes).toEqual({});
+  recorder.destroy();
+});
 it("preflights Graphics opcodes rather than mistaking operand values for gradients", async () => {
   const recorder = createUiRecorder(ports());
   await Promise.resolve();

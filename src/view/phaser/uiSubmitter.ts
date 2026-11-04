@@ -5,6 +5,7 @@ import type {
   Colour,
   Owner,
   Quad,
+  Rgb,
   UiCapturePorts,
   UiFrame,
   UiIssue,
@@ -14,6 +15,7 @@ import type {
   UiRefreshResult,
   UiRegistration,
   UiRootHandle,
+  Vertex,
 } from "./uiCommands.ts";
 
 type Node = Renderer.WebGL.RenderNodes.RenderNode;
@@ -123,11 +125,19 @@ const operands: readonly (number | undefined)[] = [
 function uniform(values: readonly unknown[]): boolean {
   return values.every((value) => value === values[0]);
 }
-function packed(value: number): Colour {
-  return [(value >>> 16) & 255, (value >>> 8) & 255, value & 255, (value >>> 24) / 255];
+function packedRgb(value: number): Rgb {
+  return [(value >>> 16) & 255, (value >>> 8) & 255, value & 255];
+}
+function packedAlpha(value: number): number {
+  return (value >>> 24) / 255;
 }
 function quad(values: ArrayLike<number>): Quad {
-  return [0, 2, 4, 6].map((i) => ({ x: values[i]!, y: values[i + 1]! })) as unknown as Quad;
+  return [
+    { x: values[0]!, y: values[1]! },
+    { x: values[2]!, y: values[3]! },
+    { x: values[4]!, y: values[5]! },
+    { x: values[6]!, y: values[7]! },
+  ];
 }
 type Glyph = GameObjects.BitmapText["fontData"]["chars"][number];
 type Chars = GameObjects.BitmapText["fontData"]["chars"];
@@ -223,11 +233,12 @@ export function createUiRecorder(ports: UiCapturePorts): {
     frame!.commands.push({ camera, kind: "viewport-clip", rect: { ...viewport } }, command);
     return undefined;
   };
-  const tint = (group: Group, values: readonly number[]) => {
-    if (!uniform(values)) {
+  // Returns the packed colour shared by all four corners.
+  const tint = (group: Group, a: number, b: number, c: number, d: number): number => {
+    if (a !== b || a !== c || a !== d) {
       fail(group, "effect");
     }
-    return packed(values[0]!);
+    return a;
   };
   const mode = (group: Group, value: number): "multiply" | "fill" => {
     if (value !== 0 && value !== 1) {
@@ -258,41 +269,43 @@ export function createUiRecorder(ports: UiCapturePorts): {
       if (!pen) {
         return;
       }
-      const [r, g, b, alpha] = tint(group, [
+      const value = tint(
+        group,
         colours.tintTopLeft!,
         colours.tintTopRight!,
         colours.tintBottomLeft!,
         colours.tintBottomRight!,
-      ]);
+      );
       append(group, context, {
-        alpha,
+        alpha: packedAlpha(value),
         face: { ...style!.face },
         glyphs: [pen],
         kind: "text",
         owner: group.owner,
         size: style!.size,
-        tint: [r, g, b],
+        tint: packedRgb(value),
         tintMode: mode(group, colours.tintEffect!),
       });
     } else if (object.type === "Rectangle" || object.type === "Graphics") {
       if (method !== "batch" || args[4]) {
         fail(group, "effect");
       }
-      const indices = args[1] as number[];
-      const positions = args[2] as number[];
-      const colours = args[3] as number[];
-      const colour = tint(
-        group,
-        indices.map((index) => colours[index]!),
-      );
-      append(group, context, {
-        kind: "triangles",
-        owner: group.owner,
-        vertices: indices.map((index) => ({
-          at: { x: positions[index * 2]!, y: positions[index * 2 + 1]! },
-          colour: [...colour] as Colour,
-        })),
-      });
+      const indices = args[1] as readonly number[];
+      const positions = args[2] as readonly number[];
+      const colours = args[3] as readonly number[];
+      const value = colours[indices[0]!]!;
+      for (const index of indices) {
+        if (colours[index] !== value) {
+          fail(group, "effect");
+        }
+      }
+      // One frozen tuple per command; every vertex shares it.
+      const colour: Colour = Object.freeze([...packedRgb(value), packedAlpha(value)] as const);
+      const vertices: Vertex[] = [];
+      for (const index of indices) {
+        vertices.push({ at: { x: positions[index * 2]!, y: positions[index * 2 + 1]! }, colour });
+      }
+      append(group, context, { kind: "triangles", owner: group.owner, vertices });
     } else {
       if (method !== "batch") {
         fail(group, "object-kind");
@@ -302,28 +315,40 @@ export function createUiRecorder(ports: UiCapturePorts): {
       if (!raster) {
         fail(group, "raster");
       }
-      const [r, g, b, alpha] = tint(group, args.slice(15, 19) as number[]);
-      const uv = args.slice(10, 14) as number[];
+      // BatchHandlerQuad.batch(context, texture, x0..y3, texX, texY, texWidth, texHeight,
+      // tintMode, tintTL, tintBL, tintTR, tintBR, ...). Corners arrive TL, BL, TR, BR.
+      const value = tint(
+        group,
+        args[15] as number,
+        args[16] as number,
+        args[17] as number,
+        args[18] as number,
+      );
       const uw = sourceFrame.u1 - sourceFrame.u0;
       const vh = sourceFrame.v1 - sourceFrame.v0;
+      const { source: frameRect } = raster!;
       const source: UiRaster = {
         image: raster!.image,
         source: {
-          height: (raster!.source.height * uv[3]!) / vh,
-          width: (raster!.source.width * uv[2]!) / uw,
-          x: raster!.source.x + ((uv[0]! - sourceFrame.u0) / uw) * raster!.source.width,
-          y: raster!.source.y + ((uv[1]! - sourceFrame.v0) / vh) * raster!.source.height,
+          height: (frameRect.height * (args[13] as number)) / vh,
+          width: (frameRect.width * (args[12] as number)) / uw,
+          x: frameRect.x + (((args[10] as number) - sourceFrame.u0) / uw) * frameRect.width,
+          y: frameRect.y + (((args[11] as number) - sourceFrame.v0) / vh) * frameRect.height,
         },
       };
-      const points = args.slice(2, 10) as number[]; // Batch order TL, BL, TR, BR.
       append(group, context, {
-        alpha,
+        alpha: packedAlpha(value),
         kind: "quad",
         owner: group.owner,
-        quad: quad([...points.slice(0, 4), ...points.slice(6, 8), ...points.slice(4, 6)]),
+        quad: [
+          { x: args[2] as number, y: args[3] as number },
+          { x: args[4] as number, y: args[5] as number },
+          { x: args[8] as number, y: args[9] as number },
+          { x: args[6] as number, y: args[7] as number },
+        ],
         raster: source,
         sampling: sourceFrame.source.scaleMode === 0 ? "linear" : "nearest",
-        tint: [r, g, b],
+        tint: packedRgb(value),
         tintMode: mode(group, args[14] as number),
       });
     }
