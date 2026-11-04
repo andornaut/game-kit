@@ -51,11 +51,9 @@ export interface OfflinePlay {
   // The update flow: accept() is the update offer's button, and noteInteraction() counts play
   // that started without input.
   readonly flow: UpdateFlow;
-  // First-install readiness, after the client has prepared its first playable frame.
-  // Controlled pages register immediately regardless of this value.
-  setRegistrationReady(ready: boolean): void;
-  // Offer eligibility only. This never starts registration or resets dismissal.
-  setOfferVisible(visible: boolean): void;
+  // Registers the service worker on a first install, once the client has prepared its first
+  // playable frame. A controlled page registers at start, and later calls do nothing.
+  registrationReady(): void;
 }
 
 // The browser's page, or undefined where it has no service workers.
@@ -140,18 +138,13 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
         () => flow.noRegistration(),
       );
   };
-  const setRegistrationReady = (ready: boolean) => {
-    if (ready && !registered) {
+  const registrationReady = () => {
+    if (!registered) {
       register();
     }
   };
   if (container.controller !== null) {
     register();
   }
-  return {
-    bootable: flow.bootable,
-    flow,
-    setOfferVisible: (visible) => flow.setOfferVisible(visible),
-    setRegistrationReady,
-  };
+  return { bootable: flow.bootable, flow, registrationReady };
 }

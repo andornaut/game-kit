@@ -22,6 +22,11 @@ The `exports` map and the exported declarations define the public interface. Int
 
 Compatible fixes are patch versions and additions are minor versions. Incompatible changes are major versions after 1.0, and minor versions with a migration section below before 1.0. Update the manifest and lockfile together. Documentation-only changes need no version bump.
 
+## Migration to 0.15.0
+
+- `web/pwa/dom/offlinePlay`: `OfflinePlay.setRegistrationReady(ready)` is replaced by `registrationReady()`. Replace `play.setRegistrationReady(true)` with `play.registrationReady()`, and delete calls that pass `false`, which did nothing. `OfflinePlay.setOfferVisible` is removed: replace `play.setOfferVisible(visible)` with `play.flow.setOfferVisible(visible)`.
+- `web/pwa/updateReady`: `UpdateState.onHome` and `ResumeState.onHome` are renamed `offerVisible`.
+
 ## Migration to 0.14.0
 
 - `web/pwa/cachePolicy`: `CachePolicy.revalidatedUrls` is removed. Delete it from the game's policy.

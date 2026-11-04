@@ -116,7 +116,7 @@ export function createUpdateFlow(
     activationPolicy: options.activationPolicy,
     interacted: false,
     newer: container.controller === null ? "none" : "pending",
-    onHome: false,
+    offerVisible: false,
     online: online(),
     reloading: false,
     waitOver: false,
@@ -157,9 +157,9 @@ export function createUpdateFlow(
       show(visible);
     }
   };
-  const setOfferVisible = (onHome: boolean) => {
-    const arrived = onHome && !state.onHome && state.interacted;
-    update({ onHome });
+  const setOfferVisible = (offerVisible: boolean) => {
+    const arrived = offerVisible && !state.offerVisible && state.interacted;
+    update({ offerVisible });
     if (arrived && online() && watched !== undefined) {
       check(watched).catch(() => undefined);
     }
@@ -199,7 +199,7 @@ export function createUpdateFlow(
       const due = resumeCheckDue({
         lastCheck,
         now: now(),
-        onHome: state.onHome,
+        offerVisible: state.offerVisible,
         online: online(),
         visible,
       });

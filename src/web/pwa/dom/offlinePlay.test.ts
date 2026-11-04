@@ -120,10 +120,12 @@ function openPage(
 }
 
 // The home screen coming to the front or leaving it, as a game reports it: it shows or hides the
-// update offer, and readies first registration.
-function showHome(play: OfflinePlay, onHome: boolean): void {
-  play.setOfferVisible(onHome);
-  play.setRegistrationReady(onHome);
+// update offer, and its arrival readies first registration.
+function showHome(play: OfflinePlay, offerVisible: boolean): void {
+  play.flow.setOfferVisible(offerVisible);
+  if (offerVisible) {
+    play.registrationReady();
+  }
 }
 
 afterEach(() => {
@@ -140,22 +142,20 @@ describe("startOfflinePlay", () => {
       "manual",
     );
     await expect(play.bootable).resolves.toBeUndefined();
-    play.setOfferVisible(true);
-    play.setOfferVisible(false);
+    play.flow.setOfferVisible(true);
+    play.flow.setOfferVisible(false);
     play.flow.beginOfferVisit();
-    play.setOfferVisible(true);
-    play.setRegistrationReady(false);
+    play.flow.setOfferVisible(true);
     expect(container.registered).toEqual([]);
     expect(activities).toEqual(["idle"]);
-    play.setRegistrationReady(true);
+    play.registrationReady();
     expect(container.registered).toEqual([[OPTIONS.serviceWorkerUrl, { scope: "/" }]]);
     expect(activities).toEqual(["idle", "registering"]);
     await settle();
     expect(activities).toEqual(["idle", "registering", "idle"]);
-    play.setRegistrationReady(false);
-    play.setRegistrationReady(true);
-    play.setOfferVisible(false);
-    play.setOfferVisible(true);
+    play.registrationReady();
+    play.flow.setOfferVisible(false);
+    play.flow.setOfferVisible(true);
     expect(container.registered).toHaveLength(1);
   });
 
@@ -168,10 +168,11 @@ describe("startOfflinePlay", () => {
       "manual",
     );
     expect(container.registered).toHaveLength(1);
-    play.setRegistrationReady(false);
+    play.registrationReady();
+    expect(container.registered).toHaveLength(1);
     await settle();
     await expect(play.bootable).resolves.toBeUndefined();
-    play.setOfferVisible(true);
+    play.flow.setOfferVisible(true);
     expect(shown).toEqual([true]);
     expect(registration?.waiting?.messages).toEqual([]);
     expect(activities).toEqual(["idle", "registering", "idle"]);
@@ -188,15 +189,14 @@ describe("startOfflinePlay", () => {
     );
     await settle();
     expect(registration?.updates).toBe(1);
-    play.setOfferVisible(true);
+    play.flow.setOfferVisible(true);
     expect(registration?.updates).toBe(1);
     page.eventTarget.dispatchEvent(new Event("pointerdown"));
     play.flow.dismissOffer();
-    play.setRegistrationReady(false);
-    play.setRegistrationReady(true);
+    play.registrationReady();
     expect(registration?.updates).toBe(1);
-    play.setOfferVisible(false);
-    play.setOfferVisible(true);
+    play.flow.setOfferVisible(false);
+    play.flow.setOfferVisible(true);
     expect(registration?.updates).toBe(2);
     clock.now = RESUME_CHECK_MS - 1;
     visibilitySource.setVisibility("hidden");

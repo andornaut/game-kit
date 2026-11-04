@@ -22,8 +22,9 @@ export interface UpdateState {
   // A key, touch or click, or play started, since the page loaded.
   interacted: boolean;
   newer: NewerVersion;
-  // The home screen is in front, never mid-game or in a menu over it.
-  onHome: boolean;
+  // The update offer may show: the game's home screen is in front, never mid-game or in a menu
+  // over it.
+  offerVisible: boolean;
   // navigator.onLine: false means there is no network to check for a newer version on.
   online: boolean;
   // The waiting version was told to take over, and the page reloads once it does.
@@ -46,7 +47,7 @@ export function updateAction({
   activationPolicy = "automatic",
   interacted,
   newer,
-  onHome,
+  offerVisible,
   online,
   reloading,
   waitOver,
@@ -58,7 +59,7 @@ export function updateAction({
     if (!interacted && activationPolicy === "automatic") {
       return "switch";
     }
-    return onHome ? "prompt" : "run";
+    return offerVisible ? "prompt" : "run";
   }
   return newer === "pending" && online && !interacted && !waitOver ? "wait" : "run";
 }
@@ -71,7 +72,8 @@ export interface ResumeState {
   // When the last check for a newer version ran, on now()'s clock, if one has.
   lastCheck: number | undefined;
   now: number;
-  onHome: boolean;
+  // The update offer may show, as in UpdateState.
+  offerVisible: boolean;
   online: boolean;
   // The page is in view: the app or tab came back to the front.
   visible: boolean;
@@ -81,8 +83,17 @@ export interface ResumeState {
 // resumes without relaunching, so the launch's check can be long past, and a player resuming on
 // the home screen never arrives there to check. Mid-game or in a menu, the next arrival home
 // checks instead.
-export function resumeCheckDue({ lastCheck, now, onHome, online, visible }: ResumeState): boolean {
+export function resumeCheckDue({
+  lastCheck,
+  now,
+  offerVisible,
+  online,
+  visible,
+}: ResumeState): boolean {
   return (
-    visible && onHome && online && (lastCheck === undefined || now - lastCheck >= RESUME_CHECK_MS)
+    visible &&
+    offerVisible &&
+    online &&
+    (lastCheck === undefined || now - lastCheck >= RESUME_CHECK_MS)
   );
 }

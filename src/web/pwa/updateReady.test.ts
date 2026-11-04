@@ -12,7 +12,7 @@ import {
 const FRESH: UpdateState = {
   interacted: false,
   newer: "none",
-  onHome: false,
+  offerVisible: false,
   online: true,
   reloading: false,
   waitOver: false,
@@ -27,10 +27,14 @@ describe("updateAction", () => {
     ["runs after the wait with a pending version", { newer: "pending", waitOver: true }, "run"],
     ["switches to a waiting version before input", { newer: "waiting" }, "switch"],
     ["runs away from home after input", { interacted: true, newer: "waiting" }, "run"],
-    ["prompts on home after input", { interacted: true, newer: "waiting", onHome: true }, "prompt"],
+    [
+      "prompts on home after input",
+      { interacted: true, newer: "waiting", offerVisible: true },
+      "prompt",
+    ],
     [
       "prompts on home under manual activation",
-      { activationPolicy: "manual", newer: "waiting", onHome: true },
+      { activationPolicy: "manual", newer: "waiting", offerVisible: true },
       "prompt",
     ],
     ["runs away from home when manual", { activationPolicy: "manual", newer: "waiting" }, "run"],
@@ -45,7 +49,7 @@ describe("resumeCheckDue", () => {
   const DUE: ResumeState = {
     lastCheck: 0,
     now: RESUME_CHECK_MS,
-    onHome: true,
+    offerVisible: true,
     online: true,
     visible: true,
   };
@@ -55,7 +59,7 @@ describe("resumeCheckDue", () => {
     ["with no check yet", { lastCheck: undefined, now: 0 }, true],
     ["within a minute of the last check", { now: RESUME_CHECK_MS - 1 }, false],
     ["hidden", { visible: false }, false],
-    ["away from home", { onHome: false }, false],
+    ["away from home", { offerVisible: false }, false],
     ["offline", { online: false }, false],
   ])("checks %s: %s", (_, change, due) => {
     expect(resumeCheckDue({ ...DUE, ...change })).toBe(due);
