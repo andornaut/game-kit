@@ -16,7 +16,7 @@ The compiled GitHub release archive contains JavaScript and declarations. Instal
 
 ## Version and interface policy
 
-The source package is version `0.7.1`. The explicit `exports` map and exported declarations define the public interface. Internal imports are relative and acyclic; there is no root barrel loading an engine for pure callers.
+The source package is version `0.8.0`. The explicit `exports` map and exported declarations define the public interface. Internal imports are relative and acyclic; there is no root barrel loading an engine for pure callers.
 
 Compatible fixes use patch versions; additive public facilities use minor versions. After 1.0, incompatible changes require a major version. Before 1.0, incompatible changes require a minor version and an explicit migration. Update the manifest and root lockfile together. Prove the compiled artifact against exact consumer revisions before publication. Documentation-only changes need no version bump.
 
