@@ -1,27 +1,38 @@
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
-import type { GameObjects, Renderer } from "phaser";
+import { BlendModes, type GameObjects, type Renderer, ScaleModes, TintModes } from "phaser";
 import { expect, it, vi } from "vitest";
 
 import type { UiCapturePorts, UiFrame } from "./uiCommands.ts";
 import { uiProjection } from "./uiProjection.ts";
 import { createUiRecorder } from "./uiSubmitter.ts";
 
-vi.mock("phaser", () => ({
-  Renderer: {
-    WebGL: {
-      RenderNodes: {
-        RenderNode: class {
-          name: string;
-          constructor(name: string) {
-            this.name = name;
-          }
+vi.mock("phaser", async () => {
+  const nodeModule = await import("node:module");
+  const path = await import("node:path");
+  const load = nodeModule.createRequire(import.meta.url);
+  const root = path.dirname(load.resolve("phaser/package.json"));
+  // The real constant modules, so tests compare against Phaser values rather than copies.
+  const constants = (name: string) => load(path.join(root, "src/renderer", `${name}.js`));
+  return {
+    BlendModes: constants("BlendModes"),
+    Renderer: {
+      WebGL: {
+        RenderNodes: {
+          RenderNode: class {
+            name: string;
+            constructor(name: string) {
+              this.name = name;
+            }
+          },
         },
       },
     },
-  },
-}));
+    ScaleModes: constants("ScaleModes"),
+    TintModes: constants("TintModes"),
+  };
+});
 
 type Role = { name: string; run(...args: unknown[]): void; batch(...args: unknown[]): void };
 function object(type: string) {
@@ -255,8 +266,8 @@ async function registered(kind: string) {
   return { owner: registration.handle.owner, recorder, value };
 }
 it.each([
-  [0, 0, 0x80ff0000, [255, 0, 0], 128 / 255, "multiply", "linear"],
-  [1, 1, 0xff102030, [16, 32, 48], 1, "fill", "nearest"],
+  [TintModes.MULTIPLY, ScaleModes.LINEAR, 0x80ff0000, [255, 0, 0], 128 / 255, "multiply", "linear"],
+  [TintModes.FILL, ScaleModes.NEAREST, 0xff102030, [16, 32, 48], 1, "fill", "nearest"],
 ] as const)(
   "maps quad batch args by index with tint mode %s and scale mode %s",
   async (tintMode, scaleMode, colour, tint, alpha, mode, sampling) => {
@@ -366,6 +377,29 @@ it("preflights Graphics opcodes rather than mistaking operand values for gradien
   Object.assign(shape.value, { commandBuffer: [21] });
   expect(result.handle.refresh().status).toBe("unsupported");
   expect(shape.value.customRenderNodes).toEqual({});
+  recorder.destroy();
+});
+it.each([
+  ["Image", { blendMode: BlendModes.NORMAL }, []],
+  ["Image", { blendMode: BlendModes.ADD }, ["blend"]],
+  ["Image", { blendMode: BlendModes.SKIP_CHECK }, ["blend"]],
+  ["Container", { blendMode: BlendModes.SKIP_CHECK }, []],
+  ["Image", { tintMode: TintModes.MULTIPLY }, []],
+  ["Image", { tintMode: TintModes.FILL }, []],
+  ["Image", { tintMode: TintModes.ADD }, ["effect"]],
+] as const)("checks %s %o against Phaser constants", async (kind, patch, reasons) => {
+  const recorder = createUiRecorder(ports());
+  await Promise.resolve();
+  const leaf = object("Image");
+  const root = kind === "Container" ? object("Container") : leaf;
+  if (root !== leaf) {
+    Object.assign(root.value, { list: [leaf.node] });
+  }
+  Object.assign(root.value, patch);
+  const result = recorder.register([root.node]);
+  expect(result.status).toBe(reasons.length ? "unsupported" : "ready");
+  const issues = result.status === "unsupported" ? result.issues : [];
+  expect(issues.map((issue) => issue.reason)).toEqual(reasons);
   recorder.destroy();
 });
 it("never overwrites a peer's replacement role during refresh", async () => {

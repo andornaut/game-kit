@@ -1,4 +1,12 @@
-import { type GameObjects, Renderer, type Scene, type Textures } from "phaser";
+import {
+  BlendModes,
+  type GameObjects,
+  Renderer,
+  ScaleModes,
+  type Scene,
+  type Textures,
+  TintModes,
+} from "phaser";
 
 import { uiGlyphPen } from "../../text/phaser/uiGlyphPen.ts";
 import type {
@@ -122,6 +130,9 @@ const operands: readonly (number | undefined)[] = [
   2,
   1,
 ];
+function tintModeSupported(value: number): boolean {
+  return value === TintModes.MULTIPLY || value === TintModes.FILL;
+}
 function uniform(values: readonly unknown[]): boolean {
   return values.every((value) => value === values[0]);
 }
@@ -241,10 +252,10 @@ export function createUiRecorder(ports: UiCapturePorts): {
     return a;
   };
   const mode = (group: Group, value: number): "multiply" | "fill" => {
-    if (value !== 0 && value !== 1) {
+    if (!tintModeSupported(value)) {
       fail(group, "effect");
     }
-    return value === 1 ? "fill" : "multiply";
+    return value === TintModes.FILL ? "fill" : "multiply";
   };
   const capture = (group: Group, object: ObjectView, method: "run" | "batch", args: unknown[]) => {
     const context = args[0] as Context;
@@ -347,7 +358,7 @@ export function createUiRecorder(ports: UiCapturePorts): {
           { x: args[6] as number, y: args[7] as number },
         ],
         raster: source,
-        sampling: sourceFrame.source.scaleMode === 0 ? "linear" : "nearest",
+        sampling: sourceFrame.source.scaleMode === ScaleModes.LINEAR ? "linear" : "nearest",
         tint: packedRgb(value),
         tintMode: mode(group, args[14] as number),
       });
@@ -396,8 +407,8 @@ export function createUiRecorder(ports: UiCapturePorts): {
       }
       if (
         object.blendMode !== undefined &&
-        object.blendMode !== 0 &&
-        !(object.type === "Container" && object.blendMode === -1)
+        object.blendMode !== BlendModes.NORMAL &&
+        !(object.type === "Container" && object.blendMode === BlendModes.SKIP_CHECK)
       ) {
         issue("blend");
       }
@@ -414,7 +425,7 @@ export function createUiRecorder(ports: UiCapturePorts): {
           object.alphaBottomLeft,
           object.alphaBottomRight,
         ]) ||
-        (object.tintMode !== undefined && object.tintMode !== 0 && object.tintMode !== 1) ||
+        (object.tintMode !== undefined && !tintModeSupported(object.tintMode)) ||
         object.lighting ||
         object.dropShadowX ||
         object.dropShadowY
@@ -442,7 +453,7 @@ export function createUiRecorder(ports: UiCapturePorts): {
             if (
               colour &&
               (!uniform([colour.tintTL, colour.tintTR, colour.tintBL, colour.tintBR]) ||
-                (colour.tintEffect !== 0 && colour.tintEffect !== 1))
+                !tintModeSupported(colour.tintEffect))
             ) {
               issue("effect");
             }
