@@ -3,7 +3,19 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-const destination = resolve(process.argv[2]);
+// Source exports are module paths or types-only entries; built exports may add an import.
+interface Manifest {
+  devDependencies?: unknown;
+  exports: Record<string, string | { import?: string; types: string }>;
+  files: string[];
+  scripts?: unknown;
+}
+
+const [output] = process.argv.slice(2);
+if (output === undefined) {
+  throw new Error("Usage: release-build.ts <destination>");
+}
+const destination = resolve(output);
 execFileSync(
   process.execPath,
   [
@@ -15,7 +27,7 @@ execFileSync(
   ],
   { stdio: "inherit" },
 );
-const manifest = JSON.parse(readFileSync("package.json", "utf8"));
+const manifest = JSON.parse(readFileSync("package.json", "utf8")) as Manifest;
 for (const [name, entry] of Object.entries(manifest.exports)) {
   if (name === "./package.json") {
     continue;

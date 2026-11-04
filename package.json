@@ -1,6 +1,6 @@
 {
   "name": "@andornaut/game-kit",
-  "description": "Game-independent TypeScript mechanisms and Phaser adapters.",
+  "description": "Game-independent TypeScript mechanisms, Phaser adapters and website infrastructure.",
   "license": "MIT",
   "type": "module",
   "engines": {

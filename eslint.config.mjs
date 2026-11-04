@@ -86,7 +86,7 @@ export default defineConfig(
   },
   // Config files: they produce what ships rather than being it.
   {
-    files: ["*.ts", "*.js", "*.mjs", "scripts/**/*.ts", "scripts/**/*.mjs"],
+    files: ["*.ts", "*.js", "*.mjs", "scripts/**/*.ts"],
     plugins,
     rules: toolingRules,
   },

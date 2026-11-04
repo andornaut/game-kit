@@ -98,7 +98,11 @@ export function sourceFingerprint(root: string): string {
     }
     return digest.digest("hex");
   } catch (error) {
-    throw error instanceof ScriptError ? error : new ScriptError("Cannot read source fingerprint");
+    if (error instanceof ScriptError) {
+      throw error;
+    }
+    const cause = error instanceof Error ? error.message : String(error);
+    throw new ScriptError(`Cannot read source fingerprint of ${root}: ${cause}`);
   }
 }
 

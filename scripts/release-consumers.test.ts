@@ -67,8 +67,8 @@ function fixture(name: string) {
       env: {
         ...process.env,
         CAPTURE: capture,
-        GAME_KIT_DOG_CACHE: join(root, ".claude/cache"),
-        GAME_KIT_DUCK_CACHE: join(root, ".claude/cache"),
+        GAME_KIT_ARCHIE_CACHE: join(root, ".claude/cache"),
+        GAME_KIT_CHIBI_CACHE: join(root, ".claude/cache"),
         // The fake Docker runs nothing heavy, so the result must not depend on host load.
         GAME_KIT_LOAD: "0",
         PATH: `${root}/bin:${process.env.PATH}`,
@@ -110,8 +110,8 @@ it("validates argument count and checksum shape", () => {
 });
 
 it.each([
-  ["dog", "src/home/modalLayout.test.ts", /Archie snapshot has no caller test/],
-  ["duck", "src/rules/behaviourTraversalGoals.test.ts", /Chibi snapshot has no caller test/],
+  ["archie", "src/home/modalLayout.test.ts", /Archie snapshot has no caller test/],
+  ["chibi", "src/rules/behaviourTraversalGoals.test.ts", /Chibi snapshot has no caller test/],
 ] as const)("selects the %s caller test only when it exists", (game, path, missing) => {
   const root = mkdtempSync(join(tmpdir(), "kit-consumer-test-selection-"));
   expect(() => callerTest(game, root)).toThrow(missing);

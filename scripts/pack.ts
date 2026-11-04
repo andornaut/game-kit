@@ -58,7 +58,7 @@ export function pack(env: NodeJS.ProcessEnv, root: string, args: string[]): void
       `cp -a ${NPM_CACHE_MOUNT}/. /tmp/npm-cache`,
       "cd /tmp/package",
       "npm ci --offline --ignore-scripts --no-audit --no-fund",
-      "node scripts/release-build.mjs release",
+      "node scripts/release-build.ts release",
       `printf '%s\\n' "$SOURCE_COMMIT" > release/SOURCE_COMMIT`,
       "cd release",
       `npm pack --offline --ignore-scripts --json --pack-destination ${OUTPUT} > ${OUTPUT}/pack.json`,

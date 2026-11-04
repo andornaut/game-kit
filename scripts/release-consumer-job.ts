@@ -20,12 +20,12 @@ const ARTIFACT = "/assets/release.tgz";
 const EVIDENCE = "/tmp/scratch";
 /** Disposable consumer snapshots, caches and the reference payload. */
 const WORK = "/tmp/work";
-const GAMES = ["dog", "duck"] as const;
+const GAMES = ["archie", "chibi"] as const;
 type Game = (typeof GAMES)[number];
 /** Each game's focused test of its kit wiring, run against the installed artifact. */
 const CALLER_TESTS: Record<Game, { name: string; test: string }> = {
-  dog: { name: "Archie", test: "src/home/modalLayout.test.ts" },
-  duck: { name: "Chibi", test: "src/rules/behaviourTraversalGoals.test.ts" },
+  archie: { name: "Archie", test: "src/home/modalLayout.test.ts" },
+  chibi: { name: "Chibi", test: "src/rules/behaviourTraversalGoals.test.ts" },
 };
 
 /** Archive members must stay under package/ without parent segments. */
@@ -242,11 +242,11 @@ export function releaseConsumerJob(args: string[]): void {
   assert.equal(process.version, expectedNode);
   if (args.length !== 5) {
     throw new ScriptError(
-      "Usage: release-consumer-job.ts <sha256> <source> <version> <dog> <duck>",
+      "Usage: release-consumer-job.ts <sha256> <source> <version> <archie> <chibi>",
       2,
     );
   }
-  const [hash, sourceRevision, version, dogRevision, duckRevision] = args as [
+  const [hash, sourceRevision, version, archieRevision, chibiRevision] = args as [
     string,
     string,
     string,
@@ -269,7 +269,7 @@ export function releaseConsumerJob(args: string[]): void {
   execFileSync("tar", ["-xzf", ARTIFACT, "-C", reference, "--no-same-owner"]);
   let failed = false;
   for (const game of GAMES) {
-    const revision = game === "dog" ? dogRevision : duckRevision;
+    const revision = game === "archie" ? archieRevision : chibiRevision;
     if (proveGame({ revision, sourceRevision, version }, game)) {
       writeFileSync(join(EVIDENCE, `${game}.RESULT`), "PASS\n");
       console.log(`${game} release proof passed at ${revision} with kit ${sourceRevision}`);

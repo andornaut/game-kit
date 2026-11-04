@@ -1,6 +1,14 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,7 +53,9 @@ it.each([".env", ".env.fixture", ".ssh/key", ".private/key", "git-failure"])(
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      name === "git-failure" ? "Cannot read source fingerprint" : "Refusing credential path",
+      name === "git-failure"
+        ? `Cannot read source fingerprint of ${realpathSync(root)}: Command failed: git`
+        : "Refusing credential path",
     );
     expect(result.stderr).not.toContain("container started");
   },

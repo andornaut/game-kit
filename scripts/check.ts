@@ -36,7 +36,7 @@ export function check(env: NodeJS.ProcessEnv, root: string): void {
     ...containerOptions(root),
     ...["--mount", `type=volume,source=${cache},target=${NPM_CACHE_MOUNT}`],
     ...["-e", `npm_config_cache=${NPM_CACHE_MOUNT}`],
-    ...["-e", `WORKERS_CI_COMMIT_SHA=${git(root, "rev-parse", "HEAD")}`],
+    ...["-e", `SOURCE_COMMIT=${git(root, "rev-parse", "HEAD")}`],
     ...["-e", `GAME_KIT_ARTIFACT_EVIDENCE=${EVIDENCE}`],
     ...readOnlyMount(root, "/app"),
     ...[
@@ -62,7 +62,7 @@ export function check(env: NodeJS.ProcessEnv, root: string): void {
       "npm run check",
       "npm run lint",
       "npm test -- --maxWorkers=4",
-      "node scripts/release-artifact.mjs",
+      "node scripts/release-artifact.ts",
     ].join("\n"),
   ];
   const runGate = () => runContainer({ copyOut: { from: EVIDENCE, to: evidence } }, gate);

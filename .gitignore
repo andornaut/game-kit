@@ -1,6 +1,6 @@
 node_modules/
 
-# Agent worktrees, local only.
+# Local evidence and release output.
 .claude/
 
 # AI agent instructions, local only.
