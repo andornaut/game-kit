@@ -347,6 +347,70 @@ it.each([
   expect(value.customRenderNodes).toEqual({});
   recorder.destroy();
 });
+// Each draw is four characters: source ("a" and "b" are text objects drawing "A" and "B", "q"
+// is an Image quad), tint ("w" white, "r" red, "h" half-alpha white), viewport x and camera.
+const tints: Record<string, number> = { h: 0x80ffffff, r: 0xffff0000, w: 0xffffffff };
+it.each([
+  ["one run", "aw20 aw20 aw20", "clip 2/0|AAA"],
+  ["a tint change", "aw20 ar20 ar20", "clip 2/0|A|AA"],
+  ["an alpha change", "aw20 ah20", "clip 2/0|A|A"],
+  ["another object", "aw20 bw20 aw20", "clip 2/0|A|B|A"],
+  ["an interleaved quad", "aw20 qw20 aw20", "clip 2/0|A|quad|A"],
+  ["a viewport change", "aw20 aw40 qw40", "clip 2/0|A|clip 4/0|A|quad"],
+  ["a camera change", "aw20 aw21 aw20", "clip 2/0|A|clip 2/1|A|clip 2/0|A"],
+])("batches glyphs and clips across %s", async (_, draws, expected) => {
+  const viewport = { height: 10, width: 12, x: 2, y: 3 };
+  const recorder = createUiRecorder({ ...ports(), viewport: () => viewport });
+  await Promise.resolve();
+  const glyphs = { a: { ...metrics }, b: { ...metrics } };
+  const texts = { a: object("BitmapText"), b: object("BitmapText") };
+  for (const text of Object.values(texts)) {
+    Object.assign(text.value, { fontData: { chars: { 65: glyphs.a, 66: glyphs.b }, size: 8 } });
+  }
+  const image = object("Image");
+  expect(recorder.register([texts.a.node, image.node, texts.b.node]).status).toBe("ready");
+  const cameras = [{ alpha: 1 }, { alpha: 1 }];
+  recorder.begin(1, projection);
+  for (const [source, tint, x, camera] of draws.split(" ")) {
+    viewport.x = Number(x);
+    const drawing = { camera: cameras[Number(camera)], useCanvas: true };
+    const colour = tints[tint!]!;
+    if (source === "q") {
+      image.value.customRenderNodes.BatchHandler!.batch(
+        drawing,
+        {},
+        ...[0, 0, 0, 8, 8, 0, 8, 8, 0, 0, 1, 1, 0],
+        ...[colour, colour, colour, colour],
+        {},
+      );
+    } else {
+      const key = source as "a" | "b";
+      texts[key].value.customRenderNodes.Submitter!.run(
+        drawing,
+        texts[key].value,
+        undefined,
+        0,
+        { uvSource: glyphs[key] },
+        { quad: new Float32Array([8, 24, 8, 32, 12, 32, 12, 24]) },
+        {
+          tintBottomLeft: colour,
+          tintBottomRight: colour,
+          tintEffect: 0,
+          tintTopLeft: colour,
+          tintTopRight: colour,
+        },
+      );
+    }
+  }
+  const summary = recorder.finish().commands.map((command) => {
+    if (command.kind === "viewport-clip") {
+      return `clip ${command.rect.x}/${cameras.indexOf(command.camera as { alpha: number })}`;
+    }
+    return command.kind === "text" ? command.glyphs.map((glyph) => glyph.text).join("") : "quad";
+  });
+  expect(summary.join("|")).toBe(expected);
+  recorder.destroy();
+});
 it("preflights Graphics opcodes rather than mistaking operand values for gradients", async () => {
   const recorder = createUiRecorder(ports());
   await Promise.resolve();

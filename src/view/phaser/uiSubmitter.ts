@@ -15,7 +15,9 @@ import type {
   Quad,
   Rgb,
   UiCapturePorts,
+  UiFontFace,
   UiFrame,
+  UiGlyphPen,
   UiIssue,
   UiPaintCommand,
   UiProjection,
@@ -23,6 +25,7 @@ import type {
   UiRefreshResult,
   UiRegistration,
   UiRootHandle,
+  UiTextCommand,
   Vertex,
 } from "./uiCommands.ts";
 
@@ -130,6 +133,9 @@ const operands: readonly (number | undefined)[] = [
   2,
   1,
 ];
+function sameFace(a: UiFontFace, b: UiFontFace): boolean {
+  return a.family === b.family && a.role === b.role && a.style === b.style && a.weight === b.weight;
+}
 function tintModeSupported(value: number): boolean {
   return value === TintModes.MULTIPLY || value === TintModes.FILL;
 }
@@ -189,6 +195,8 @@ export function createUiRecorder(ports: UiCapturePorts): {
   let fontState: "pending" | "ready" | "failed" = "pending";
   let disposed = false;
   let frame: { id: number; projection: UiProjection; commands: UiPaintCommand[] } | undefined;
+  let clip: Extract<UiPaintCommand, { kind: "viewport-clip" }> | undefined;
+  let run: { object: ObjectView; command: UiTextCommand; glyphs: UiGlyphPen[] } | undefined;
   void ports.fontsReady.then(
     () => {
       if (!disposed) {
@@ -229,7 +237,9 @@ export function createUiRecorder(ports: UiCapturePorts): {
     restore(group);
     throw new Error(`UI group capture unavailable: ${reason}`);
   };
-  const append = (group: Group, context: Context, command: UiPaintCommand) => {
+  // Emits a viewport clip only when the camera or its rect differs from the last one emitted.
+  // Clips survive group restoration, so the last emitted clip stays current.
+  const clipTo = (group: Group, context: Context): boolean => {
     if (!frame || disposed || group.dead) {
       fail(group, "renderer");
     }
@@ -241,8 +251,51 @@ export function createUiRecorder(ports: UiCapturePorts): {
     if (!viewport) {
       return fail(group, "viewport");
     }
-    frame!.commands.push({ camera, kind: "viewport-clip", rect: { ...viewport } }, command);
-    return undefined;
+    if (
+      clip &&
+      clip.camera === camera &&
+      clip.rect.x === viewport.x &&
+      clip.rect.y === viewport.y &&
+      clip.rect.width === viewport.width &&
+      clip.rect.height === viewport.height
+    ) {
+      return false;
+    }
+    clip = { camera, kind: "viewport-clip", rect: { ...viewport } };
+    frame!.commands.push(clip);
+    return true;
+  };
+  const append = (group: Group, context: Context, command: UiPaintCommand) => {
+    clipTo(group, context);
+    frame!.commands.push(command);
+  };
+  // Consecutive glyphs of one object with one style, tint and alpha share a text command.
+  const appendGlyph = (
+    group: Group,
+    context: Context,
+    object: ObjectView,
+    command: Omit<UiTextCommand, "glyphs">,
+    pen: UiGlyphPen,
+  ) => {
+    const clipped = clipTo(group, context);
+    const commands = frame!.commands;
+    const last = run?.object === object ? run.command : undefined;
+    if (
+      !clipped &&
+      last !== undefined &&
+      last === commands[commands.length - 1] &&
+      last.alpha === command.alpha &&
+      last.size === command.size &&
+      last.tintMode === command.tintMode &&
+      last.tint.every((component, i) => component === command.tint[i]) &&
+      sameFace(last.face, command.face)
+    ) {
+      run!.glyphs.push(pen);
+      return;
+    }
+    const glyphs = [pen];
+    run = { command: { ...command, glyphs }, glyphs, object };
+    commands.push(run.command);
   };
   // Returns the packed colour shared by all four corners.
   const tint = (group: Group, a: number, b: number, c: number, d: number): number => {
@@ -287,16 +340,21 @@ export function createUiRecorder(ports: UiCapturePorts): {
         colours.tintBottomLeft!,
         colours.tintBottomRight!,
       );
-      append(group, context, {
-        alpha: packedAlpha(value),
-        face: { ...style!.face },
-        glyphs: [pen],
-        kind: "text",
-        owner: group.owner,
-        size: style!.size,
-        tint: packedRgb(value),
-        tintMode: mode(group, colours.tintEffect!),
-      });
+      appendGlyph(
+        group,
+        context,
+        object,
+        {
+          alpha: packedAlpha(value),
+          face: { ...style!.face },
+          kind: "text",
+          owner: group.owner,
+          size: style!.size,
+          tint: packedRgb(value),
+          tintMode: mode(group, colours.tintEffect!),
+        },
+        pen,
+      );
     } else if (object.type === "Rectangle" || object.type === "Graphics") {
       if (method !== "batch" || args[4]) {
         fail(group, "effect");
@@ -508,6 +566,8 @@ export function createUiRecorder(ports: UiCapturePorts): {
         throw new Error("UI recorder is disposed or a frame is already open");
       }
       frame = { commands: [], id: frameId, projection };
+      clip = undefined;
+      run = undefined;
     },
     destroy() {
       disposed = true;
@@ -517,6 +577,8 @@ export function createUiRecorder(ports: UiCapturePorts): {
       }
       groups.clear();
       frame = undefined;
+      clip = undefined;
+      run = undefined;
     },
     finish() {
       if (!frame || disposed) {
@@ -524,6 +586,8 @@ export function createUiRecorder(ports: UiCapturePorts): {
       }
       const result = frame;
       frame = undefined;
+      clip = undefined;
+      run = undefined;
       return result;
     },
     register(roots) {

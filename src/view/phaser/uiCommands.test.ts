@@ -570,3 +570,47 @@ describe("tinted raster cache", () => {
     expect(ports.releaseSurface.mock.calls).toEqual([[scratches[0]!.ctx]]);
   });
 });
+it("paints a batched glyph run like one command per glyph behind repeated clips", () => {
+  const clip: UiPaintCommand = {
+    camera: {},
+    kind: "viewport-clip",
+    rect: { height: 10, width: 12, x: 2, y: 3 },
+  };
+  const moved = points.map(({ x, y }) => ({ x: x + 4, y })) as unknown as Quad;
+  const second = uiGlyphPen({ baseline: 3 }, { glyph, quad: moved, text: "B" })!;
+  const single = (pen: typeof second): UiPaintCommand => ({ ...text(), glyphs: [pen] });
+  const paint = (commands: UiPaintCommand[]) => {
+    const target = surface(80, 40);
+    let transform: number[] = [];
+    const log: unknown[] = [];
+    Object.assign(target.context, {
+      fillText: (value: string) => {
+        const { fillStyle, font, globalAlpha } = target.ctx;
+        log.push([value, transform, font, fillStyle, globalAlpha]);
+      },
+      setTransform: (...args: number[]) => {
+        transform = args;
+      },
+    });
+    presentUi(
+      {
+        context: target.ctx,
+        createSurface: vi.fn(),
+        releaseSurface: vi.fn(),
+        resizeBacking: vi.fn(),
+      },
+      { commands, id: 1, projection },
+    );
+    return { clips: target.context.rect.mock.calls, log };
+  };
+  const first = text().glyphs[0]!;
+  const batched = paint([clip, { ...text(), glyphs: [first, second] }]);
+  const unbatched = paint([clip, single(first), clip, single(second)]);
+  expect(batched.log).toEqual(unbatched.log);
+  expect(batched.log).toHaveLength(2);
+  expect(batched.clips).toEqual([[2, 3, 12, 10]]);
+  expect(unbatched.clips).toEqual([
+    [2, 3, 12, 10],
+    [2, 3, 12, 10],
+  ]);
+});
