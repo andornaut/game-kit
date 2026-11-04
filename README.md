@@ -36,39 +36,6 @@ Compatible fixes are patch versions and additions are minor versions. Incompatib
 
 `achievements` and `achievements/preview` are new pure modules; nothing existing changes. The earned store reports `saveStore` load and write statuses, and `progress` is never full while a badge is not earned. See [Achievements](#achievements).
 
-## Migration to 0.10.0
-
-These public paths are removed. Their modules remain internal to the kit, so behaviour is unchanged:
-
-- `input/tapGuard` (`guardPassed`): use `input/phaser/guardSceneInput`, which applies the guard.
-- `text/phaser/uiGlyphPen` (`uiGlyphPen`): `view/phaser/uiSubmitter` derives glyph pens itself.
-
-## Migration to 0.9.0
-
-`web/*` replaces the `src/platform/` code each game copied from 0.3.x, with game-specific values such as page rules, header policies and page checks as parameters. Adoption is per module: import the `web/*` path and delete the copy. Differences from the copies:
-
-- `web/headers/securityHeaders` keeps the copied interface, except that `cspHash(text)` is now `sha256Source(base64Digest)` and `unhashedAssets(context, fileNames)` takes the content-hashed name pattern (`VITE_HASHED_NAME` for Vite's default) as its second argument. Hashing moved into the Vite plugin.
-- `web/headers/vite/securityHeadersPlugin` takes the same options plus an optional `hashedName`, and also builds without a public directory.
-- `web/pwa/dom/visibility` defines `VisibilitySource`, takes `watchVisibility(eventTarget, visibilitySource, onChange)` and returns a function that removes its listeners.
-- `web/save/storage` holds the pure `StorageLike`, `browserStorage` and `lazyStorage`, and `web/save/dom/localSaveStorage` holds `localSaveStorage()`. `StorageLike` is a structural interface instead of `Pick<Storage, ...>`. Neither re-exports `SaveStorage`: import it from `save/contracts` or `save/storage`, which also exports `memoryStorage`.
-- `web/save/dom/pageSessionStore` keeps `sessionRead`, `sessionWrite` and `sessionRemove` over the page's `sessionStorage`. Their policy is `web/save/sessionStore.createSessionStore(lookup)`, which accepts any `SessionStorageLike`.
-- `web/view/frameTurn` holds the pure turn policy: `GameOrientation`, `FRAME_TURN_ATTRIBUTE`, `DEFAULT_TURN`, `turnedFrameQuery` and `frameTurnFor`. `web/view/dom/watchFrameTurn` holds `FrameTurnHost`, `FrameTurnWatch` and `OrientationLockable`, and takes the game orientation first: `watchFrameTurn(gameOrientation, host)` and `lockGameOrientation(gameOrientation, screen)`. The stylesheets are `web/view/frameTurnLandscapeGame.css` and `web/view/frameTurnPortraitGame.css`. `FrameTurn` and `pageToGame` remain in `view/pagePoint`.
-- `web/view/phaser/followFrameTurn` takes `followFrameTurn(watch, gameSize, parent, game)`, the game last. It owns the page viewport listeners and the `--page-height` property the stylesheets read.
-- `web/build/buildLabel` exports only `buildLabel(version, commit)`; the ambient `BUILD_LABEL` constant is gone. Kit modules take build values as parameters. `web/build/vite/buildInfo` is a types-only export declaring `__APP_VERSION__` and `__COMMIT__`, the constants `gameViteConfig` defines; a game that reads them references it with `/// <reference types="@andornaut/game-kit/web/build/vite/buildInfo" />`.
-- `build/buildVersion` splits by environment: pure `web/build/buildVersion` keeps `shortCommit`, `UNKNOWN_COMMIT` and `CI_COMMIT_VARIABLE`, and `gitHead` moves to `web/build/vite/gitHead`.
-- `build/phaserBuild` splits the same way: `phaserSourceDir` moves to `web/build/vite/phaserSource`, and the rest is pure `web/build/phaserBuild`. `phaserEntrySource` joins module paths with `/`. `contentHash`, `phaserUses`, `phaserBuildPlugin` and `gameConfig` move to `web/build/vite/*` unchanged.
-- `web/crash/dom/crashScreen` takes the page explicitly: `installCrashScreen(page, options)`, where `page` is the game window (`CrashPage`). Import `web/crash/dom/crash.css` from the game, since a script cannot add styles under a CSP without `'unsafe-inline'`. `web/crash/crashModel` is unchanged.
-- `web/input/dom/pagePresses` and `web/progress/dom/progressBar` are unchanged apart from their paths.
-- `web/pwa/*` keeps the copied interfaces except as listed here. Modules are placed by environment: `appWindow`, `cachePolicy`, `hashedIcons`, `installState`, `precacheList`, `serviceWorkerUrl` and `storagePersistence` are pure; `audioUnlock`, `exitApp`, `installButton`, `installFlow`, `offlinePlay`, `serviceWorker` and `wakeLock` are under `dom/`, and `hashedIconsPlugin` and `precachePlugin` under `vite/`.
-- `backNavigation` and `updateReady` are split. `web/pwa/backNavigation` holds `backGuardState`, `BACK_GUARD_GESTURES`, `backCloseWatcher`, `INSTALLED_APP_DISPLAY_QUERY`, `isFirefoxAndroidApp` and the newly exported `isBackGuardState` and `ESCAPE_KEY`; `web/pwa/dom/backNavigation` holds the history, close-watcher and timer types, `browserCloseWatcher` and `guardBackNavigation`. `web/pwa/updateReady` holds `updateAction`, `resumeCheckDue`, `RESUME_CHECK_MS`, `SKIP_WAITING_MESSAGE` and the state and option types; `web/pwa/dom/updateReady` holds the service worker types, `newerVersionOf`, `activateWaitingWorker`, `createUpdateFlow` and `registerWhenDue`.
-- `appCannotClose(createCloseWatcher, host)` accepts any factory, `(() => unknown) | undefined`, since it reads only whether there is one.
-- `createScreenWakeLock(eventTarget, visibilitySource, wakeLock)` takes the page window first and follows `watchVisibility`, so `pagehide` also releases the lock. `VisibilitySource` comes from `web/pwa/dom/visibility`.
-
-## Earlier migrations
-
-- 0.8.0: `UiFrame` text commands group consecutive glyphs in `glyphs`, and a `viewport-clip` command applies until the next one; `snapshotRemap` reads WebGL pixels directly; `registerPixelFont` throws on an invalid or taken texture key; `modalBackdrop` and `snapshotRemap` import Phaser at runtime.
-- 0.4.0: website, build, PWA, page-input and atlas tooling modules left the kit for the games; 0.9.0 returns the website modules under `web/*`.
-
 ## Modules and environments
 
 Paths are relative to `src/`, and tests sit beside their modules. Every module is a public path except `input/tapGuard` and `text/phaser/uiGlyphPen`, which are internal.
