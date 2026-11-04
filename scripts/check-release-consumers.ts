@@ -90,7 +90,7 @@ export function checkReleaseConsumers(env: NodeJS.ProcessEnv, kit: string, args:
     const log = openSync(join(output, "container.log"), "w");
     try {
       runContainer({ copyOut: { from: SCRATCH, to: output }, output: log }, [
-        ...containerOptions(kit, dog, duck),
+        ...containerOptions(kit, dog, duck, dogCache, duckCache),
         ...["--network", "none"],
         ...readOnlyMount(kit, "/harness"),
         ...readOnlyMount(artifact, "/assets/release.tgz"),
