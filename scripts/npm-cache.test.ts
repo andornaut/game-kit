@@ -31,6 +31,8 @@ function run(...args: string[]) {
     env: {
       ...process.env,
       CAPTURE: capture,
+      // The fake Docker runs nothing heavy, so the result must not depend on host load.
+      GAME_KIT_LOAD: "0",
       GAME_KIT_NPM_CACHE: "kit-cache",
       PATH: `${root}/bin:${process.env.PATH}`,
     },
