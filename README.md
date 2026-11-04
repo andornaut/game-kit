@@ -20,6 +20,13 @@ The source package is version `0.9.0`. The explicit `exports` map and exported d
 
 Compatible fixes use patch versions; additive public facilities use minor versions. After 1.0, incompatible changes require a major version. Before 1.0, incompatible changes require a minor version and an explicit migration. Update the manifest and root lockfile together. Prove the compiled artifact against exact consumer revisions before publication. Documentation-only changes need no version bump.
 
+## Migration to 0.10.0
+
+These public paths are removed. Their modules remain internal to the kit, so behaviour is unchanged:
+
+- `input/tapGuard` (`guardPassed`): use `input/phaser/guardSceneInput`, which applies the guard.
+- `text/phaser/uiGlyphPen` (`uiGlyphPen`): `view/phaser/uiSubmitter` derives glyph pens itself.
+
 ## Addition in 0.9.0
 
 `web/*` replaces the `src/platform/` code each game copied from 0.3.x. Game-specific values, such as page rules, header policies and page checks, are parameters. Adopting it is optional per module: replace a copied module's imports with its `web/*` path and delete the copy.
@@ -125,7 +132,7 @@ Each compilation rejects the other environments' ambient globals, and ESLint rej
 
 `view/phaser/uiProjection` maps the actual canvas CSS size and explicit device pixel ratio to an integer backing size. `view/phaser/uiSubmitter.createUiRecorder` atomically registers sibling roots through public Phaser render roles, retaining game-owned input, hierarchy and clocks. Registration waits for the caller's exact font readiness promise and rejects unsupported groups without partial routing. Refresh and disposal restore only still-owned roles.
 
-`view/phaser/uiCommands.presentUi` replays ordered text runs, raster quads and uniform triangles with camera viewport clips. Tinted quads from an `ImageBitmap` or a loaded `HTMLImageElement` are cached by release port, image, source rectangle, tint and tint mode, up to 256 entries and 4 Mi retained pixels; canvas sources are tinted on every draw. Evicted surfaces return through `releaseSurface`, and `releaseUiTintCache(ports)` releases the remaining ones at teardown. `text/phaser/uiGlyphPen` derives source-font pen and baseline transforms from public glyph data and submitted quads, preserving signed bearings without measuring or reflowing text. Callers supply font faces, source metrics, image sources, surfaces and lifecycle policy.
+`view/phaser/uiCommands.presentUi` replays ordered text runs, raster quads and uniform triangles with camera viewport clips. Tinted quads from an `ImageBitmap` or a loaded `HTMLImageElement` are cached by release port, image, source rectangle, tint and tint mode, up to 256 entries and 4 Mi retained pixels; canvas sources are tinted on every draw. Evicted surfaces return through `releaseSurface`, and `releaseUiTintCache(ports)` releases the remaining ones at teardown. `uiSubmitter` derives source-font pen and baseline transforms from public glyph data and submitted quads, preserving signed bearings without measuring or reflowing text. Callers supply font faces, source metrics, image sources, surfaces and lifecycle policy.
 
 `view/phaser/uiComposite` checks same-frame default-framebuffer readback, including GL errors, flips rows and normalizes declared alpha. Compositing excludes requested owners before UI replay and applies the supplied remap once. Parents own the inert sibling canvas, existing render-event wiring, modal plane placement and combined visual verification. Masks, effects, gradients and non-normal blends are unsupported.
 
