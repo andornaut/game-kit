@@ -42,6 +42,8 @@ export function check(env: NodeJS.ProcessEnv, root: string): void {
       "-w",
       "/app",
     ],
+    // Ignored local state, including private evidence directories, stays outside the gate.
+    ...["--tmpfs", "/app/.claude:ro,mode=755"],
   ];
   let failure: unknown;
   try {
