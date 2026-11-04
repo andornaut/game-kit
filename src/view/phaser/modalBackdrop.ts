@@ -1,4 +1,4 @@
-import type { GameObjects, Scene } from "phaser";
+import { type GameObjects, type Scene, Scenes } from "phaser";
 
 import type { Rect } from "../../rect.ts";
 import { snapshotRemapped } from "./snapshotRemap.ts";
@@ -35,11 +35,11 @@ export function mountModalBackdrop(
       return;
     }
     disposed = true;
-    scene.events.off("shutdown", destroy);
+    scene.events.off(Scenes.Events.SHUTDOWN, destroy);
     object?.destroy();
     removeTexture();
   };
-  scene.events.once("shutdown", destroy);
+  scene.events.once(Scenes.Events.SHUTDOWN, destroy);
   const ready = snapshotRemapped(remap, scene, area, key).then(
     (captured) => {
       if (disposed) {

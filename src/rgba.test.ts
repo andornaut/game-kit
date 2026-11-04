@@ -30,17 +30,33 @@ describe("rampDown", () => {
   });
 });
 
+// Flat RGBA bytes, each pixel's alpha its position plus one, so a test sees alpha kept.
+function rgba(colours: readonly number[]): number[] {
+  return colours.flatMap((colour, index) => [
+    (colour >> 16) & 0xff,
+    (colour >> 8) & 0xff,
+    colour & 0xff,
+    index + 1,
+  ]);
+}
+
+// Each palette colour one step down its ramp; any other colour unchanged.
+const darken = (colour: number) => ONE_STEP.get(colour) ?? colour;
+
 describe("remapRgb", () => {
-  it("remaps each pixel's colour, keeps its alpha, and asks once per colour", () => {
-    const asked: number[] = [];
-    const pixels = new Uint8ClampedArray([0xff, 0xff, 0xff, 0x80, 0xff, 0xff, 0xff, 0xff]);
+  it.each<[string, number[], number[], number[]]>([
+    ["one colour", [WHITE, WHITE], [CREAM, CREAM], [WHITE]],
+    ["a run of one colour", [GREY, GREY, GREY], [INK, INK, INK], [GREY]],
+    ["alternation", [WHITE, CREAM, WHITE, CREAM], [CREAM, GREY, CREAM, GREY], [WHITE, CREAM]],
+    ["a colour the remap keeps", [INK, WHITE, INK], [INK, CREAM, INK], [INK, WHITE]],
+    ["no pixels", [], [], []],
+  ])("remaps %s, keeping alpha and asking once per colour", (_, input, expected, asked) => {
+    const seen: number[] = [];
+    const pixels = new Uint8ClampedArray(rgba(input));
     remapRgb((colour) => {
-      asked.push(colour);
-      return CREAM;
+      seen.push(colour);
+      return darken(colour);
     }, pixels);
-    expect({ asked, pixels: [...pixels] }).toEqual({
-      asked: [WHITE],
-      pixels: [0xf0, 0xe0, 0xc0, 0x80, 0xf0, 0xe0, 0xc0, 0xff],
-    });
+    expect({ asked: seen, pixels: [...pixels] }).toEqual({ asked, pixels: rgba(expected) });
   });
 });

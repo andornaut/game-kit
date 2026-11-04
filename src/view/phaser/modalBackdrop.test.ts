@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { mountModalBackdrop } from "./modalBackdrop.ts";
 import { snapshotRemapped } from "./snapshotRemap.ts";
 
+vi.mock("phaser", () => ({ Scenes: { Events: { SHUTDOWN: "shutdown" } } }));
 vi.mock("./snapshotRemap", () => ({ snapshotRemapped: vi.fn() }));
 
 function setup() {
@@ -58,6 +59,8 @@ it("paints a remapped snapshot at caller depth and destroys only its owned textu
   backdrop.destroy();
   backdrop.destroy();
   expect(view.object.destroy).toHaveBeenCalledTimes(1);
+  expect(view.fake.events.once).toHaveBeenCalledWith("shutdown", expect.any(Function));
+  expect(view.fake.events.off.mock.calls).toEqual(view.fake.events.once.mock.calls);
   expect([...view.textures]).toEqual(["unrelated"]);
 });
 
