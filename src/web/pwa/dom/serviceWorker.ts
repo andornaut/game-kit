@@ -50,10 +50,13 @@ async function fetchAndStore(cache: Cache, key: string, request: Request): Promi
 }
 
 // Precaches manifest on install, deletes the policy's other caches on activate and answers
-// same-origin GETs by strategyFor. No skipWaiting on install: a new worker waits until every page
-// the old one controls has closed, so a running game never has its cache deleted or its code
-// swapped. It takes over on the next launch, or when the page posts the skip-waiting message
-// (updateReady's activateWaitingWorker) and reloads once this worker controls it.
+// same-origin GETs by strategyFor: cache-first for hashed build output and sound files,
+// network-first for the page and every other precached file, since an unhashed file can change
+// under its name and code that reads it must see the deploy the page came from. No skipWaiting on
+// install: a new worker waits until every page the old one controls has closed, so a running game
+// never has its cache deleted or its code swapped. It takes over on the next launch, or when the
+// page posts the skip-waiting message (updateReady's activateWaitingWorker) and reloads once this
+// worker controls it.
 export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest): void {
   const worker = self as unknown as WorkerScope;
   const cacheName = cacheNameFor(policy, manifest.version);
@@ -96,6 +99,7 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     await Promise.all(stale.map((name) => caches.delete(name)));
   };
 
+  // The network's response, stored for offline use; the cached copy only when the fetch fails.
   const networkFirst = async (request: Request, key: string) => {
     const cache = await caches.open(cacheName);
     try {

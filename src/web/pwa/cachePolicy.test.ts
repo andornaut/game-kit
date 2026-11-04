@@ -16,24 +16,28 @@ import type { PrecacheManifest } from "./precacheList.ts";
 const POLICY: CachePolicy = {
   cacheNamePrefix: "game-",
   hashedAssetPrefix: "/assets/",
-  revalidatedUrls: ["/manifest.webmanifest", "/nav.js"],
 };
 
-const precached = new Set(["/play/", "/nav.js", "/art/sprite.png"]);
+const cached = cachedUrlsOf({
+  sounds: { m4a: ["/art/a.m4a"], ogg: ["/art/a.ogg"] },
+  urls: ["/play/", "/art/manifest.json", "/assets/play-abc.js"],
+  version: "v1",
+});
 
 describe("strategyFor", () => {
   it.each([
-    ["a navigation to the game page", true, "/play/", "network-first"],
-    ["a navigation to the game page's other path", true, "/play/index.html", "network-first"],
+    ["a navigation to the precached page", true, "/play/", "network-first"],
+    ["a navigation to the page's other path", true, "/play/index.html", "network-first"],
     ["a navigation outside the precache, left to the browser", true, "/", "network-only"],
-    ["a revalidated URL outside the precache", false, "/manifest.webmanifest", "network-first"],
-    ["a precached revalidated URL", false, "/nav.js", "network-first"],
-    ["hashed build output outside the precache", false, "/assets/play-abc.js", "cache-first"],
-    ["another precached file", false, "/art/sprite.png", "cache-first"],
+    ["precached hashed build output", false, "/assets/play-abc.js", "cache-first"],
+    ["hashed build output outside the precache", false, "/assets/play-def.js", "cache-first"],
+    ["a sound file in the format the install stored", false, "/art/a.ogg", "cache-first"],
+    ["a sound file in another format", false, "/art/a.m4a", "cache-first"],
+    ["a precached unhashed file", false, "/art/manifest.json", "network-first"],
     ["a file outside the precache", false, "/art/notes.json", "network-only"],
     ["the service worker", false, "/sw.js", "network-only"],
   ])("fetches %s by its strategy", (_case, isNavigation, pathname, expected) => {
-    expect(strategyFor(POLICY, precached, { isNavigation, pathname })).toBe(expected);
+    expect(strategyFor(POLICY, cached, { isNavigation, pathname })).toBe(expected);
   });
 });
 
@@ -42,7 +46,7 @@ describe("precacheFetchOptions", () => {
   it.each([
     ["/assets/play-abc.js", "default"],
     ["/play/", "no-cache"],
-    ["/nav.js", "no-cache"],
+    ["/art/manifest.json", "no-cache"],
     ["/art/sprite.png", "no-cache"],
   ])("precaches %s with cache mode %s", (pathname, cache) => {
     expect(precacheFetchOptions(POLICY, pathname)).toEqual({ cache });
@@ -75,13 +79,6 @@ describe("the sound files", () => {
     ["toString", []],
   ])("installs the sounds for format %s", (format, sounds) => {
     expect(installUrls(manifest, format)).toEqual([...manifest.urls, ...sounds]);
-  });
-
-  it("serves either format from the cache, storing one the install left out", () => {
-    const cached = cachedUrlsOf(manifest);
-    const fetched = (pathname: string) =>
-      strategyFor(POLICY, cached, { isNavigation: false, pathname });
-    expect([fetched("/art/a.ogg"), fetched("/art/a.m4a")]).toEqual(["cache-first", "cache-first"]);
   });
 });
 

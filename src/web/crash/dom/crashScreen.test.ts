@@ -54,7 +54,7 @@ const OPTIONS: CrashScreenOptions = {
 };
 
 // A page with a game and a control in its body, whose window events the test dispatches.
-function fakePage() {
+function fakePage(navigator: object = {}) {
   const body = new FakeElement();
   const game = new FakeElement();
   const controls = new FakeElement();
@@ -65,13 +65,35 @@ function fakePage() {
     document: { body, createElement: () => new FakeElement() },
     getSelection: () => null,
     location: { reload },
-    navigator: {},
+    navigator,
   }) as unknown as CrashPage;
   const error = (thrown: Error, filename = "/game.js") =>
     window.dispatchEvent(
       Object.assign(new Event("error"), { error: thrown, filename, message: thrown.message }),
     );
   return { body, controls, error, game, page, reload, window };
+}
+
+// A service worker container whose registration holds waiting, and whose page a worker controls
+// when controlled is set.
+function fakeServiceWorker(
+  waiting: { postMessage: () => void } | null,
+  controlled = true,
+): EventTarget & { controller: object | null; getRegistration: () => Promise<object> } {
+  return Object.assign(new EventTarget(), {
+    controller: controlled ? {} : null,
+    getRegistration: () => Promise.resolve({ waiting }),
+  });
+}
+
+// Crashes the page and presses Reload.
+function pressReload(navigator: object) {
+  const fake = fakePage(navigator);
+  installCrashScreen(fake.page, OPTIONS);
+  fake.error(privateError());
+  const button = descendants(fake.body).find((element) => element.className === "crash-button");
+  button?.dispatchEvent(new Event("click"));
+  return fake;
 }
 
 function privateError(): Error {
@@ -117,6 +139,39 @@ describe("installCrashScreen", () => {
     expect(reload).not.toHaveBeenCalled();
     button?.dispatchEvent(new Event("click"));
     expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("activates a waiting service worker and reloads once it controls the page", async () => {
+    const worker = { postMessage: vi.fn() };
+    const serviceWorker = fakeServiceWorker(worker);
+    const { reload } = pressReload({ serviceWorker });
+    await vi.waitFor(() => expect(worker.postMessage).toHaveBeenCalledWith("skip-waiting"));
+    expect(reload).not.toHaveBeenCalled();
+    serviceWorker.dispatchEvent(new Event("controllerchange"));
+    serviceWorker.dispatchEvent(new Event("controllerchange"));
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it.each<[string, () => object]>([
+    ["no service worker", () => ({})],
+    ["no waiting worker", () => ({ serviceWorker: fakeServiceWorker(null) })],
+    [
+      "a waiting worker but no controller",
+      () => ({ serviceWorker: fakeServiceWorker({ postMessage: vi.fn() }, false) }),
+    ],
+    [
+      "no registration",
+      () => ({ serviceWorker: { controller: {}, getRegistration: () => Promise.resolve() } }),
+    ],
+    [
+      "a registration that cannot be read",
+      () => ({
+        serviceWorker: { controller: {}, getRegistration: () => Promise.reject(new Error("no")) },
+      }),
+    ],
+  ])("reloads at once with %s", async (_case, navigator) => {
+    const { reload } = pressReload(navigator());
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
   });
 
   it("shows the build label, message and stack in dev builds", () => {

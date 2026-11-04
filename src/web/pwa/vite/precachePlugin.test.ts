@@ -12,7 +12,6 @@ import { precachePlugin, type PrecachePluginOptions } from "./precachePlugin.ts"
 const POLICY: CachePolicy = {
   cacheNamePrefix: "game-",
   hashedAssetPrefix: "/assets/",
-  revalidatedUrls: ["/manifest.webmanifest"],
 };
 
 const INDEX = `<!doctype html>

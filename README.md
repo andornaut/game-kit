@@ -22,6 +22,11 @@ The `exports` map and the exported declarations define the public interface. Int
 
 Compatible fixes are patch versions and additions are minor versions. Incompatible changes are major versions after 1.0, and minor versions with a migration section below before 1.0. Update the manifest and lockfile together. Documentation-only changes need no version bump.
 
+## Migration to 0.12.0
+
+- `web/pwa/cachePolicy`: `CachePolicy.revalidatedUrls` is removed; delete it from each game's policy. The worker serves content-hashed build output and every sound file cache-first, and the page and every other precached file network-first, with the cached copy answering offline. An unhashed file can change under its name, so code that reads it must see the deploy the page came from. `cachedUrlsOf` returns `CachedUrls`, the precache list and the sound files as separate sets, which `strategyFor` takes in place of one set.
+- `web/crash/dom/crashScreen`: Reload activates a waiting service worker before it reloads, when a worker controls the page, so the reload runs the newer version. Without a service worker, a waiting worker or a readable registration, it reloads at once.
+
 ## Addition in 0.11.0
 
 `achievements` and `achievements/preview` are new pure modules; nothing existing changes. The earned store reports `saveStore` load and write statuses, and `progress` is never full while a badge is not earned. See [Achievements](#achievements).
@@ -79,12 +84,12 @@ Paths are relative to `src/`, and tests sit beside their modules. Every module i
 | `web/build/buildLabel`, `web/build/buildVersion`, `web/build/phaserBuild`                                         | Pure                     | Build labels, commit selection, reduced Phaser entries and feature flags         |
 | `web/crash/crashModel`                                                                                            | Pure                     | Crash classification and presentation data                                       |
 | `web/headers/securityHeaders`                                                                                     | Pure                     | Content-Security-Policy rules and Cloudflare `_headers` rendering                |
-| `web/pwa/*` except `web/pwa/dom/*` and `web/pwa/vite/*`                                                           | Pure                     | App window, install, back guard, caching, precache, icons, storage and updates   |
+| `web/pwa/*` except `web/pwa/dom/*` and `web/pwa/vite/*`                                                           | Pure                     | App window, install, back, fetch strategy, precache, icons, storage and updates  |
 | `web/save/sessionStore`, `web/save/storage`                                                                       | Pure                     | Never-throwing session store and Web Storage save adapters                       |
 | `web/view/frameTurn` and its `frameTurn*Game.css` stylesheets                                                     | Pure, CSS                | Page frame turn policy and the turned-frame stylesheets                          |
 | `clock/phaser/*`, `input/phaser/*`, `progress/phaser/*`, `text/phaser/*`, `view/phaser/*`                         | Phaser, browser renderer | Frame caps, input guards, progress drawing, fonts, snapshots and modal backdrops |
 | `web/view/phaser/followFrameTurn`                                                                                 | Phaser, browser renderer | Phaser fitting and pointer mapping through the page frame turn                   |
-| `web/crash/dom/crashScreen`, `web/crash/dom/crash.css`                                                            | Browser DOM              | Crash screen in the game's words and colours, and its stylesheet                 |
+| `web/crash/dom/crashScreen`, `web/crash/dom/crash.css`                                                            | Browser DOM              | Crash screen in the game's words and colours; Reload applies a waiting update    |
 | `web/input/dom/pagePresses`                                                                                       | Browser DOM              | Page pointer presses followed from pointerdown until they lift or cancel         |
 | `web/progress/dom/progressBar`                                                                                    | Browser DOM              | Progress bar using the shared geometry, before Phaser loads                      |
 | `web/pwa/dom/*`                                                                                                   | Browser DOM              | Visibility, wake lock, audio, back, exit, install, offline play, service worker  |

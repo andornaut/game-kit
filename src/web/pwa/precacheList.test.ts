@@ -81,7 +81,6 @@ describe("precacheFingerprint", () => {
   const policy: CachePolicy = {
     cacheNamePrefix: "game-",
     hashedAssetPrefix: "/assets/",
-    revalidatedUrls: [],
   };
 
   it.each<[string, [string, string][], string]>([

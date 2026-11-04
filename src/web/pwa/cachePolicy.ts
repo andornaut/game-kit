@@ -1,10 +1,11 @@
 import type { PrecacheManifest } from "./precacheList.ts";
 
 // How the service worker answers a same-origin GET.
-// network-first: pages and the policy's revalidated URLs (unhashed files such as manifests, whose
-// new copy must show on the next load); the cached copy answers offline.
-// cache-first: content-hashed build output and the precached files, and the files of every sound
-// format, so one the install did not store is stored on its first fetch.
+// cache-first: content-hashed build output, and the files of every sound format, so one the
+// install did not store is stored on its first fetch.
+// network-first: the precached page and every other precached file; the cached copy answers
+// offline. An unhashed file can change under its name, so code that reads it must see the deploy
+// the page came from.
 // network-only: anything else, left to the browser.
 export type FetchStrategy = "cache-first" | "network-first" | "network-only";
 
@@ -15,9 +16,6 @@ export interface CachePolicy {
   readonly cacheNamePrefix: string;
   // The path every content-hashed build file starts with, e.g. "/assets/".
   readonly hashedAssetPrefix: string;
-  // Unhashed URLs the worker fetches network-first even when precached, so a deploy shows on the
-  // next load.
-  readonly revalidatedUrls: readonly string[];
 }
 
 // Content-hashed build output, safe to serve from cache for as long as it is referenced.
@@ -70,7 +68,7 @@ export function installUrls(
 
 // How an install stores its URLs: hashed URLs an earlier version's cache holds are copied from
 // it, since a hashed name never changes content, and the rest are fetched. Unhashed URLs, such as
-// the page and the revalidated ones, are always fetched fresh.
+// the page, are always fetched fresh.
 export function installPlan(
   policy: CachePolicy,
   previouslyCached: ReadonlySet<string>,
@@ -84,25 +82,28 @@ export function installPlan(
   return { copy, fetch };
 }
 
-// The URLs the service worker answers from its cache: the precache list and every sound file.
-export function cachedUrlsOf({ sounds, urls }: PrecacheManifest): Set<string> {
-  return new Set([...urls, ...Object.values(sounds).flat()]);
+// The URLs the service worker answers from its cache: the precache list, and every sound file of
+// every format.
+export interface CachedUrls {
+  readonly sounds: ReadonlySet<string>;
+  readonly urls: ReadonlySet<string>;
+}
+
+export function cachedUrlsOf({ sounds, urls }: PrecacheManifest): CachedUrls {
+  return { sounds: new Set(Object.values(sounds).flat()), urls: new Set(urls) };
 }
 
 export function strategyFor(
   policy: CachePolicy,
-  cachedUrls: ReadonlySet<string>,
+  cachedUrls: CachedUrls,
   request: { isNavigation: boolean; pathname: string },
 ): FetchStrategy {
   const key = cacheKeyFor(request.pathname);
   if (request.isNavigation) {
-    return cachedUrls.has(key) ? "network-first" : "network-only";
+    return cachedUrls.urls.has(key) ? "network-first" : "network-only";
   }
-  if (policy.revalidatedUrls.includes(key)) {
-    return "network-first";
-  }
-  if (isHashedAssetUrl(policy, key) || cachedUrls.has(key)) {
+  if (isHashedAssetUrl(policy, key) || cachedUrls.sounds.has(key)) {
     return "cache-first";
   }
-  return "network-only";
+  return cachedUrls.urls.has(key) ? "network-first" : "network-only";
 }

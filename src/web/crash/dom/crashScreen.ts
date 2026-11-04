@@ -2,6 +2,7 @@
 // writes nothing; a game that saves as it goes keeps what it last saved. Its styles are
 // web/crash/dom/crash.css, which the game imports (a script cannot add a <style> under a CSP
 // without 'unsafe-inline'), in the game's colours, which the screen sets as CSS variables.
+import { activateWaitingWorker } from "../../pwa/dom/updateReady.ts";
 import {
   crashGate,
   type CrashReport,
@@ -97,6 +98,27 @@ function detailsSection(page: CrashPage, text: string): HTMLDetailsElement {
   );
 }
 
+// Reloads the page, first activating a waiting service worker so the reload runs the newer
+// version: the crash may be one that version fixes. Without a service worker, a waiting worker or
+// a controller to replace, or when the registration cannot be read, it reloads at once.
+function reloadPage(page: CrashPage): void {
+  const reload = () => page.location.reload();
+  // Missing outside a secure context.
+  const container: ServiceWorkerContainer | undefined = page.navigator.serviceWorker;
+  if (container === undefined) {
+    reload();
+    return;
+  }
+  container.getRegistration().then((registration) => {
+    const worker = registration?.waiting ?? null;
+    if (worker === null || container.controller === null) {
+      reload();
+      return;
+    }
+    activateWaitingWorker(container, reload, worker);
+  }, reload);
+}
+
 function showCrashScreen(page: CrashPage, options: CrashScreenOptions, report: CrashReport): void {
   const { document } = page;
   const view = crashView(options.words, options.dev, report);
@@ -104,7 +126,7 @@ function showCrashScreen(page: CrashPage, options: CrashScreenOptions, report: C
   title.id = "crash-title";
   const body = el(document, "p", "crash-body", view.body);
   body.id = "crash-body";
-  const reload = button(document, view.reload, () => page.location.reload());
+  const reload = button(document, view.reload, () => reloadPage(page));
   const panel = el(document, "div", "crash-panel", title, body, reload);
   if (view.details !== undefined) {
     panel.append(detailsSection(page, `${options.buildLabel}\n${view.details}`));
