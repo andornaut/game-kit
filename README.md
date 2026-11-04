@@ -24,7 +24,7 @@ Compatible fixes are patch versions and additions are minor versions. Incompatib
 
 ## Migration to 0.12.0
 
-- `web/pwa/cachePolicy`: `CachePolicy.revalidatedUrls` is removed; delete it from each game's policy. The worker serves content-hashed build output and every sound file cache-first, and the page and every other precached file network-first, with the cached copy answering offline. An unhashed file can change under its name, so code that reads it must see the deploy the page came from. `cachedUrlsOf` returns `CachedUrls`, the precache list and the sound files as separate sets, which `strategyFor` takes in place of one set.
+- `web/pwa/cachePolicy`: `CachePolicy.revalidatedUrls` is removed; delete it from each game's policy. The worker serves content-hashed build output and every sound file cache-first, and the page and every other precached file network-first, with the cached copy answering offline. An unhashed file can change under its name, so code that reads it must see the deploy the page came from. A file that was revalidated but is not precached is now network-only, so precache it to keep it offline. `cachedUrlsOf` returns `CachedUrls`, the precache list and the sound files as separate sets, which `strategyFor` takes in place of one set.
 - `web/crash/dom/crashScreen`: Reload activates a waiting service worker before it reloads, when a worker controls the page, so the reload runs the newer version. Without a service worker, a waiting worker or a readable registration, it reloads at once.
 
 ## Addition in 0.11.0
