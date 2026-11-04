@@ -120,7 +120,7 @@ node scripts/check.ts
 
 The host needs Docker, Git and the Node version in `.nvmrc`, which runs the TypeScript tooling directly without a build step. The isolated gate uses Node 24.21.0, at most four CPUs and four Vitest workers. It populates the project npm cache in a container, then checks types, formatting, lint, tests and the actual compiled package offline in a fresh container. Source fingerprints must remain stable, and credential-shaped paths are refused before content reads. CI invokes the same script. Start below one-minute load 24. Container images derive from `.nvmrc`.
 
-Every container runs as uid and gid 19001, which owns nothing on the host, with the checkout's group added for reads, `HOME=/tmp`, a read-only root file system and only read-only host mounts. Scratch and outputs live in a per-run volume; results are copied out with `docker cp`, so files in the checkout keep their host owner. The npm cache is the named Docker volume `game-kit-npm-cache`; `GAME_KIT_NPM_CACHE` names another.
+Every container runs as uid and gid 19001, which owns nothing on the host, with the checkout's group added for reads, `HOME=/tmp`, a read-only root file system and only read-only host mounts. Scratch and outputs live in a per-run volume; results are copied out with `docker cp`, so files in the checkout keep their host owner. The gate masks ignored `.claude/` state, where it retains artifact evidence. The npm cache is the named Docker volume `game-kit-npm-cache`; `GAME_KIT_NPM_CACHE` names another.
 
 | Container command            | Purpose                                          |
 | ---------------------------- | ------------------------------------------------ |
