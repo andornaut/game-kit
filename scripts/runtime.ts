@@ -25,7 +25,12 @@ export function nodeImage(root: string): string {
   return `node:${readFileSync(join(root, ".nvmrc"), "utf8").trim().replace(/^v/, "")}`;
 }
 
-export function requireLoad(load: number = loadavg()[0] ?? Number.NaN): void {
+/** The one-minute load, or `GAME_KIT_LOAD` when a test supplies it. */
+export function hostLoad(env: NodeJS.ProcessEnv = process.env): number {
+  return env.GAME_KIT_LOAD === undefined ? (loadavg()[0] ?? Number.NaN) : Number(env.GAME_KIT_LOAD);
+}
+
+export function requireLoad(load: number = hostLoad()): void {
   if (!(Number.isFinite(load) && load < MAX_LOAD)) {
     throw new ScriptError(
       `One-minute load must be available and below ${MAX_LOAD} before starting a container.`,

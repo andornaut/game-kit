@@ -69,6 +69,8 @@ function fixture(name: string) {
         CAPTURE: capture,
         GAME_KIT_DOG_CACHE: join(root, ".claude/cache"),
         GAME_KIT_DUCK_CACHE: join(root, ".claude/cache"),
+        // The fake Docker runs nothing heavy, so the result must not depend on host load.
+        GAME_KIT_LOAD: "0",
         PATH: `${root}/bin:${process.env.PATH}`,
       },
     });
