@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { uiGlyphPen } from "../../text/phaser/uiGlyphPen.ts";
 import {
   presentUi,
-  releaseUiTintCache,
   type Quad,
+  releaseUiTintCache,
   type UiFrame,
   type UiPaintCommand,
   type UiWorldReadContext,
