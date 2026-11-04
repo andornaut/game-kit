@@ -258,8 +258,8 @@ it("fails the group and restores its roles when a glyph is not in the font", asy
 async function registered(kind: string) {
   const recorder = createUiRecorder(ports());
   await Promise.resolve();
-  const value = object(kind);
-  const registration = recorder.register([value.node]);
+  const { node, value } = object(kind);
+  const registration = recorder.register([node]);
   if (registration.status !== "ready") {
     throw new Error("Missing registration");
   }
