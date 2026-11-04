@@ -70,12 +70,21 @@ export function precachePlugin({
           return typeof content === "string" ? encoder.encode(content) : content;
         };
         // A linked public file or manifest icon the build cannot read would leave the offline page
-        // incomplete, so it fails the build.
+        // incomplete, so it fails the build: a missing file as absent from the public directory,
+        // any other read error with its own code and message.
         const readPublicFile = async (url: string): Promise<Uint8Array> => {
           try {
             return await this.fs.readFile(`${publicDir}${url}`);
-          } catch {
-            return this.error(`precache: ${url} is not in ${publicDir}`);
+          } catch (error) {
+            const { code, message } = error as NodeJS.ErrnoException;
+            if (code === "ENOENT") {
+              return this.error(`precache: ${url} is not in ${publicDir}`);
+            }
+            const detail =
+              code === undefined || message.startsWith(`${code}:`)
+                ? message
+                : `${code}: ${message}`;
+            return this.error(`precache: cannot read ${url} in ${publicDir}: ${detail}`);
           }
         };
 

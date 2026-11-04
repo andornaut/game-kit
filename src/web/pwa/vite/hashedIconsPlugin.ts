@@ -28,11 +28,19 @@ export function hashedIconsPlugin({
     enforce: "post",
     async generateBundle(_options, bundle) {
       const { build, publicDir } = this.environment.config;
+      // A missing file fails the build as absent from the public directory, and any other read
+      // error with its own code and message.
       const read = async (url: string) => {
         try {
           return await this.fs.readFile(`${publicDir}${url}`);
-        } catch {
-          return this.error(`hashed icons: ${url} is not in ${publicDir}`);
+        } catch (error) {
+          const { code, message } = error as NodeJS.ErrnoException;
+          if (code === "ENOENT") {
+            return this.error(`hashed icons: ${url} is not in ${publicDir}`);
+          }
+          const detail =
+            code === undefined || message.startsWith(`${code}:`) ? message : `${code}: ${message}`;
+          return this.error(`hashed icons: cannot read ${url} in ${publicDir}: ${detail}`);
         }
       };
       const decoder = new TextDecoder();

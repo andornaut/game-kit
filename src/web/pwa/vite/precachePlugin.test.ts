@@ -43,6 +43,8 @@ interface Build {
   // A public file to delete from the site before building.
   readonly missing?: string;
   readonly placeholder?: boolean;
+  // A public file to replace with a directory, which the build cannot read.
+  readonly unreadable?: string;
   // An existing site to build again, as Vite's output names depend on the root.
   readonly root?: string;
 }
@@ -53,9 +55,14 @@ async function precache({
   missing,
   placeholder,
   root = site("icon", placeholder),
+  unreadable,
 }: Build) {
   if (missing !== undefined) {
     rmSync(join(root, "public", missing));
+  }
+  if (unreadable !== undefined) {
+    rmSync(join(root, "public", unreadable));
+    mkdirSync(join(root, "public", unreadable));
   }
   const result = await build({
     build: { minify: false, write: false },
@@ -111,7 +118,7 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     });
   });
 
-  it.each<[string, Build, string]>([
+  it.each<[string, Build, string | RegExp]>([
     [
       "a hashed file outside the build output",
       { hashedFiles: () => ({ sounds: { ogg: ["/assets/a.ogg"] }, urls: [] }) },
@@ -130,6 +137,11 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
       "a missing public file the page links",
       { missing: "favicon.png" },
       "precache: /favicon.png is not in ",
+    ],
+    [
+      "an unreadable public file the page links",
+      { unreadable: "favicon.png" },
+      /precache: cannot read \/favicon\.png in .*: EISDIR: /,
     ],
     [
       "a missing icon the web app manifest names",

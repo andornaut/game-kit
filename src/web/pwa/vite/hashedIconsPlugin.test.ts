@@ -72,11 +72,16 @@ describe("hashedIconsPlugin", { timeout: 60_000 }, () => {
     expect(output.get("app.webmanifest")).toBe(`{"icons":[{"src":"${b}"}]}`);
   });
 
-  it.each<[string, HashedIconsPluginOptions, string]>([
+  it.each<[string, HashedIconsPluginOptions, string | RegExp]>([
     [
       "an icon missing from the public directory",
       { icons: ["/icons/d.png"], webManifest: "/app.webmanifest" },
       "hashed icons: /icons/d.png is not in",
+    ],
+    [
+      "an icon the build cannot read",
+      { icons: ["/icons"], webManifest: "/app.webmanifest" },
+      /hashed icons: cannot read \/icons in .*: EISDIR: /,
     ],
     [
       "an icon nothing names",
