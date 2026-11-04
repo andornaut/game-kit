@@ -36,6 +36,10 @@ Compatible fixes use patch versions; additive public facilities use minor versio
 - `build/phaserBuild` splits the same way: `phaserSourceDir` moves to `web/build/vite/phaserSource`, and the rest is pure `web/build/phaserBuild`. `phaserEntrySource` joins module paths with `/`. `contentHash`, `phaserUses`, `phaserBuildPlugin` and `gameConfig` move to `web/build/vite/*` unchanged.
 - `web/crash/dom/crashScreen` takes the page explicitly: `installCrashScreen(page, options)`, where `page` is the game window (`CrashPage`). Import `web/crash/dom/crash.css` from the game, since a script cannot add styles under a CSP without `'unsafe-inline'`. `web/crash/crashModel` is unchanged.
 - `web/input/dom/pagePresses` and `web/progress/dom/progressBar` are unchanged apart from their paths.
+- `web/pwa/*` keeps the copied interfaces except as listed here. Modules are placed by environment: `appWindow`, `cachePolicy`, `hashedIcons`, `installState`, `precacheList`, `serviceWorkerUrl` and `storagePersistence` are pure; `audioUnlock`, `exitApp`, `installButton`, `installFlow`, `offlinePlay`, `serviceWorker` and `wakeLock` are under `dom/`, and `precachePlugin` under `vite/`.
+- `backNavigation` and `updateReady` are split. `web/pwa/backNavigation` holds `backGuardState`, `BACK_GUARD_GESTURES`, `backCloseWatcher`, `INSTALLED_APP_DISPLAY_QUERY`, `isFirefoxAndroidApp` and the newly exported `isBackGuardState` and `ESCAPE_KEY`; `web/pwa/dom/backNavigation` holds the history, close-watcher and timer types, `browserCloseWatcher` and `guardBackNavigation`. `web/pwa/updateReady` holds `updateAction`, `resumeCheckDue`, `RESUME_CHECK_MS`, `SKIP_WAITING_MESSAGE` and the state and option types; `web/pwa/dom/updateReady` holds the service worker types, `newerVersionOf`, `activateWaitingWorker`, `createUpdateFlow` and `registerWhenDue`.
+- `appCannotClose(createCloseWatcher, host)` accepts any factory, `(() => unknown) | undefined`, since it reads only whether there is one.
+- `createScreenWakeLock(eventTarget, visibilitySource, wakeLock)` takes the page window first and follows `watchVisibility`, so `pagehide` also releases the lock. `VisibilitySource` comes from `web/pwa/dom/visibility`.
 
 ## Migration to 0.8.0
 
@@ -80,6 +84,7 @@ Paths are relative to `src/`. The source tree contains game mechanisms and their
 | `web/build/buildLabel`, `web/build/buildVersion`, `web/build/phaserBuild`                                         | Pure                     | Build labels, commit selection, reduced Phaser entries and feature flags         |
 | `web/crash/crashModel`                                                                                            | Pure                     | Crash classification and presentation data                                       |
 | `web/headers/securityHeaders`                                                                                     | Pure                     | Content-Security-Policy rules and Cloudflare `_headers` rendering                |
+| `web/pwa/*` except `web/pwa/dom/*` and `web/pwa/vite/*`                                                           | Pure                     | App window, install, back guard, caching, precache, icons, storage and updates   |
 | `web/save/sessionStore`, `web/save/storage`                                                                       | Pure                     | Never-throwing session store and Web Storage save adapters                       |
 | `web/view/frameTurn` and its `frameTurn*Game.css` stylesheets                                                     | Pure, CSS                | Page frame turn policy and the turned-frame stylesheets                          |
 | `clock/phaser/*`, `input/phaser/*`, `progress/phaser/*`, `text/phaser/*`, `view/phaser/*`                         | Phaser, browser renderer | Frame caps, input guards, progress drawing, fonts, snapshots and modal backdrops |
@@ -87,13 +92,14 @@ Paths are relative to `src/`. The source tree contains game mechanisms and their
 | `web/crash/dom/crashScreen`, `web/crash/dom/crash.css`                                                            | Browser DOM              | Crash screen in the game's words and colours, and its stylesheet                 |
 | `web/input/dom/pagePresses`                                                                                       | Browser DOM              | Page pointer presses followed from pointerdown until they lift or cancel         |
 | `web/progress/dom/progressBar`                                                                                    | Browser DOM              | Progress bar using the shared geometry, before Phaser loads                      |
-| `web/pwa/dom/visibility`                                                                                          | Browser DOM              | Page visibility across `visibilitychange` and the back-forward cache             |
+| `web/pwa/dom/*`                                                                                                   | Browser DOM              | Visibility, wake lock, audio, back, exit, install, offline play, service worker  |
 | `web/save/dom/localSaveStorage`, `web/save/dom/pageSessionStore`                                                  | Browser DOM              | The page's `localStorage` and `sessionStorage`                                   |
 | `web/view/dom/watchFrameTurn`                                                                                     | Browser DOM              | Marks the frame turn on `<html>` and requests the orientation lock               |
 | `web/headers/vite/securityHeadersPlugin`                                                                          | Vite, Node build time    | Writes `_headers` with per-page inline hashes                                    |
 | `web/build/vite/buildInfo`, `web/build/vite/gameConfig`                                                           | Vite, Node build time    | Build constant declarations and a game's whole Vite and Vitest config            |
 | `web/build/vite/contentHash`, `web/build/vite/gitHead`                                                            | Vite, Node build time    | Vite-compatible content hashes and the repository HEAD                           |
 | `web/build/vite/phaserBuildPlugin`, `web/build/vite/phaserSource`, `web/build/vite/phaserUses`                    | Vite, Node build time    | Reduced Phaser bundles from source, and a static check of a game's Phaser use    |
+| `web/pwa/vite/precachePlugin`                                                                                     | Vite, Node build time    | Builds the service worker with its precache manifest                             |
 
 A module's directory names its environment, and its `tsconfig.<environment>.json` lists it explicitly:
 
