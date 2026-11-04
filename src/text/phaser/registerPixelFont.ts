@@ -18,11 +18,14 @@ export function registerPixelFont(
   if (scene.cache.bitmapFont.exists(options.key)) {
     return;
   }
+  // Phaser returns null for an invalid key or one an existing texture already uses.
   const texture = scene.textures.createCanvas(options.key, atlas.width, atlas.height);
-  const context = texture?.getContext();
-  if (texture === null || context === undefined) {
-    return;
+  if (texture === null) {
+    throw new Error(
+      `Pixel font "${options.key}" has no cached font, and its texture key is invalid or already in use`,
+    );
   }
+  const context = texture.getContext();
   context.fillStyle = options.colour;
   for (const glyph of atlas.glyphs) {
     for (const [x, y] of glyph.pixels) {

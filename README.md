@@ -20,6 +20,10 @@ The source package is version `0.7.1`. The explicit `exports` map and exported d
 
 Compatible fixes use patch versions; additive public facilities use minor versions. After 1.0, incompatible changes require a major version. Before 1.0, incompatible changes require a minor version and an explicit migration. Update the manifest and root lockfile together. Prove the compiled artifact against exact consumer revisions before publication. Documentation-only changes need no version bump.
 
+## Migration to 0.8.0
+
+- `text/phaser/registerPixelFont` throws an `Error` naming the key when the texture key is invalid or already in use without a cached font, instead of returning without registering. Use a key no other texture uses.
+
 ## Migration to 0.4.0
 
 This is an incompatible game-only boundary change. Both parents must use their own migrated website and tooling implementations before adopting this version. Existing immutable 0.3.x artifacts remain usable by older clients.
@@ -61,7 +65,7 @@ Only `phaser/` directories import Phaser. Pure environment compilation rejects b
 
 - **Input:** callers supply event coordinates, timestamps, equality, hold thresholds, drag/fling tuning and reduced-motion policy. Clients perform returned actions and apply modal gates to their input routes.
 - **Motion:** games validate finite coordinates, starts and nonnegative durations. Zero duration changes instantly at its start; infinite query positions select endpoints. Games retain clocks and randomness. `motion/Point` is a compatibility export of `rect/Point`.
-- **Pixel fonts:** `PixelFontContext` supplies glyph bits, widths, height, spacing and space width. The kit returns geometry and advances; clients own glyph definitions and normalization. Phaser registration takes explicit font options.
+- **Pixel fonts:** `PixelFontContext` supplies glyph bits, widths, height, spacing and space width. The kit returns geometry and advances; clients own glyph definitions and normalization. Phaser registration takes explicit font options and throws an `Error` naming the key when that texture key is invalid or already in use without a cached font.
 - **Progress:** `undefined` means an unknown total, drawn as a static centred segment; finite progress is clamped to zero through one. `createProgressState` replaces the previous operation on `begin`; stale handles cannot update or finish its replacement. Clients own visibility, labels and timing and clear Phaser graphics.
 - **Rendering:** `mountModalBackdrop(context, area)` owns its unique texture and display object and exposes `ready` and `destroy()`. It falls back when snapshot capture rejects. `snapshotRemapped` reads the area at the WebGL renderer's post-render point with Phaser's snapshot geometry, row order and un-premultiplication, or through `snapshotArea` on the Canvas renderer, and writes the remapped pixels into a canvas texture. The client owns modal layout, input and pausing.
 - **Saves:** games own keys, schemas, validation and migration policy. Newer stored versions are preserved; corrupt saves are backed up before replacement. Failed reads or backups disable writes for the session. Failed writes may be retried. Encoding and JSON serialization failures return `invalid` without writing. `SaveStorage` is the parent adapter's port; `memoryStorage` is its pure in-memory implementation.

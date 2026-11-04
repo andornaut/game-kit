@@ -61,16 +61,28 @@ describe("pixel font registration", () => {
     });
   });
 
-  // exists: the font is already cached; canvas: whether canvas creation succeeds.
-  it.each([
-    ["leaves an existing font's resources alone", true, true, 0],
-    ["does not cache a font when canvas creation fails", false, false, 1],
-  ])("%s", (_, exists, canvas, created) => {
+  // exists: the font is already cached; canvas: whether canvas creation succeeds; error: the
+  // message registration throws, or none.
+  it.each<[string, boolean, boolean, number, RegExp | undefined]>([
+    ["leaves an existing font's resources alone", true, true, 0, undefined],
+    [
+      "throws, naming the key, when its texture key is taken without a cached font",
+      false,
+      false,
+      1,
+      /^Pixel font "supplied" has no cached font, and its texture key is invalid or already in use$/,
+    ],
+  ])("%s", (_, exists, canvas, created, error) => {
     const f = fixture(exists);
     if (!canvas) {
       f.createCanvas.mockReturnValue(null);
     }
-    registerPixelFont(f.scene, options, atlas);
+    const register = () => registerPixelFont(f.scene, options, atlas);
+    if (error === undefined) {
+      register();
+    } else {
+      expect(register).toThrow(error);
+    }
     expect(f.createCanvas).toHaveBeenCalledTimes(created);
     expect(f.add).not.toHaveBeenCalled();
   });
