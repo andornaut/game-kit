@@ -129,6 +129,24 @@ function packed(value: number): Colour {
 function quad(values: ArrayLike<number>): Quad {
   return [0, 2, 4, 6].map((i) => ({ x: values[i]!, y: values[i + 1]! })) as unknown as Quad;
 }
+type Glyph = GameObjects.BitmapText["fontData"]["chars"][number];
+type Chars = GameObjects.BitmapText["fontData"]["chars"];
+// BatchChar passes only the glyph object; codes are indexed once per font.
+const glyphCodes = new WeakMap<Chars, Map<Glyph, number>>();
+function indexGlyphs(chars: Chars): Map<Glyph, number> {
+  const codes = new Map<Glyph, number>();
+  for (const [code, glyph] of Object.entries(chars)) {
+    if (!codes.has(glyph)) {
+      codes.set(glyph, Number(code));
+    }
+  }
+  glyphCodes.set(chars, codes);
+  return codes;
+}
+function glyphCode(chars: Chars, glyph: Glyph): number | undefined {
+  // A miss reindexes once, so glyphs added to the font after indexing still resolve.
+  return glyphCodes.get(chars)?.get(glyph) ?? indexGlyphs(chars).get(glyph);
+}
 function graphicsSupported(commands: readonly number[]): boolean {
   for (let i = 0; i < commands.length;) {
     const count = operands[commands[i++]!];
@@ -224,18 +242,18 @@ export function createUiRecorder(ports: UiCapturePorts): {
         fail(group, "object-kind");
       }
       const text = object as unknown as GameObjects.BitmapText;
-      const texture = args[4] as { uvSource: GameObjects.BitmapText["fontData"]["chars"][number] };
+      const texture = args[4] as { uvSource: Glyph };
       const transform = args[5] as { quad: Float32Array };
       const colours = args[6] as Record<string, number>;
       const glyph = texture.uvSource;
-      const code = Object.entries(text.fontData.chars).find(([, value]) => value === glyph)?.[0];
+      const code = glyphCode(text.fontData.chars, glyph);
       const style = ports.textStyle(text);
       if (code === undefined || !style || style.size !== text.fontData.size) {
         fail(group, "font");
       }
       const pen = uiGlyphPen(
         { baseline: style!.baseline },
-        { glyph, quad: quad(transform.quad), text: String.fromCodePoint(Number(code)) },
+        { glyph, quad: quad(transform.quad), text: String.fromCodePoint(code!) },
       );
       if (!pen) {
         return;

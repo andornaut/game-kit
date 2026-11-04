@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type { GameObjects, Renderer } from "phaser";
 import { expect, it, vi } from "vitest";
 
-import type { UiCapturePorts } from "./uiCommands.ts";
+import type { UiCapturePorts, UiFrame } from "./uiCommands.ts";
 import { uiProjection } from "./uiProjection.ts";
 import { createUiRecorder } from "./uiSubmitter.ts";
 
@@ -183,6 +183,65 @@ it("captures text via public glyph identity and already-transformed quad without
     glyphs: [{ baseline: 3, pen: { x: 10, y: 20 }, text: "A", transform: [2, 0, 0, 2] }],
     size: 8,
   });
+  recorder.destroy();
+});
+const white = {
+  tintBottomLeft: 0xffffffff,
+  tintBottomRight: 0xffffffff,
+  tintEffect: 0,
+  tintTopLeft: 0xffffffff,
+  tintTopRight: 0xffffffff,
+};
+const metrics = { height: 4, width: 2, xOffset: -1, yOffset: 2 };
+type Key = "a" | "b";
+function glyphText(frame: UiFrame): string {
+  return frame.commands
+    .flatMap((command) => (command.kind === "text" ? command.glyphs : []))
+    .map((glyph) => glyph.text)
+    .join("");
+}
+function drawGlyph(text: ReturnType<typeof object>, glyph: object, colours: object = white) {
+  text.value.customRenderNodes.Submitter!.run(
+    context,
+    text.value,
+    undefined,
+    0,
+    { uvSource: glyph },
+    { quad: new Float32Array([8, 24, 8, 32, 12, 32, 12, 24]) },
+    colours,
+  );
+}
+it.each([
+  ["the first code of a shared glyph", { 65: "a", 66: "a" }, ["a", "a"], undefined, "AA"],
+  ["a glyph added after indexing", { 65: "a" }, ["a", "b"], { 66: "b" }, "AB"],
+] as const)("resolves %s", async (_, chars, draws, added, expected) => {
+  const recorder = createUiRecorder(ports());
+  await Promise.resolve();
+  const text = object("BitmapText");
+  const glyphs = { a: { ...metrics }, b: { ...metrics } };
+  const fontChars: Record<number, object> = Object.fromEntries(
+    Object.entries(chars as Record<number, Key>).map(([code, key]) => [code, glyphs[key]]),
+  );
+  Object.assign(text.value, { fontData: { chars: fontChars, size: 8 } });
+  expect(recorder.register([text.node]).status).toBe("ready");
+  recorder.begin(1, projection);
+  drawGlyph(text, glyphs[draws[0]]);
+  for (const [code, key] of Object.entries((added ?? {}) as Record<number, Key>)) {
+    fontChars[Number(code)] = glyphs[key];
+  }
+  drawGlyph(text, glyphs[draws[1]]);
+  expect(glyphText(recorder.finish())).toBe(expected);
+  recorder.destroy();
+});
+it("fails the group and restores its roles when a glyph is not in the font", async () => {
+  const recorder = createUiRecorder(ports());
+  await Promise.resolve();
+  const text = object("BitmapText");
+  Object.assign(text.value, { fontData: { chars: { 65: {} }, size: 8 } });
+  expect(recorder.register([text.node]).status).toBe("ready");
+  recorder.begin(1, projection);
+  expect(() => drawGlyph(text, { ...metrics })).toThrow("UI group capture unavailable: font");
+  expect(text.value.customRenderNodes).toEqual({});
   recorder.destroy();
 });
 it("preflights Graphics opcodes rather than mistaking operand values for gradients", async () => {
