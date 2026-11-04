@@ -7,8 +7,9 @@
 export const SKIP_WAITING_MESSAGE = "skip-waiting";
 export type SkipWaitingMessage = typeof SKIP_WAITING_MESSAGE;
 
-// A newer version than the one controlling the page: none found, still being checked for or
-// installing, or installed and waiting behind the running one.
+// A newer version than the one the page runs: none found, still being checked for or installing,
+// or installed and waiting behind the running one. On a page no version controls, a newer worker
+// that installed counts as waiting even once it activates, since it never controls the page.
 export type NewerVersion = "none" | "pending" | "waiting";
 
 export interface UpdateFlowOptions {

@@ -92,7 +92,7 @@ function openPage(
       : Promise.resolve(registration),
   );
   const timers: { handler: () => void; ms: number }[] = [];
-  const clock = { now: 0 };
+  const clock = { now: 0, reloads: 0 };
   const shown: boolean[] = [];
   const visibilitySource = new FakeDocument();
   const page: OfflinePage = {
@@ -100,7 +100,9 @@ function openPage(
     eventTarget: new EventTarget(),
     now: () => clock.now,
     online: () => true,
-    reload: () => undefined,
+    reload: () => {
+      clock.reloads += 1;
+    },
     setTimeout: (handler, ms) => timers.push({ handler, ms }),
     visibilitySource,
   };
@@ -296,6 +298,93 @@ describe("startOfflinePlay", () => {
         ? { messages: [SKIP_WAITING_MESSAGE], shown: [] }
         : { messages: [], shown: [true] },
     );
+  });
+
+  // A page no version controls runs its first install's build. A worker that installs after it is
+  // newer: pending while it installs, then offered on the home screen, or before input taken by a
+  // reload, whether it waits or activates at once.
+  it.each<[string, Deployed, string[], boolean, { reloads: number; shown: boolean[] }]>([
+    ["offers nothing for its own first install", "installing", [], true, { reloads: 0, shown: [] }],
+    [
+      "offers nothing while a later worker installs",
+      "installing",
+      ["installing"],
+      true,
+      { reloads: 0, shown: [] },
+    ],
+    [
+      "offers a later worker that activates at once, and reloads",
+      "installing",
+      ["installing", "installed", "activating", "activated"],
+      true,
+      { reloads: 1, shown: [true, false] },
+    ],
+    [
+      "offers a later worker that waits, and reloads",
+      "installing",
+      ["installing", "installed"],
+      true,
+      { reloads: 1, shown: [true, false] },
+    ],
+    [
+      "offers nothing for a later worker that fails",
+      "installing",
+      ["installing", "redundant"],
+      true,
+      { reloads: 0, shown: [] },
+    ],
+    [
+      "offers a later worker with none installing at watch, and reloads",
+      "none",
+      ["installing", "installed", "activated"],
+      true,
+      { reloads: 1, shown: [true, false] },
+    ],
+    [
+      "reloads into a later worker before input",
+      "installing",
+      ["installing", "installed", "activated"],
+      false,
+      { reloads: 1, shown: [] },
+    ],
+  ])("on an uncontrolled page, %s", async (_, deployed, later, interacted, expected) => {
+    const { clock, page, play, registration, shown } = openPage(false, deployed);
+    if (registration === undefined) {
+      throw new Error("Missing test registration");
+    }
+    const own = registration.installing;
+    if (own !== null) {
+      own.state = "installing";
+    }
+    if (interacted) {
+      page.eventTarget.dispatchEvent(new Event("pointerdown"));
+    }
+    play.setOnHome(true);
+    await settle();
+    const advance = (worker: FakeWorker, state: string) => {
+      worker.state = state;
+      if (state !== "installing") {
+        registration.installing = null;
+      }
+      worker.dispatchEvent(new Event("statechange"));
+    };
+    if (own !== null) {
+      ["installed", "activating", "activated"].forEach((state) => advance(own, state));
+    }
+    const worker = new FakeWorker();
+    later.forEach((state, index) => {
+      if (index === 0) {
+        worker.state = state;
+        registration.installing = worker;
+        registration.dispatchEvent(new Event("updatefound"));
+      } else {
+        advance(worker, state);
+      }
+    });
+    if (shown.at(-1) === true) {
+      play.flow.accept();
+    }
+    expect({ reloads: clock.reloads, shown }).toEqual(expected);
   });
 
   it("holds the boot while a newer version installs, until bootWaitMs runs out", async () => {

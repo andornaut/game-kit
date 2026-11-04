@@ -25,8 +25,9 @@ export interface ContainerLike extends EventTarget {
   readonly controller: unknown;
 }
 
-// The newer version a registration holds, and its worker once it waits. A first install has no
-// controller to wait behind, so it never counts.
+// The newer version a registration holds for a page some version controls, and its worker once it
+// waits. A page no version controls reads none here: createUpdateFlow follows its newer versions
+// itself, since its first install is the page's own build.
 export function newerVersionOf(
   container: ContainerLike,
   registration: RegistrationLike,
@@ -55,6 +56,18 @@ export function activateWaitingWorker(
     }
   });
   worker.postMessage(SKIP_WAITING_MESSAGE);
+}
+
+// A page no version controls runs the build of the worker installing or waiting when watch
+// begins (its first install), or of the registration's active worker when neither exists. Each
+// worker that installs after that is a newer version: pending while it installs, and from installed
+// on as good as waiting, whether it then waits or activates at once with no client to wait for. It
+// never controls the page, so no worker switches it: accepting it reloads into it.
+function uncontrolledNewerVersion(later: readonly ServiceWorkerLike[]): NewerVersion {
+  if (later.some(({ state }) => ["activated", "activating", "installed"].includes(state))) {
+    return "waiting";
+  }
+  return later.some(({ state }) => ["installing", "parsed"].includes(state)) ? "pending" : "none";
 }
 
 export interface UpdateFlow {
@@ -89,7 +102,9 @@ export interface UpdateFlow {
 // Acts on updateAction whenever its state changes: lets the game boot, switches to the waiting
 // version, or shows the update plate through show(visible), the last only on a change. A page
 // some version controls starts with a newer one pending, so the boot waits for watch or
-// noRegistration; a first visit has none to wait for.
+// noRegistration; a first visit has none to wait for. On a page no version controls, a newer
+// version (see uncontrolledNewerVersion) follows the same rules as a waiting one, and switching
+// to it reloads.
 export function createUpdateFlow(
   container: ContainerLike,
   now: () => number,
@@ -127,8 +142,13 @@ export function createUpdateFlow(
   const update = (change: Partial<UpdateState>) => {
     state = { ...state, ...change };
     const action = updateAction(state);
-    if (action === "switch" && waitingWorker !== undefined) {
-      switchVersion(waitingWorker);
+    if (action === "switch") {
+      if (waitingWorker === undefined) {
+        state = { ...state, reloading: true };
+        reload();
+      } else {
+        switchVersion(waitingWorker);
+      }
     } else if (action === "run" || action === "prompt") {
       boot();
     }
@@ -196,10 +216,21 @@ export function createUpdateFlow(
     },
     watch(registration) {
       watched = registration;
+      const own = registration.installing ?? registration.waiting;
+      const later: ServiceWorkerLike[] = [];
       // Follows the version installing now, whether its updatefound came before watch (the
       // browser's own check on navigation) or after; a listener added twice runs once.
       const read = () => {
-        registration.installing?.addEventListener("statechange", read);
+        const { installing } = registration;
+        installing?.addEventListener("statechange", read);
+        if (container.controller === null) {
+          if (installing !== null && installing !== own && !later.includes(installing)) {
+            later.push(installing);
+          }
+          waitingWorker = undefined;
+          update({ newer: uncontrolledNewerVersion(later), online: online() });
+          return;
+        }
         const { newer, worker } = newerVersionOf(container, registration);
         waitingWorker = worker;
         update({ newer, online: online() });
