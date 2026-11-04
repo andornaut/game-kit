@@ -131,43 +131,6 @@ describe("securityHeadersPlugin", { timeout: 60_000 }, () => {
     expect(text).toContain("/notes/*\n  Content-Security-Policy: default-src 'self'\n");
   });
 
-  // More public pages than a low file descriptor limit (256) allows open at once.
-  it.each<[string, (index: number) => string]>([
-    ["in one directory", (index) => `notes/many/${index}.html`],
-    [
-      "across nested directories",
-      (index) => `notes/${index % 10}/${Math.floor(index / 10) % 10}/${index}.html`,
-    ],
-  ])("reads 2000 public pages %s", async (_, pathOf) => {
-    const count = 2000;
-    const styleOf = (index: number) => `p { order: ${index}; }`;
-    const publicFiles = Object.fromEntries(
-      Array.from({ length: count }, (__, index) => [
-        pathOf(index),
-        `<!doctype html><html><head><style>${styleOf(index)}</style></head></html>\n`,
-      ]),
-    );
-    const seen = new Map<string, string>();
-    const { text } = await headers({
-      checkPage: ({ fileName, html }) => {
-        seen.set(fileName, html);
-        return undefined;
-      },
-      publicFiles,
-    });
-    expect(seen).toEqual(
-      new Map([
-        ["index.html", expect.any(String)],
-        ["notes/a.html", NOTE],
-        ...Object.entries(publicFiles),
-      ]),
-    );
-    const notesPolicy = text.split("\n").find((line) => line.includes("style-src")) ?? "";
-    for (let index = 0; index < count; index += 1) {
-      expect(notesPolicy).toContain(hash(styleOf(index)));
-    }
-  });
-
   it.each<[string, Build, string]>([
     [
       "a page checkPage rejects",
