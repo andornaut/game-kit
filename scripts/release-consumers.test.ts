@@ -110,24 +110,14 @@ it("validates argument count and checksum shape", () => {
 });
 
 it.each([
-  [
-    "current traversal callers",
-    ["src/rules/behaviourTraversalGoals.test.ts", "src/view/mapMarks.test.ts"],
-    "src/rules/behaviourTraversalGoals.test.ts",
-  ],
-  ["older renderer callers", ["src/view/mapMarks.test.ts"], "src/view/mapMarks.test.ts"],
-  ["missing caller coverage", [], undefined],
-] as const)("selects a real test or fails for %s", (_, paths, expected) => {
+  ["dog", "src/home/modalLayout.test.ts", /Archie snapshot has no caller test/],
+  ["duck", "src/rules/behaviourTraversalGoals.test.ts", /Chibi snapshot has no caller test/],
+] as const)("selects the %s caller test only when it exists", (game, path, missing) => {
   const root = mkdtempSync(join(tmpdir(), "kit-consumer-test-selection-"));
-  for (const path of paths) {
-    mkdirSync(dirname(join(root, path)), { recursive: true });
-    writeFileSync(join(root, path), "");
-  }
-  if (expected === undefined) {
-    expect(() => callerTest("duck", root)).toThrow(/No supported Chibi caller test exists/);
-  } else {
-    expect(callerTest("duck", root)).toBe(expected);
-  }
+  expect(() => callerTest(game, root)).toThrow(missing);
+  mkdirSync(dirname(join(root, path)), { recursive: true });
+  writeFileSync(join(root, path), "");
+  expect(callerTest(game, root)).toBe(path);
 });
 
 it("refuses archive members outside package/ or with parent segments", () => {

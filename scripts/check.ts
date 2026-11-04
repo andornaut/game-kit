@@ -27,7 +27,7 @@ export function check(env: NodeJS.ProcessEnv, root: string): void {
   const image = nodeImage(root);
   mkdirSync(join(root, ".claude"), { recursive: true });
   const before = sourceFingerprint(root);
-  // CLEANUP (added 2026-11-01): retain artifact evidence until release review accepts it.
+  // The packed artifact and its consumer probe, kept only when the gate fails.
   const evidence = mkdtempSync(join(root, ".claude/artifact-check."));
   // The tmpfs mount points must exist in the read-only checkout.
   mkdirSync(join(root, "node_modules"), { recursive: true });
@@ -88,9 +88,13 @@ export function check(env: NodeJS.ProcessEnv, root: string): void {
       console.log("Checking types, lint and tests offline in a fresh container.");
       runGate();
     }
-    console.log(`Artifact evidence copied to ${evidence}`);
   } catch (error) {
     failure = error;
+  }
+  if (failure === undefined) {
+    rmSync(evidence, { force: true, recursive: true });
+  } else {
+    console.error(`Artifact evidence: ${evidence}`);
   }
   let after;
   try {

@@ -22,11 +22,11 @@ const EVIDENCE = "/tmp/scratch";
 const WORK = "/tmp/work";
 const GAMES = ["dog", "duck"] as const;
 type Game = (typeof GAMES)[number];
-const DUCK_CALLER_TESTS = [
-  // Current traversal caller proof; the renderer test supports older exact pins.
-  "src/rules/behaviourTraversalGoals.test.ts",
-  "src/view/mapMarks.test.ts",
-];
+/** Each game's focused test of its kit wiring, run against the installed artifact. */
+const CALLER_TESTS: Record<Game, { name: string; test: string }> = {
+  dog: { name: "Archie", test: "src/home/modalLayout.test.ts" },
+  duck: { name: "Chibi", test: "src/rules/behaviourTraversalGoals.test.ts" },
+};
 
 /** Archive members must stay under package/ without parent segments. */
 export function unsafeArchivePaths(listing: string): string[] {
@@ -46,12 +46,9 @@ export function unsafeArchiveModes(verboseListing: string): string[] {
 
 /** The focused caller test for one pinned consumer snapshot. */
 export function callerTest(game: Game, work: string): string {
-  if (game === "dog") {
-    return "src/home/modalLayout.test.ts";
-  }
-  const test = DUCK_CALLER_TESTS.find((candidate) => existsSync(join(work, candidate)));
-  if (test === undefined) {
-    throw new ScriptError("No supported Chibi caller test exists in the pinned snapshot");
+  const { name, test } = CALLER_TESTS[game];
+  if (!existsSync(join(work, test))) {
+    throw new ScriptError(`The pinned ${name} snapshot has no caller test ${test}`);
   }
   return test;
 }
