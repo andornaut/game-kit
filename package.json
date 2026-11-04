@@ -57,6 +57,8 @@
     "SOURCE_COMMIT"
   ],
   "exports": {
+    "./achievements": "./src/achievements.ts",
+    "./achievements/preview": "./src/achievements/preview.ts",
     "./arrays": "./src/arrays.ts",
     "./art/aseprite": "./src/art/aseprite.ts",
     "./art/rgbaImage": "./src/art/rgbaImage.ts",

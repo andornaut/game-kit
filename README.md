@@ -22,6 +22,10 @@ The `exports` map and the exported declarations define the public interface. Int
 
 Compatible fixes are patch versions and additions are minor versions. Incompatible changes are major versions after 1.0, and minor versions with a migration section below before 1.0. Update the manifest and lockfile together. Documentation-only changes need no version bump.
 
+## Addition in 0.11.0
+
+`achievements` and `achievements/preview` are new pure modules; nothing existing changes. See [Achievements](#achievements).
+
 ## Migration to 0.10.0
 
 These public paths are removed. Their modules remain internal to the kit, so behaviour is unchanged:
@@ -61,6 +65,7 @@ Paths are relative to `src/`, and tests sit beside their modules. Every module i
 
 | Modules                                                                                                           | Environment              | Responsibility                                                                   |
 | ----------------------------------------------------------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------- |
+| `achievements`, `achievements/preview`                                                                            | Pure                     | Badge judging, tier order, awarding, the earned record and unlock notices        |
 | `arrays`, `assertNever`, `lines`, `maps`, `numbers`, `opaqueBounds`, `random`, `records`, `rect`, `rgba`, `units` | Pure                     | Collections, text fields, geometry, randomness, pixels and units                 |
 | `art/aseprite`, `art/rgbaImage`                                                                                   | Pure                     | Animation specifications and RGBA primitives                                     |
 | `clock/fixedStep`, `clock/frameCap`                                                                               | Pure                     | Fixed-step timing and frame-cap decisions                                        |
@@ -150,6 +155,17 @@ Both regular deduplication and shared preferred/regular charging include `world.
 At tick start, old deadlines take precedence. Warning expiry removes support for the entire tick; absence duration starts at that removal boundary. Eligible absent supports restore only when the full collider volume is clear of all physical bodies. Occupied supports retry at the next tick start; unknown occupancy returns unavailable. There are no sub-tick lifecycle events. Deadlines use active-world seconds and take effect at the first boundary at or after the deadline; a paused clock cannot advance phases.
 
 The complete resolved contact set at tick end records newly standing actor/support pairs. At the next boundary, a new contact on an intact support latches one warning. Additional contacts and stepping off cannot cancel or extend it. Warning duration starts at this consuming boundary. Restoration alone cannot trigger warning; a subsequent new landing can. The adapter assembles complete other-actor contacts and supplies full-volume occupancy, including the substituted branch body, before using these pure transitions.
+
+## Achievements
+
+`achievements` judges a game's badge catalogue. An `AchievementDef` has an id, a tier and a non-empty list of conditions that must all hold; it carries no strings, so a game extends it with its own presentation fields. The game owns the condition union, the scopes and facts they are judged at, tiers, strings, art, tracking points and storage keys and versions.
+
+- **Judging:** `judge(kinds)` takes one `ConditionKinds` registry, mapping each condition kind to its `scopes`, `holds` and optional `progress`. A condition never holds at a scope its kind does not list, and its evaluator is not called there; an unregistered kind throws `RangeError`. `progress(facts, conditions)` ignores scope and returns the condition furthest from done, by minimum `have/need` fraction (the first on a tie, a need of 0 or less counting as done), with `have` clamped to between 0 and `need`. Conditions whose kind has no `progress` are left out, and it returns `undefined` when none has it, so a compound badge can show complete progress while one of its other conditions does not hold.
+- **Ordering and awarding:** `orderByTier(tiers, defs)` is a stable sort by the given tier order, applied once to the catalogue, and throws `RangeError` for an unlisted tier. `newlyEarned(judge, catalogue, scope, facts, earned)` returns the ids not yet earned whose conditions all hold, in catalogue order. `award(ids, earned)` appends new ids in order and returns `earned` itself when nothing is new. `keepKnown(known, stored)` keeps the known ids of a stored array in order, without duplicates. `resolveThreshold(all, threshold)` resolves `"all"`.
+- **Earned record:** `EarnedRecord` holds `earned` and `unannounced`, the earned ids not yet announced, both in award order. `earnedFormat(version, known)` is its `SaveFormat`, kept apart from the main save so a progress reset keeps it; loading prunes unknown ids, duplicates and unannounced ids that are not earned, and a record without both lists is corrupt. It has no migrations; add them by spreading the format. `earnedStore(storage, keys, format)` runs on `saveStore` and applies its calls one at a time in call order, so concurrent `award` and `announced` calls lose nothing. The first call of any kind reads storage first. `award` resolves to the ids it added, appending them to both lists; `announced` removes one id from `unannounced`. Load and write failures follow `saveStore`: the record plays on in memory, and neither method reports a write status.
+- **Notices:** `CelebrationQueue` keeps ids in push order, ignoring an id already waiting. `takeWhen(blocked)` returns `undefined` and keeps every id waiting while `blocked()` is true, and does not call it when nothing waits. Push the loaded `unannounced` ids at start, and call `announced` when a notice starts.
+
+`achievements/preview` previews, during a run, the badges ending it now would earn, each once a run and without awarding anything. `previewAchievements(keyOf, earned, preview, subject)` calls `earned(subject)` only when `keyOf(subject)` differs from the last look's key, and returns the ids not yet shown with the next `AchievementPreview` (`key` and `shown`). Start each run from `NOTHING_PREVIEWED`. The key names every fact that can earn a previewed badge, and `earned` leaves out badges that must not be previewed.
 
 ## Numeric and text measurement contracts
 

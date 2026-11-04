@@ -68,6 +68,10 @@ writeFileSync(
   join(consumer, "bootstrap.mjs"),
   `
 import assert from 'node:assert/strict';
+import {
+  CelebrationQueue, earnedFormat, earnedStore, judge, newlyEarned, orderByTier,
+} from '@andornaut/game-kit/achievements';
+import { NOTHING_PREVIEWED, previewAchievements } from '@andornaut/game-kit/achievements/preview';
 import { clamp } from '@andornaut/game-kit/numbers';
 import { createProgressState } from '@andornaut/game-kit/progressState';
 import { memoryStorage } from '@andornaut/game-kit/save/storage';
@@ -103,6 +107,20 @@ assert.equal(typeof findTraversal, 'function');
 assert.equal(typeof beginCrumblingStep, 'function');
 assert.equal(typeof endCrumblingStep, 'function');
 createProgressState().begin().finish();
+const badges = orderByTier(['low', 'high'], [
+  { conditions: [{ kind: 'flag' }], id: 'b', tier: 'high' },
+  { conditions: [{ kind: 'flag' }], id: 'a', tier: 'low' },
+]);
+const badgeJudge = judge({ flag: { holds: (facts) => facts, scopes: ['end'] } });
+assert.deepEqual(newlyEarned(badgeJudge, badges, 'end', true, ['a']), ['b']);
+const earned = earnedStore(memoryStorage(), { backup: 'k2', save: 'k' }, earnedFormat(1, ['a', 'b']));
+await Promise.all([earned.award(['a', 'b']), earned.announced('a')]);
+assert.deepEqual(earned.record(), { earned: ['a', 'b'], unannounced: ['b'] });
+const notices = new CelebrationQueue();
+notices.push(['b', 'b']);
+assert.equal(notices.takeWhen(() => false), 'b');
+const look = previewAchievements(String, () => ['a'], NOTHING_PREVIEWED, 1);
+assert.deepEqual(look, { earned: ['a'], preview: { key: '1', shown: ['a'] } });
 const storage = memoryStorage();
 await storage.write('proof', 'value');
 assert.equal(await storage.read('proof'), 'value');
@@ -124,6 +142,22 @@ export const view: CrashView = crashView(
   { body: 'b', reload: 'r', title: 't' }, false, { message: 'm', source: '', stack: undefined },
 );
 import { memoryStorage, type SaveStorage } from '@andornaut/game-kit/save/storage';
+import {
+  judge, type AchievementDef, type ConditionKinds, type EarnedStore, earnedStore, earnedFormat,
+} from '@andornaut/game-kit/achievements';
+import {
+  previewAchievements, NOTHING_PREVIEWED, type AchievementPreview,
+} from '@andornaut/game-kit/achievements/preview';
+type Badge = AchievementDef<'a', { readonly kind: 'flag' }, 'low'>;
+export const badge: Badge = { conditions: [{ kind: 'flag' }], id: 'a', tier: 'low' };
+const badgeKinds: ConditionKinds<{ readonly kind: 'flag' }, 'end', boolean> = {
+  flag: { holds: (facts) => facts, scopes: ['end'] },
+};
+export const badgeJudged: boolean = judge(badgeKinds).holds('end', true, { kind: 'flag' });
+export const badgeStore: EarnedStore<'a'> =
+  earnedStore(memoryStorage(), { backup: 'k2', save: 'k' }, earnedFormat(1, ['a'] as const));
+export const badgePreview: AchievementPreview<'a'> =
+  previewAchievements((n: number) => String(n), () => ['a' as const], NOTHING_PREVIEWED, 1).preview;
 import {
   stepTraversal, findTraversal, type TraversalContext,
   type WorldTraversalContext, type WorldTraversalState,
