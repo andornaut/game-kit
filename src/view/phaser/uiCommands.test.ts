@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { uiGlyphPen } from "../../text/phaser/uiGlyphPen.ts";
 import {
   presentUi,
+  releaseUiTintCache,
   type Quad,
   type UiFrame,
   type UiPaintCommand,
@@ -440,4 +441,132 @@ it("skips finite zero-ink quads but rejects invalid or nondegenerate zero-span r
   ).toThrow("finite geometry");
   expect(target.context.drawImage).not.toHaveBeenCalled();
   expect(createSurface).not.toHaveBeenCalled();
+});
+
+type QuadCommand = Extract<UiPaintCommand, { kind: "quad" }>;
+describe("tinted raster cache", () => {
+  class FakeBitmap {
+    pixels = new Uint8ClampedArray([80, 160, 240, 128]);
+    width: number;
+    constructor(width: number) {
+      this.width = width;
+    }
+  }
+  class FakeImage {
+    complete = true;
+    currentSrc = "atlas.png";
+    naturalWidth = 1;
+    pixels = new Uint8ClampedArray([80, 160, 240, 128]);
+  }
+  beforeEach(() => {
+    vi.stubGlobal("ImageBitmap", FakeBitmap);
+    vi.stubGlobal("HTMLImageElement", FakeImage);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  const unit = { height: 1, width: 1, x: 5, y: 6 };
+  function tinted(image: object, patch: Partial<QuadCommand> = {}, source = unit): QuadCommand {
+    return {
+      alpha: 0.45,
+      kind: "quad",
+      owner,
+      quad: points,
+      raster: { image: image as CanvasImageSource, source },
+      sampling: "nearest",
+      tint: [128, 128, 128],
+      tintMode: "multiply",
+      ...patch,
+    };
+  }
+  function host() {
+    const target = surface(80, 40);
+    const scratches: ReturnType<typeof surface>[] = [];
+    const ports = {
+      context: target.ctx,
+      createSurface: vi.fn(({ height, width }: { height: number; width: number }) => {
+        const value = surface(width, height);
+        scratches.push(value);
+        return value.ctx;
+      }),
+      releaseSurface: vi.fn(),
+      resizeBacking: vi.fn(),
+    };
+    const paint = (command: UiPaintCommand) =>
+      presentUi(ports, { commands: [command], id: 1, projection });
+    return { paint, ports, scratches, target };
+  }
+  const incomplete = () => Object.assign(new FakeImage(), { complete: false });
+  it.each([
+    ["a live ImageBitmap", () => new FakeBitmap(1), true],
+    ["a loaded HTMLImageElement", () => new FakeImage(), true],
+    ["a closed ImageBitmap", () => new FakeBitmap(0), false],
+    ["an incomplete HTMLImageElement", incomplete, false],
+    ["a canvas", () => ({ height: 1, pixels: new FakeImage().pixels, width: 1 }), false],
+  ] as const)("caches the tint of %s only when its pixels are immutable", (_, make, cacheable) => {
+    const { paint, ports, scratches, target } = host();
+    const image = make();
+    paint(tinted(image));
+    paint(tinted(image));
+    const made = cacheable ? [scratches[0]!] : [scratches[0]!, scratches[1]!];
+    expect(scratches).toEqual(made);
+    expect(made.map((scratch) => scratch.context.getImageData.mock.calls.length)).toEqual(
+      made.map(() => 1),
+    );
+    expect([...scratches[0]!.canvas.pixels]).toEqual([40, 80, 120, 128]);
+    expect(target.context.drawImage.mock.calls.map(([drawn]) => drawn)).toEqual(
+      cacheable ? [made[0]!.canvas, made[0]!.canvas] : made.map((scratch) => scratch.canvas),
+    );
+    expect(target.context.setTransform.mock.calls.slice(-1)).toEqual([[8, 0, 0, 16, 16, 48]]);
+    expect(ports.releaseSurface.mock.calls).toEqual(cacheable ? [] : made.map((s) => [s.ctx]));
+    releaseUiTintCache(ports);
+    expect(ports.releaseSurface.mock.calls).toEqual(made.map((scratch) => [scratch.ctx]));
+  });
+  it.each([
+    ["tint", { tint: [128, 128, 127] }, unit],
+    ["tint mode", { tintMode: "fill" }, unit],
+    ["source rect", {}, { ...unit, x: 6 }],
+  ] as const)("keys the cache by %s", (_, patch, source) => {
+    const { paint, ports, scratches } = host();
+    const image = new FakeBitmap(1);
+    paint(tinted(image));
+    paint(tinted(image, patch, source));
+    paint(tinted(image, patch, source));
+    expect(ports.createSurface).toHaveBeenCalledTimes(2);
+    expect(ports.releaseSurface).not.toHaveBeenCalled();
+    releaseUiTintCache(ports);
+    expect(ports.releaseSurface.mock.calls).toEqual([[scratches[0]!.ctx], [scratches[1]!.ctx]]);
+  });
+  it("replaces an HTMLImageElement entry when its current source changes", () => {
+    const { paint, ports, scratches } = host();
+    const image = new FakeImage();
+    paint(tinted(image));
+    image.currentSrc = "other.png";
+    paint(tinted(image));
+    paint(tinted(image));
+    expect(ports.createSurface).toHaveBeenCalledTimes(2);
+    expect(ports.releaseSurface.mock.calls).toEqual([[scratches[0]!.ctx]]);
+    releaseUiTintCache(ports);
+    expect(ports.releaseSurface.mock.calls).toEqual([[scratches[0]!.ctx], [scratches[1]!.ctx]]);
+  });
+  it("evicts the least recently used entry beyond 256 entries", () => {
+    const { paint, ports, scratches } = host();
+    const image = new FakeBitmap(1);
+    const tints = Array.from({ length: 257 }, (_, i) => [i % 256, i >> 8, 0] as const);
+    paint(tinted(image, { tint: tints[0]! }));
+    paint(tinted(image, { tint: tints[1]! }));
+    paint(tinted(image, { tint: tints[0]! }));
+    for (const tint of tints.slice(2)) {
+      paint(tinted(image, { tint }));
+    }
+    expect(ports.createSurface).toHaveBeenCalledTimes(257);
+    expect(ports.releaseSurface.mock.calls).toEqual([[scratches[1]!.ctx]]);
+    releaseUiTintCache(ports);
+    expect(ports.releaseSurface).toHaveBeenCalledTimes(257);
+  });
+  it("releases a surface larger than the pixel budget instead of retaining it", () => {
+    const { paint, ports, scratches } = host();
+    paint(tinted(new FakeBitmap(1), {}, { height: 2049, width: 2048, x: 0, y: 0 }));
+    expect(ports.releaseSurface.mock.calls).toEqual([[scratches[0]!.ctx]]);
+  });
 });

@@ -251,6 +251,99 @@ export function presentUi(ports: UiPaintPorts, frame: UiFrame): void {
   }
 }
 
+// Tinted rasters are cached only for sources whose pixels cannot change after load.
+// The cache is least recently used and bounded by entries and retained pixels.
+const TINT_CACHE_ENTRIES = 256;
+const TINT_CACHE_PIXELS = 4 * 1024 * 1024;
+interface TintEntry {
+  readonly pixels: number;
+  readonly release: UiPaintPorts["releaseSurface"];
+  readonly src: string | undefined;
+  readonly surface: CanvasRenderingContext2D;
+}
+const tintCache = new Map<string, TintEntry>();
+let tintPixels = 0;
+const identities = new WeakMap<object, number>();
+let nextIdentity = 0;
+function identity(value: object): number {
+  let id = identities.get(value);
+  if (id === undefined) {
+    id = nextIdentity++;
+    identities.set(value, id);
+  }
+  return id;
+}
+function imageSource(image: CanvasImageSource): string | undefined {
+  return typeof HTMLImageElement !== "undefined" && image instanceof HTMLImageElement
+    ? image.currentSrc
+    : undefined;
+}
+function immutableImage(image: CanvasImageSource): boolean {
+  if (typeof ImageBitmap !== "undefined" && image instanceof ImageBitmap) {
+    // A closed bitmap has zero width and keeps the uncached path's failure.
+    return image.width > 0;
+  }
+  return (
+    typeof HTMLImageElement !== "undefined" &&
+    image instanceof HTMLImageElement &&
+    image.complete &&
+    image.naturalWidth > 0
+  );
+}
+// Surfaces are keyed by their release port, so each is released through the port that made it.
+function tintKey(
+  ports: UiPaintPorts,
+  image: CanvasImageSource,
+  source: Readonly<Rect>,
+  command: Extract<UiPaintCommand, { kind: "quad" }>,
+): string | undefined {
+  if (!immutableImage(image)) {
+    return undefined;
+  }
+  const { height, width, x, y } = source;
+  const [r, g, b] = command.tint;
+  return [
+    identity(ports.releaseSurface),
+    identity(image),
+    x,
+    y,
+    width,
+    height,
+    command.tintMode,
+    r,
+    g,
+    b,
+  ].join(",");
+}
+function evict(key: string, entry: TintEntry): void {
+  tintCache.delete(key);
+  tintPixels -= entry.pixels;
+  entry.release(entry.surface);
+}
+function retain(key: string, entry: TintEntry): void {
+  const previous = tintCache.get(key);
+  if (previous) {
+    evict(key, previous);
+  }
+  tintCache.set(key, entry);
+  tintPixels += entry.pixels;
+  for (const [oldest, value] of tintCache) {
+    if (tintCache.size <= TINT_CACHE_ENTRIES && tintPixels <= TINT_CACHE_PIXELS) {
+      break;
+    }
+    evict(oldest, value);
+  }
+}
+
+// Release every cached tint surface created through this release port, for host teardown.
+export function releaseUiTintCache(ports: Pick<UiPaintPorts, "releaseSurface">): void {
+  for (const [key, entry] of tintCache) {
+    if (entry.release === ports.releaseSurface) {
+      evict(key, entry);
+    }
+  }
+}
+
 function paintQuad(
   ports: UiPaintPorts,
   projection: UiProjection,
@@ -318,7 +411,16 @@ function paintQuad(
     );
     return;
   }
+  const key = tintKey(ports, image, source, command);
+  const cached = key === undefined ? undefined : tintCache.get(key);
+  if (cached && cached.src === imageSource(image)) {
+    tintCache.delete(key!);
+    tintCache.set(key!, cached);
+    drawTinted(ctx, projection, command, destination, size, cached.surface);
+    return;
+  }
   const scratch = ports.createSurface(size);
+  let retained = false;
   try {
     scratch.setTransform(1, 0, 0, 1, 0, 0);
     scratch.clearRect(0, 0, size.width, size.height);
@@ -345,20 +447,43 @@ function paintQuad(
       }
     }
     scratch.putImageData(pixels, 0, 0);
-    const [tl, bl, , tr] = destination;
-    const { scaleX: sx, scaleY: sy } = projection;
-    ctx.setTransform(
-      ((tr.x - tl.x) / size.width) * sx,
-      ((tr.y - tl.y) / size.width) * sy,
-      ((bl.x - tl.x) / size.height) * sx,
-      ((bl.y - tl.y) / size.height) * sy,
-      tl.x * sx,
-      tl.y * sy,
-    );
-    ctx.globalAlpha = command.alpha;
-    ctx.imageSmoothingEnabled = command.sampling === "linear";
-    ctx.drawImage(scratch.canvas, 0, 0);
+    drawTinted(ctx, projection, command, destination, size, scratch);
+    if (key !== undefined && size.width * size.height <= TINT_CACHE_PIXELS) {
+      retain(key, {
+        pixels: size.width * size.height,
+        release: ports.releaseSurface,
+        src: imageSource(image),
+        surface: scratch,
+      });
+      retained = true;
+    }
   } finally {
-    ports.releaseSurface(scratch);
+    if (!retained) {
+      ports.releaseSurface(scratch);
+    }
   }
+}
+
+function drawTinted(
+  ctx: CanvasRenderingContext2D,
+  projection: UiProjection,
+  command: Extract<UiPaintCommand, { kind: "quad" }>,
+  destination: Quad,
+  size: Size,
+  surface: CanvasRenderingContext2D,
+): void {
+  const [tl, bl, , tr] = destination;
+  const { height, width } = size;
+  const { scaleX: sx, scaleY: sy } = projection;
+  ctx.setTransform(
+    ((tr.x - tl.x) / width) * sx,
+    ((tr.y - tl.y) / width) * sy,
+    ((bl.x - tl.x) / height) * sx,
+    ((bl.y - tl.y) / height) * sy,
+    tl.x * sx,
+    tl.y * sy,
+  );
+  ctx.globalAlpha = command.alpha;
+  ctx.imageSmoothingEnabled = command.sampling === "linear";
+  ctx.drawImage(surface.canvas, 0, 0);
 }
