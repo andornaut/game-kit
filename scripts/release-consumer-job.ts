@@ -63,13 +63,13 @@ export function adoptArtifact(artifact: string, work: string): void {
 }
 
 // Probes run as consumer-rooted modules so bare imports resolve from the consumer snapshot.
+// The gate checks the tarball's exports, native imports and declarations; this probe proves the
+// installation holds exactly those bytes.
 const INSTALLED_ARTIFACT_PROBE = `
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createRequire } from 'node:module';
-const require = createRequire(path.resolve('package.json'));
 const installed = path.resolve('node_modules/@andornaut/game-kit');
 assert(!fs.lstatSync(installed).isSymbolicLink(), 'Tarball installation must be a directory');
 assert.equal(fs.realpathSync(installed), installed);
@@ -95,25 +95,6 @@ function compare(reference, actual) {
   }
 }
 compare('${WORK}/reference/package', installed);
-function targets(value) {
-  if (typeof value === 'string') return [value];
-  return Object.values(value ?? {}).flatMap(targets);
-}
-for (const target of targets(manifest.exports)) {
-  assert(target.startsWith('./') && !target.split('/').includes('..'));
-  assert(!/(?<!\\.d)\\.[cm]?tsx?$/.test(target), 'Runtime TypeScript export: ' + target);
-  assert(fs.statSync(path.join(installed, target)).isFile(), 'Missing export: ' + target);
-}
-for (const [subpath, entry] of Object.entries(manifest.exports)) {
-  if (typeof entry === 'string' && entry.endsWith('.css')) {
-    const resolved = require.resolve('@andornaut/game-kit/' + subpath.slice(2));
-    assert(resolved.startsWith(installed + path.sep));
-    assert(fs.readFileSync(resolved, 'utf8').trim().length > 0);
-  }
-}
-for (const subpath of ['src/numbers.ts', 'dist/numbers.js', 'SOURCE_COMMIT']) {
-  assert.throws(() => require.resolve('@andornaut/game-kit/' + subpath), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
-}
 console.log(JSON.stringify({ source: process.env.EXPECTED_KIT_COMMIT, package: entry }));
 `;
 
@@ -146,22 +127,6 @@ for (const file of parsed.fileNames) {
 }
 assert(imports > 0, 'Consumer must use kit imports');
 console.log('Verified ' + imports + ' TypeScript imports resolve into the installed artifact');
-`;
-
-// Native Node imports must work without tsx or source aliases.
-const NATIVE_IMPORT_PROBE = `
-import assert from 'node:assert/strict';
-import { clamp, lerp } from '@andornaut/game-kit/numbers';
-import { advanceWidth } from '@andornaut/game-kit/text/bitmapFont';
-import { createProgressState } from '@andornaut/game-kit/progressState';
-import { memoryStorage } from '@andornaut/game-kit/save/storage';
-const storage = memoryStorage();
-await storage.write('proof', 'value');
-assert.equal(await storage.read('proof'), 'value');
-assert.equal(clamp(0, 1, 2), 1);
-assert.equal(lerp(2, 6, 2), 10);
-assert.equal(typeof advanceWidth, 'function');
-createProgressState().begin().finish();
 `;
 
 // Load the real consumer config through both entry points without a build or test run.
@@ -224,7 +189,6 @@ function proveGame(
     probe(INSTALLED_ARTIFACT_PROBE);
     probe(TYPESCRIPT_RESOLUTION_PROBE);
     run("npm", ["run", "check"]);
-    probe(NATIVE_IMPORT_PROBE);
     probe(CONFIG_BOOTSTRAP_PROBE);
     run("npm", ["run", GAME_KIT_TEST_SCRIPT, "--", "--maxWorkers=4"]);
     return true;
