@@ -69,14 +69,13 @@ export function precachePlugin({
           const content = file.type === "chunk" ? file.code : file.source;
           return typeof content === "string" ? encoder.encode(content) : content;
         };
-        const readPublicFile = async (url: string): Promise<Uint8Array | undefined> => {
+        // A linked public file or manifest icon the build cannot read would leave the offline page
+        // incomplete, so it fails the build.
+        const readPublicFile = async (url: string): Promise<Uint8Array> => {
           try {
             return await this.fs.readFile(`${publicDir}${url}`);
           } catch {
-            this.warn(
-              `precache: ${url} is linked but missing from ${publicDir}, so it is left out`,
-            );
-            return undefined;
+            return this.error(`precache: ${url} is not in ${publicDir}`);
           }
         };
 
@@ -123,9 +122,6 @@ export function precachePlugin({
           // Each file's references are only known once it is read, so reads run one at a time.
           // eslint-disable-next-line no-await-in-loop
           const bytes = bundleBytes(url) ?? (await readPublicFile(url));
-          if (bytes === undefined) {
-            continue;
-          }
           contents.set(url, bytes);
           if (url.endsWith(".webmanifest")) {
             const icons = webManifestIconUrls(JSON.parse(decoder.decode(bytes)));

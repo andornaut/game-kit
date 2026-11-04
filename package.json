@@ -88,7 +88,6 @@
     "./records": "./src/records.ts",
     "./rect": "./src/rect.ts",
     "./rgba": "./src/rgba.ts",
-    "./save/contracts": "./src/save/contracts.ts",
     "./save/saveStore": "./src/save/saveStore.ts",
     "./save/storage": "./src/save/storage.ts",
     "./save/versionedSave": "./src/save/versionedSave.ts",

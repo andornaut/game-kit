@@ -2,13 +2,13 @@
 // The game owns the condition union, its evaluators, the scopes and facts they are judged at,
 // tiers, strings, art and storage keys. This module judges conditions, orders and awards
 // badges, keeps the earned record in its own versioned save and queues unlock notices.
-import type { SaveStorage } from "./save/contracts.ts";
 import {
   type SaveKeys,
   saveStore,
   type StoreLoadResult,
   type StoreSaveResult,
 } from "./save/saveStore.ts";
+import type { SaveStorage } from "./save/storage.ts";
 import type { Checked, SaveFormat, StoredObject } from "./save/versionedSave.ts";
 
 // A badge. It carries no display strings: a game extends it with its own presentation fields.

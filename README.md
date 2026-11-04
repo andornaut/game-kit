@@ -22,6 +22,11 @@ The `exports` map and the exported declarations define the public interface. Int
 
 Compatible fixes are patch versions and additions are minor versions. Incompatible changes are major versions after 1.0, and minor versions with a migration section below before 1.0. Update the manifest and lockfile together. Documentation-only changes need no version bump.
 
+## Migration to 0.13.0
+
+- `save/contracts` is removed. Import `SaveStorage` from `@andornaut/game-kit/save/storage`, which defines it.
+- `web/pwa/vite/precachePlugin`: a public file the page links, or an icon a linked web app manifest names, that is missing from the public directory now fails the build instead of being left out with a warning. Add the file or remove the link.
+
 ## Migration to 0.12.0
 
 - `web/pwa/cachePolicy`: `CachePolicy.revalidatedUrls` is now optional and ignored, and a later release removes it; delete it from each game's policy. The worker serves content-hashed build output and every sound file cache-first, and the page and every other precached file network-first, with the cached copy answering offline. An unhashed file can change under its name, so code that reads it must see the deploy the page came from. A file that was revalidated but is not precached is now network-only, so precache it to keep it offline. `cachedUrlsOf` returns `CachedUrls`, the precache list and the sound files as separate sets, which `strategyFor` takes in place of one set.

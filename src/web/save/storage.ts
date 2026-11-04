@@ -1,7 +1,7 @@
 // Web Storage shaped key-value objects as the save storage port: a read or write that throws
 // (private mode, quota, blocked site data) becomes a rejected promise, which saveStore reports as
 // unavailable.
-import type { SaveStorage } from "../../save/contracts.ts";
+import type { SaveStorage } from "../../save/storage.ts";
 
 // The part of a Web Storage object (localStorage, sessionStorage) the adapters use.
 export interface StorageLike {

@@ -32,7 +32,6 @@
     "src/records.ts",
     "src/rect.ts",
     "src/rgba.ts",
-    "src/save/contracts.ts",
     "src/save/saveStore.ts",
     "src/save/storage.ts",
     "src/save/versionedSave.ts",

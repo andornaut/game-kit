@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -15,17 +15,18 @@ const POLICY: CachePolicy = {
 };
 
 const INDEX = `<!doctype html>
-<html><head><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/missing.png">
+<html><head><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/favicon.png">
 </head><body><script type="module" src="/main.js"></script></body></html>
 `;
 
-// A site whose page loads main.js and links the web app manifest, which names one icon, and a
-// worker entry that logs the manifest the build writes in, or holds no placeholder.
+// A site whose page loads main.js and links a favicon and the web app manifest, which names one
+// icon, and a worker entry that logs the manifest the build writes in, or holds no placeholder.
 function site(icon: string, placeholder = true): string {
   const root = mkdtempSync(join(tmpdir(), "kit-precache-"));
   const files: Record<string, string> = {
     "index.html": INDEX,
     "main.js": "console.log('main');\n",
+    "public/favicon.png": "favicon",
     "public/icon.png": icon,
     "public/manifest.webmanifest": JSON.stringify({ icons: [{ src: "/icon.png" }] }),
     "sw.js": placeholder ? "console.log(GAME_KIT_PRECACHE_MANIFEST);\n" : "console.log('sw');\n",
@@ -39,13 +40,23 @@ function site(icon: string, placeholder = true): string {
 
 interface Build {
   readonly hashedFiles?: PrecachePluginOptions["hashedFiles"];
+  // A public file to delete from the site before building.
+  readonly missing?: string;
   readonly placeholder?: boolean;
   // An existing site to build again, as Vite's output names depend on the root.
   readonly root?: string;
 }
 
 // Builds the site in memory and returns the precache manifest written into sw.js.
-async function precache({ hashedFiles, placeholder, root = site("icon", placeholder) }: Build) {
+async function precache({
+  hashedFiles,
+  missing,
+  placeholder,
+  root = site("icon", placeholder),
+}: Build) {
+  if (missing !== undefined) {
+    rmSync(join(root, "public", missing));
+  }
   const result = await build({
     build: { minify: false, write: false },
     configFile: false,
@@ -79,6 +90,7 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     expect(manifest.urls).toEqual([
       "/",
       expect.stringMatching(/^\/assets\/index-[\w-]{8}\.js$/),
+      "/favicon.png",
       "/icon.png",
       "/manifest.webmanifest",
     ]);
@@ -113,6 +125,16 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
         },
       },
       "precache: no art",
+    ],
+    [
+      "a missing public file the page links",
+      { missing: "favicon.png" },
+      "precache: /favicon.png is not in ",
+    ],
+    [
+      "a missing icon the web app manifest names",
+      { missing: "icon.png" },
+      "precache: /icon.png is not in ",
     ],
     [
       "a worker without the placeholder",

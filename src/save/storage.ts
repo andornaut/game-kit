@@ -1,7 +1,10 @@
-// In-memory implementation of the game save storage port.
-import type { SaveStorage } from "./contracts.ts";
+// The game save storage port and its in-memory implementation.
 
-export type { SaveStorage } from "./contracts.ts";
+// Key-value storage for saves. Rejected operations are reported by saveStore as unavailable.
+export interface SaveStorage {
+  read(key: string): Promise<string | null>;
+  write(key: string, value: string): Promise<void>;
+}
 
 // Storage held in entries, for tests.
 export function memoryStorage(entries: Map<string, string> = new Map()): SaveStorage {
