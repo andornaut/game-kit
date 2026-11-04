@@ -7,7 +7,7 @@ import { dirname, resolve } from "node:path";
 interface Manifest {
   devDependencies?: unknown;
   exports: Record<string, string | { import?: string; types: string }>;
-  files: string[];
+  files?: string[];
   scripts?: unknown;
 }
 

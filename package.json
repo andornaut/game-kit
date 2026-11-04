@@ -50,12 +50,6 @@
       "optional": true
     }
   },
-  "files": [
-    "src",
-    "README.md",
-    "LICENSE",
-    "SOURCE_COMMIT"
-  ],
   "exports": {
     "./achievements": "./src/achievements.ts",
     "./achievements/preview": "./src/achievements/preview.ts",
