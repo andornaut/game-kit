@@ -11,8 +11,6 @@
     "format": "prettier --write . && eslint --fix .",
     "lint": "prettier --check . && eslint --max-warnings 0 . && markdownlint-cli2",
     "test": "vitest run",
-    "release:consumers": "node scripts/check-release-consumers.ts",
-    "release:pack": "node scripts/pack.ts",
     "verify": "node scripts/check.ts"
   },
   "devDependencies": {
