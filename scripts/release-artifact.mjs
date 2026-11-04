@@ -67,8 +67,13 @@ assert.deepEqual(Object.keys(storageModule), ['memoryStorage']);
 import { findTraversal } from '@andornaut/game-kit/terrain/traversal';
 import { beginCrumblingStep, endCrumblingStep } from '@andornaut/game-kit/terrain/crumbling';
 import { renderPolicy } from '@andornaut/game-kit/web/headers/securityHeaders';
+import { frameTurnFor } from '@andornaut/game-kit/web/view/frameTurn';
 assert.equal(clamp(0,1,2), 1);
 assert.equal(renderPolicy({'default-src': ["'self'"]}), "default-src 'self'");
+assert.equal(frameTurnFor('landscape', true, 'portrait-secondary'), -90);
+for (const sheet of ['frameTurnLandscapeGame.css', 'frameTurnPortraitGame.css']) {
+  assert.ok(import.meta.resolve('@andornaut/game-kit/web/view/' + sheet).endsWith('/dist/web/view/' + sheet));
+}
 assert.equal(typeof findTraversal, 'function');
 assert.equal(typeof beginCrumblingStep, 'function');
 assert.equal(typeof endCrumblingStep, 'function');

@@ -17,6 +17,7 @@
     "src/view/phaser/uiCommands.ts",
     "src/view/phaser/uiComposite.ts",
     "src/view/phaser/uiProjection.ts",
-    "src/view/phaser/uiSubmitter.ts"
+    "src/view/phaser/uiSubmitter.ts",
+    "src/web/view/phaser/followFrameTurn.ts"
   ]
 }

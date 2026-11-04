@@ -107,7 +107,16 @@
     "./view/settleFit": "./src/view/settleFit.ts",
     "./web/headers/securityHeaders": "./src/web/headers/securityHeaders.ts",
     "./web/headers/vite/securityHeadersPlugin": "./src/web/headers/vite/securityHeadersPlugin.ts",
-    "./web/pwa/dom/visibility": "./src/web/pwa/dom/visibility.ts"
+    "./web/pwa/dom/visibility": "./src/web/pwa/dom/visibility.ts",
+    "./web/save/dom/localSaveStorage": "./src/web/save/dom/localSaveStorage.ts",
+    "./web/save/dom/pageSessionStore": "./src/web/save/dom/pageSessionStore.ts",
+    "./web/save/sessionStore": "./src/web/save/sessionStore.ts",
+    "./web/save/storage": "./src/web/save/storage.ts",
+    "./web/view/dom/watchFrameTurn": "./src/web/view/dom/watchFrameTurn.ts",
+    "./web/view/frameTurn": "./src/web/view/frameTurn.ts",
+    "./web/view/frameTurnLandscapeGame.css": "./src/web/view/frameTurnLandscapeGame.css",
+    "./web/view/frameTurnPortraitGame.css": "./src/web/view/frameTurnPortraitGame.css",
+    "./web/view/phaser/followFrameTurn": "./src/web/view/phaser/followFrameTurn.ts"
   },
   "repository": {
     "type": "git",

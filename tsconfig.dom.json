@@ -4,5 +4,10 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": []
   },
-  "files": ["src/web/pwa/dom/visibility.ts"]
+  "files": [
+    "src/web/pwa/dom/visibility.ts",
+    "src/web/save/dom/localSaveStorage.ts",
+    "src/web/save/dom/pageSessionStore.ts",
+    "src/web/view/dom/watchFrameTurn.ts"
+  ]
 }

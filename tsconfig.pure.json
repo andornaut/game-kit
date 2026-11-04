@@ -45,6 +45,9 @@
     "src/view/modalDim.ts",
     "src/view/pagePoint.ts",
     "src/view/settleFit.ts",
-    "src/web/headers/securityHeaders.ts"
+    "src/web/headers/securityHeaders.ts",
+    "src/web/save/sessionStore.ts",
+    "src/web/save/storage.ts",
+    "src/web/view/frameTurn.ts"
   ]
 }

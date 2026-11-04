@@ -27,6 +27,10 @@ Compatible fixes use patch versions; additive public facilities use minor versio
 - `web/headers/securityHeaders` keeps the copied interface, except that `cspHash(text)` is now `sha256Source(base64Digest)` and `unhashedAssets(context, fileNames)` takes the content-hashed name pattern (`VITE_HASHED_NAME` for Vite's default) as its second argument. Hashing moved into the Vite plugin.
 - `web/headers/vite/securityHeadersPlugin` takes the same options plus an optional `hashedName`, and also builds without a public directory.
 - `web/pwa/dom/visibility` defines `VisibilitySource`, takes `watchVisibility(eventTarget, visibilitySource, onChange)` and returns a function that removes its listeners.
+- `web/save/storage` holds the pure `StorageLike`, `browserStorage` and `lazyStorage`, and `web/save/dom/localSaveStorage` holds `localSaveStorage()`. `StorageLike` is a structural interface instead of `Pick<Storage, ...>`. Neither re-exports `SaveStorage`: import it from `save/contracts` or `save/storage`, which also exports `memoryStorage`.
+- `web/save/dom/pageSessionStore` keeps `sessionRead`, `sessionWrite` and `sessionRemove` over the page's `sessionStorage`. Their policy is `web/save/sessionStore.createSessionStore(lookup)`, which accepts any `SessionStorageLike`.
+- `web/view/frameTurn` holds the pure turn policy: `GameOrientation`, `FRAME_TURN_ATTRIBUTE`, `DEFAULT_TURN`, `turnedFrameQuery` and `frameTurnFor`. `web/view/dom/watchFrameTurn` holds `FrameTurnHost`, `FrameTurnWatch` and `OrientationLockable`, and takes the game orientation first: `watchFrameTurn(gameOrientation, host)` and `lockGameOrientation(gameOrientation, screen)`. The stylesheets are `web/view/frameTurnLandscapeGame.css` and `web/view/frameTurnPortraitGame.css`. `FrameTurn` and `pageToGame` remain in `view/pagePoint`.
+- `web/view/phaser/followFrameTurn` takes `followFrameTurn(watch, gameSize, parent, game)`, the game last. It lives under `web/` because it owns the page viewport lifecycle (window, document and visual viewport listeners and the `--page-height` property the stylesheets read) and depends on `web/view/dom/watchFrameTurn`; `view/` keeps geometry and engine adapters with no website imports.
 
 ## Migration to 0.8.0
 
@@ -69,8 +73,13 @@ Paths are relative to `src/`. The source tree contains game mechanisms and their
 | `text/*` except `text/phaser/*`                                                                                   | Pure                     | Bitmap font metrics, fixed-size wrapping, overflow and pixel atlas geometry      |
 | `view/fitCheck`, `view/modalDim`, `view/pagePoint`, `view/settleFit`                                              | Pure                     | Fit decisions, palette dimming, coordinate mapping and bounded settling          |
 | `web/headers/securityHeaders`                                                                                     | Pure                     | Content-Security-Policy rules and Cloudflare `_headers` rendering                |
+| `web/save/sessionStore`, `web/save/storage`                                                                       | Pure                     | Never-throwing session store and Web Storage save adapters                       |
+| `web/view/frameTurn` and its `frameTurn*Game.css` stylesheets                                                     | Pure, CSS                | Page frame turn policy and the turned-frame stylesheets                          |
 | `clock/phaser/*`, `input/phaser/*`, `progress/phaser/*`, `text/phaser/*`, `view/phaser/*`                         | Phaser, browser renderer | Frame caps, input guards, progress drawing, fonts, snapshots and modal backdrops |
+| `web/view/phaser/followFrameTurn`                                                                                 | Phaser, browser renderer | Phaser fitting and pointer mapping through the page frame turn                   |
 | `web/pwa/dom/visibility`                                                                                          | Browser DOM              | Page visibility across `visibilitychange` and the back-forward cache             |
+| `web/save/dom/localSaveStorage`, `web/save/dom/pageSessionStore`                                                  | Browser DOM              | The page's `localStorage` and `sessionStorage`                                   |
+| `web/view/dom/watchFrameTurn`                                                                                     | Browser DOM              | Marks the frame turn on `<html>` and requests the orientation lock               |
 | `web/headers/vite/securityHeadersPlugin`                                                                          | Vite, Node build time    | Writes `_headers` with per-page inline hashes                                    |
 
 A module's directory names its environment, and its `tsconfig.<environment>.json` lists it explicitly:
