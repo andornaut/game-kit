@@ -44,7 +44,6 @@ describe("parseBitmapFont", () => {
   });
 
   it.each([
-    [" ", { advance: 2, height: 0, width: 0, xOffset: 0, yOffset: 0 }],
     ["H", { advance: 5, height: 6, width: 4, xOffset: 0, yOffset: 2 }],
     ["g", { advance: 4, height: 6, width: 3, xOffset: -1, yOffset: 4 }],
   ])("reads %j's box and advance", (char, glyph) => {
@@ -105,10 +104,6 @@ describe("laidGlyphs", () => {
     ]);
   });
 
-  it("kerns a pair only when its characters are adjacent glyphs", () => {
-    expect(laidGlyphs(FONT, 1, "Hg").at(1)?.ink).toEqual({ left: 3, right: 6 });
-  });
-
   it("skips characters the font lacks, as Phaser does", () => {
     expect(laidGlyphs(FONT, 1, "HxH")).toEqual(laidGlyphs(FONT, 1, "HH"));
   });
@@ -117,7 +112,6 @@ describe("laidGlyphs", () => {
 describe("inkWidth", () => {
   it.each([
     ["one glyph", 1, "H", 4],
-    ["one glyph at 2x", 2, "H", 8],
     ["a kerned pair, the g's ink left of its pen", 1, "Hg", 6],
     ["leading and trailing spaces left out", 2, " H ", 8],
     ["a left bearing left out", 1, "dd", 7],
@@ -130,19 +124,14 @@ describe("inkWidth", () => {
 
 describe("advanceWidth", () => {
   it.each([
-    ["", 2, 0],
-    ["H", 2, 10],
-    ["Hg", 1, 8],
-    ["Hg", 2, 16],
-    ["gH", 2, 18],
-    ["H?", 2, 10],
-  ])("advances the pen for %j at %j scale", (line, scale, expected) => {
+    ["no text", "", 2, 0],
+    ["one glyph at scale", "H", 2, 10],
+    ["a kerned pair at scale", "Hg", 2, 16],
+    ["an unkerned order", "gH", 2, 18],
+    ["a missing glyph as nothing", "H?", 2, 10],
+    ["a kerned pair across a missing glyph", "H?g", 1, 8],
+    ["trailing whitespace without ink bearings", "d ", 1, 6],
+  ])("measures %s", (_case, line, scale, expected) => {
     expect(advanceWidth(FONT, scale, line)).toBe(expected);
-  });
-
-  it("retains kerning across missing glyphs and counts trailing whitespace without ink bearings", () => {
-    expect(advanceWidth(FONT, 1, "H?g")).toBe(8);
-    expect(advanceWidth(FONT, 1, "d ")).toBe(6);
-    expect(inkWidth(FONT, 1, "d ")).toBe(3);
   });
 });

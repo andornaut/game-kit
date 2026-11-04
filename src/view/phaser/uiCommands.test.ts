@@ -170,47 +170,6 @@ describe("high-density UI kernel", () => {
     expect(target.context.fill).toHaveBeenCalledTimes(1);
     expect(target.ctx.globalAlpha).toBe(0.5);
   });
-  it.each(["fill", "multiply"] as const)(
-    "preserves source alpha for %s raster tint",
-    (tintMode) => {
-      const target = surface(80, 40);
-      const scratch = surface(1, 1);
-      const source = { pixels: new Uint8ClampedArray([80, 160, 240, 128]) };
-      const release = vi.fn();
-      presentUi(
-        {
-          context: target.ctx,
-          createSurface: () => scratch.ctx,
-          releaseSurface: release,
-          resizeBacking: vi.fn(),
-        },
-        {
-          commands: [
-            {
-              alpha: 0.45,
-              kind: "quad",
-              owner,
-              quad: points,
-              raster: {
-                image: source as unknown as CanvasImageSource,
-                source: { height: 1, width: 1, x: 0, y: 0 },
-              },
-              sampling: "nearest",
-              tint: [128, 128, 128],
-              tintMode,
-            },
-          ],
-          id: 1,
-          projection,
-        },
-      );
-      expect([...scratch.canvas.pixels]).toEqual(
-        tintMode === "fill" ? [128, 128, 128, 128] : [40, 80, 120, 128],
-      );
-      expect(target.ctx.globalAlpha).toBe(0.45);
-      expect(release).toHaveBeenCalledWith(scratch.ctx);
-    },
-  );
   it("reads the same default framebuffer synchronously and flips/unpremultiplies once", () => {
     const { context, gl } = glContext([0, 64, 0, 128, 32, 0, 0, 64]);
     const result = readUiWorldFrame(context, {
@@ -318,33 +277,6 @@ it("does not remap or allocate after reentrant compositor disposal", () => {
   expect(createSurface).not.toHaveBeenCalled();
   expect(remap).not.toHaveBeenCalled();
 });
-it("uses the original raster directly for untinted MULTIPLY without scratch allocation", () => {
-  const target = surface(80, 40);
-  const createSurface = vi.fn();
-  const image = {} as CanvasImageSource;
-  presentUi(
-    { context: target.ctx, createSurface, releaseSurface: vi.fn(), resizeBacking: vi.fn() },
-    {
-      commands: [
-        {
-          alpha: 0.5,
-          kind: "quad",
-          owner,
-          quad: points,
-          raster: { image, source: { height: 4, width: 2, x: 5, y: 6 } },
-          sampling: "nearest",
-          tint: [255, 255, 255],
-          tintMode: "multiply",
-        },
-      ],
-      id: 1,
-      projection,
-    },
-  );
-  expect(createSurface).not.toHaveBeenCalled();
-  expect(target.context.drawImage).toHaveBeenCalledWith(image, 5, 6, 2, 4, 0, 0, 2, 4);
-});
-
 it.each(["pre-existing", "readback"])("rejects nonthrowing %s GL errors", (phase) => {
   const { context, gl } = glContext([0, 0, 0, 0, 0, 0, 0, 0]);
   if (phase === "pre-existing") {
@@ -418,11 +350,12 @@ it.each([
     const target = surface(80, 40);
     const scratch = surface(1, 1);
     const image = { pixels: new Uint8ClampedArray([80, 160, 240, 128]) };
+    const release = vi.fn();
     presentUi(
       {
         context: target.ctx,
         createSurface: () => scratch.ctx,
-        releaseSurface: vi.fn(),
+        releaseSurface: release,
         resizeBacking: vi.fn(),
       },
       {
@@ -468,6 +401,7 @@ it.each([
       tintMode === "fill" ? [128, 128, 128, 128] : [40, 80, 120, 128],
     );
     expect(target.ctx.globalAlpha).toBe(0.45);
+    expect(release).toHaveBeenCalledWith(scratch.ctx);
   },
 );
 it("skips finite zero-ink quads but rejects invalid or nondegenerate zero-span raster mappings", () => {

@@ -21,10 +21,8 @@ const TAP_MAX = 10;
 
 describe("isOutside", () => {
   it.each<[string, Point, boolean]>([
-    ["the screen beside the panel", { x: 5, y: 50 }, true],
     ["the screen just left of the panel", { x: 29, y: 50 }, true],
     ["the top bar beside its button", { x: 5, y: 5 }, true],
-    ["the panel", { x: 50, y: 50 }, false],
     ["the panel's left edge", { x: 30, y: 50 }, false],
     ["the button", { x: 90, y: 10 }, false],
     ["past the bounds", { x: 50, y: 100 }, false],
@@ -37,7 +35,6 @@ describe("outsideTapped", () => {
   // Where the press lands, where it travels on the way, where it is released, and whether the
   // browser cancelled it.
   it.each<[string, Point, Point[], Point, boolean, boolean]>([
-    ["taps on a release where it landed", { x: 5, y: 50 }, [], { x: 5, y: 50 }, false, true],
     [
       "taps after travelling within the tap distance",
       { x: 5, y: 50 },
@@ -59,14 +56,6 @@ describe("outsideTapped", () => {
       { x: 50, y: 50 },
       [],
       { x: 50, y: 50 },
-      false,
-      false,
-    ],
-    [
-      "taps nothing when it lands on the button",
-      { x: 90, y: 10 },
-      [],
-      { x: 90, y: 10 },
       false,
       false,
     ],

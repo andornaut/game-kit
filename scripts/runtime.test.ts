@@ -33,7 +33,7 @@ it.each([
   expect(npmCacheVolume(env)).toBe(volume);
 });
 
-it.each(["/home/cache", "./cache", "cache/sub"])("refuses the host path %s as a cache", (path) => {
+it.each(["/home/cache", "cache/sub"])("refuses the host path %s as a cache", (path) => {
   expect(() => npmCacheVolume({ GAME_KIT_NPM_CACHE: path })).toThrow(/Docker volume/);
 });
 

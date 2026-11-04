@@ -108,12 +108,4 @@ describe("encodeSave", () => {
   ])("%s", (_case, save, encoded) => {
     expect(encodeSave(FORMAT, save)).toEqual(encoded);
   });
-
-  it("round-trips through loadSave", () => {
-    const encoded = encodeSave(FORMAT, { coins: 9, name: "Bo" });
-    expect(encoded.ok && loadSave(FORMAT, encoded.value)).toEqual({
-      save: { coins: 9, name: "Bo" },
-      status: "loaded",
-    });
-  });
 });

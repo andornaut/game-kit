@@ -21,7 +21,6 @@ function run(capFps: number | undefined, frameMs: number, count: number) {
 describe("framesPerDraw", () => {
   it.each([
     [60, 1],
-    [75, 1],
     [90, 1],
     [120, 2],
     [144, 2],

@@ -40,30 +40,33 @@ function faultyStorage(entries: Map<string, string>, faults: { read?: boolean; w
 }
 
 describe("saveStore", () => {
-  it.each(["bigint", "cycle", "encoder"])(
-    "reports %s encoding failure without writing",
-    async (kind) => {
-      const entries = new Map([[KEYS.save, STORED]]);
-      const cycle: Record<string, unknown> = {};
-      cycle.self = cycle;
-      const format: SaveFormat<number> = {
-        ...FORMAT,
-        encode: () => {
-          if (kind === "encoder") {
-            throw new Error("private encoder detail");
-          }
-          return { ok: true, value: kind === "cycle" ? cycle : { value: 1n } };
-        },
-      };
-      const { calls, storage } = faultyStorage(entries, {});
-      expect(await saveStore(storage, KEYS, format).save(1)).toEqual({
-        reason: "The save could not be encoded as JSON",
-        status: "invalid",
-      });
-      expect(calls.writes).toBe(0);
-      expect(entries.get(KEYS.save)).toBe(STORED);
-    },
-  );
+  // A save the format refuses, or whose encoding JSON cannot hold, keeps the stored one.
+  it.each([
+    ["format refusal", "debt"],
+    ["bigint", "The save could not be encoded as JSON"],
+    ["cycle", "The save could not be encoded as JSON"],
+    ["encoder", "The save could not be encoded as JSON"],
+  ])("reports %s encoding failure without writing", async (kind, reason) => {
+    const entries = new Map([[KEYS.save, STORED]]);
+    const cycle: Record<string, unknown> = {};
+    cycle.self = cycle;
+    const format: SaveFormat<number> =
+      kind === "format refusal"
+        ? FORMAT
+        : {
+            ...FORMAT,
+            encode: () => {
+              if (kind === "encoder") {
+                throw new Error("private encoder detail");
+              }
+              return { ok: true, value: kind === "cycle" ? cycle : { value: 1n } };
+            },
+          };
+    const { calls, storage } = faultyStorage(entries, {});
+    expect(await saveStore(storage, KEYS, format).save(-1)).toEqual({ reason, status: "invalid" });
+    expect(calls.writes).toBe(0);
+    expect(entries.get(KEYS.save)).toBe(STORED);
+  });
   it("round-trips a save", async () => {
     const entries = new Map<string, string>();
     const store = saveStore(memoryStorage(entries), KEYS, FORMAT);
@@ -87,15 +90,6 @@ describe("saveStore", () => {
     expect(entries.get(KEYS.backup)).toBe(backup);
     expect((await store.save(5)).status).toBe(written);
     expect(entries.get(KEYS.save)).toBe(written === "saved" ? STORED : raw);
-  });
-
-  it("refuses to write a save the format cannot encode and keeps the stored one", async () => {
-    const entries = new Map([[KEYS.save, STORED]]);
-    expect(await saveStore(memoryStorage(entries), KEYS, FORMAT).save(-1)).toEqual({
-      reason: "debt",
-      status: "invalid",
-    });
-    expect(entries.get(KEYS.save)).toBe(STORED);
   });
 
   describe("when storage throws", () => {

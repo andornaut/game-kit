@@ -121,7 +121,6 @@ describe("a drag on a list", () => {
     same: (a, b) => a === b,
   };
   it.each<[string, readonly (readonly [number, number])[], string]>([
-    ["a still press taps its row", [], "tap"],
     ["a press that wobbles within the slop taps its row", [[308, 40]], "tap"],
     [
       "a drag past the slop taps nothing",

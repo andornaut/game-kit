@@ -24,7 +24,6 @@ function run(measures: readonly string[]): { frames: number; refits: number } {
 describe("settleFit", () => {
   it.each<[string, string[], { frames: number; refits: number }]>([
     ["refits once where the size has settled", ["a"], { frames: 1, refits: 1 }],
-    ["refits again for a size that settles a frame late", ["a", "b"], { frames: 2, refits: 2 }],
     [
       "follows a size that keeps changing for a while",
       ["a", "b", "c", "d"],

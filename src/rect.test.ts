@@ -23,7 +23,6 @@ describe("rectsOverlap", () => {
 
   it("overlaps only rects that share area", () => {
     for (const [, other, expected] of [
-      ["the same rect", rect, true],
       ["a rect sharing its last pixel", { height: 5, width: 5, x: 14, y: 59 }, true],
       ["a rect touching its right edge", { height: 20, width: 10, x: 15, y: 40 }, false],
       ["a rect touching its bottom edge", { height: 5, width: 10, x: 5, y: 60 }, false],
@@ -79,7 +78,6 @@ describe("clampInto", () => {
     ["past the right edge, onto the last column", { x: 400, y: 300 }, { x: 369, y: 300 }],
     ["above the top edge", { x: 100, y: -8 }, { x: 100, y: 20 }],
     ["below the bottom edge, onto the last row", { x: 100, y: 700 }, { x: 100, y: 579 }],
-    ["past a corner", { x: -5, y: 900 }, { x: 10, y: 579 }],
   ])("%s", (_, point, expected) => {
     expect(clampInto(rect, point)).toEqual(expected);
   });

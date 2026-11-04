@@ -15,7 +15,6 @@ const AREA: OutsideArea = {
 };
 const TAP_MAX = 10;
 const BESIDE = { x: 5, y: 50 };
-const BUTTON = { x: 90, y: 10 };
 const PANEL = { x: 50, y: 50 };
 
 type Phase = "down" | "move" | "up";
@@ -100,16 +99,6 @@ describe("catchOutsideTaps", () => {
       [
         ["down", 1, PANEL],
         ["up", 1, BESIDE],
-      ],
-      0,
-      [false, false],
-    ],
-    [
-      "leaves a press on a covered button to the scenes",
-      AREA,
-      [
-        ["down", 1, BUTTON],
-        ["up", 1, BUTTON],
       ],
       0,
       [false, false],

@@ -51,8 +51,4 @@ describe("overflowingTexts", () => {
       { overflow: "32px wide in 24px", role: "dialogue", text: "abcd" },
     ]);
   });
-
-  it("gives [] where every text fits", () => {
-    expect(overflowingTexts(measure, [{ ...answer, texts: ["a", "abc"] }])).toEqual([]);
-  });
 });

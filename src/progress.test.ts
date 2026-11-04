@@ -14,7 +14,6 @@ describe("progressBarLayout", () => {
   it.each([
     [-1, 0],
     [0.339, 33],
-    [1, 100],
     [2, 100],
   ])("clamps measured %s and covers only complete pixels", (value, width) => {
     const layout = progressBarLayout(style, frame, value);

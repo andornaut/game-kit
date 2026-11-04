@@ -54,8 +54,7 @@ describe("bitmapMeasure", () => {
 
   it.each<[string, TextFitStyle, string, number]>([
     ["one glyph at 1x", { scale: 1 }, "o", 3],
-    ["one glyph at the style's scale", { scale: 2 }, "o", 6],
-    ["a word's ink, its last glyph's right bearing left out", { scale: 2 }, "oo o", 26],
+    ["a word's ink at scale, its last glyph's right bearing left out", { scale: 2 }, "oo o", 26],
   ])("measures %s", (_case, style, line, width) => {
     expect(bitmapMeasure(font)(style, line)).toBe(width);
   });

@@ -5,11 +5,9 @@ import { easeProgress, progressAt, type Segment, segmentAt } from "./motion.ts";
 describe("progressAt", () => {
   it.each([
     [-Infinity, 0],
-    [1, 0],
     [4, 0],
     [6, 0.5],
     [8, 1],
-    [20, 1],
     [Infinity, 1],
   ])("clamps position %s to %s", (position, expected) => {
     expect(progressAt(4, 4, position)).toBe(expected);

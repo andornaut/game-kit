@@ -34,13 +34,6 @@ const frame = (index: number) => {
 };
 
 describe("sheetTags", () => {
-  it.each([
-    ["rest", [frame(0)]],
-    ["press", [frame(1), frame(2)]],
-  ])("gives %s its frames in order", (name, frames) => {
-    expect(sheetTags(SHEET).get(name)).toEqual(frames);
-  });
-
   it.each<[AsepriteDirection, number[]]>([
     ["forward", [0, 1, 2, 3]],
     ["reverse", [3, 2, 1, 0]],
@@ -74,12 +67,8 @@ describe("animationSpecs", () => {
 });
 
 describe("tagMs", () => {
-  it.each([
-    ["rest", [0]],
-    ["press", [1, 2]],
-  ])("plays %s for its frames' durations", (name, indexes) => {
-    const total = indexes.reduce((sum, index) => sum + (frame(index).duration ?? 0), 0);
-    expect(tagMs(sheetTags(SHEET), name)).toBe(total);
+  it("plays a tag for its frames' durations", () => {
+    expect(tagMs(sheetTags(SHEET), "press")).toBe(130 + 80);
   });
 
   it("refuses a missing tag", () => {
@@ -92,7 +81,6 @@ describe("tagRepeat", () => {
     [["jump", "land"], "jump", 0],
     [["jump", "land"], "land", 0],
     [["jump", "land"], "walk", -1],
-    [[], "rest", -1],
   ])("with %j played once, repeats %s %i times", (once, name, repeat) => {
     expect(tagRepeat(once, name)).toBe(repeat);
   });

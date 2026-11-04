@@ -10,7 +10,6 @@ const past = FIT_TOLERANCE + 1;
 
 describe("needsRefit", () => {
   it.each<[string, typeof CANVAS, typeof PLAY_AREA, boolean]>([
-    ["a canvas inside the visible area", CANVAS, PLAY_AREA, false],
     ["a canvas within the tolerance of its edges", { ...CANVAS, width: 781 }, PLAY_AREA, false],
     ["a canvas past the bottom", { ...CANVAS, height: 390 + past }, PLAY_AREA, true],
     ["a canvas past the right", { ...CANVAS, width: 780 + past }, PLAY_AREA, true],

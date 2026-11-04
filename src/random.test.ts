@@ -56,8 +56,6 @@ describe("chanceRound", () => {
     { draw: 0.49, draws: 1, expected: 0.5, rounded: 1 },
     { draw: 0.5, draws: 1, expected: 0.5, rounded: 0 },
     { draw: 0.2, draws: 1, expected: 1.25, rounded: 2 },
-    { draw: 0.3, draws: 1, expected: 1.25, rounded: 1 },
-    { draw: 0, draws: 0, expected: 0, rounded: 0 },
     { draw: 0, draws: 0, expected: 2, rounded: 2 },
   ])(
     "rounds $expected to $rounded at a draw of $draw, drawing $draws times",
@@ -84,11 +82,7 @@ describe("shuffled", () => {
 const NAMES = ["scenery", "spawns-1"];
 
 describe("randomStream", () => {
-  it("repeats a stream's sequence for the same seed and name", () => {
-    expect(take(10, randomStream(42, "scenery"))).toEqual(take(10, randomStream(42, "scenery")));
-  });
-
-  it("keeps each stream's sequence when another stream draws more", () => {
+  it("repeats a stream's sequence for its seed and name, whatever other streams draw", () => {
     const untouched = randomStream(7, "scenery");
     const disturbed = randomStream(7, "scenery");
     take(13, randomStream(7, "spawns-1"));

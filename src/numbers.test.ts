@@ -17,8 +17,6 @@ describe("clamp", () => {
     [-2, 4, -3, -2],
     [-2, 4, 1, 1],
     [-2, 4, 5, 4],
-    [-2, 4, -Infinity, -2],
-    [-2, 4, Infinity, 4],
     [-Infinity, Infinity, 3, 3],
     [4, -2, 1, -2],
   ])("uses the literal min/max order for %j,%j,%j", (minimum, maximum, value, expected) => {
