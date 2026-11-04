@@ -3,7 +3,12 @@
 // tiers, strings, art and storage keys. This module judges conditions, orders and awards
 // badges, keeps the earned record in its own versioned save and queues unlock notices.
 import type { SaveStorage } from "./save/contracts.ts";
-import { type SaveKeys, saveStore } from "./save/saveStore.ts";
+import {
+  type SaveKeys,
+  saveStore,
+  type StoreLoadResult,
+  type StoreSaveResult,
+} from "./save/saveStore.ts";
 import type { Checked, SaveFormat, StoredObject } from "./save/versionedSave.ts";
 
 // A badge. It carries no display strings: a game extends it with its own presentation fields.
@@ -44,9 +49,10 @@ export interface Judge<Cond, Scope extends string, Facts> {
   // The progress of the condition furthest from done among conditions whose kind has progress:
   // the minimum have/need fraction, the first such condition on a tie, with have clamped to
   // between 0 and need (a need of 0 or less counts as done). undefined when no condition's kind
-  // has progress. Conditions without progress are left out, so a compound badge can show
-  // complete progress while one of its other conditions does not hold.
-  progress(facts: Facts, conditions: readonly Cond[]): Progress | undefined;
+  // has progress. It is never full unless every condition holds at scope: a full result is then
+  // reported one short, as { have: need - 1, need } for a need of 1 or more, { have: 0, need }
+  // for a need between 0 and 1, and { have: 0, need: 1 } for a need of 0 or less.
+  progress(scope: Scope, facts: Facts, conditions: readonly Cond[]): Progress | undefined;
 }
 
 function kindOf<Cond extends { readonly kind: string }, Scope extends string, Facts>(
@@ -68,16 +74,26 @@ function fraction({ have, need }: Progress): number {
   return need <= 0 ? 1 : have / need;
 }
 
+function isFull({ have, need }: Progress): boolean {
+  return need <= 0 || have >= need;
+}
+
+// progress one short of full.
+function short({ need }: Progress): Progress {
+  return need > 0 ? { have: Math.max(0, need - 1), need } : { have: 0, need: 1 };
+}
+
 // A judge built from one registry. A condition whose kind is not registered throws RangeError.
 export function judge<Cond extends { readonly kind: string }, Scope extends string, Facts>(
   kinds: ConditionKinds<Cond, Scope, Facts>,
 ): Judge<Cond, Scope, Facts> {
+  const holds = (scope: Scope, facts: Facts, condition: Cond): boolean => {
+    const kind = kindOf(kinds, condition);
+    return kind.scopes.includes(scope) && kind.holds(facts, condition);
+  };
   return {
-    holds(scope, facts, condition) {
-      const kind = kindOf(kinds, condition);
-      return kind.scopes.includes(scope) && kind.holds(facts, condition);
-    },
-    progress(facts, conditions) {
+    holds,
+    progress(scope, facts, conditions) {
       let least: Progress | undefined;
       for (const condition of conditions) {
         const kind = kindOf(kinds, condition);
@@ -88,6 +104,13 @@ export function judge<Cond extends { readonly kind: string }, Scope extends stri
         if (least === undefined || fraction(next) < fraction(least)) {
           least = next;
         }
+      }
+      if (
+        least !== undefined &&
+        isFull(least) &&
+        !conditions.every((condition) => holds(scope, facts, condition))
+      ) {
+        return short(least);
       }
       return least;
     },
@@ -212,21 +235,30 @@ export function earnedFormat<Id extends string>(
   };
 }
 
+// The ids an award added, in award order, and the status of the write that stored them:
+// undefined when nothing was added, so nothing was written.
+export interface AwardResult<Id> {
+  readonly added: readonly Id[];
+  readonly save: StoreSaveResult | undefined;
+}
+
 // The earned record, held in memory and written through a save store. Calls run one at a time
 // in call order, each on the record the previous one left, so concurrent calls lose nothing.
-// The first call of any kind reads storage; load() after that resolves to the current record.
-// Storage failures, a corrupt record and a record from a later version follow saveStore: the
-// record plays on in memory, and writes stop when saveStore stops them.
+// The first call of any kind reads storage. Storage failures, a corrupt record and a record
+// from a later version follow saveStore: the record plays on in memory, writes stop when
+// saveStore stops them, and each status is reported as saveStore reports it.
 export interface EarnedStore<Id> {
-  // The record once storage is read and every earlier call has applied.
-  load(): Promise<EarnedRecord<Id>>;
+  // The first read's status and reason, with the record as every earlier call has left it as
+  // save.
+  load(): Promise<StoreLoadResult<EarnedRecord<Id>>>;
   // The record as the calls applied so far have left it: fresh before the first read.
   record(): EarnedRecord<Id>;
   // Appends the ids not yet earned to earned and to unannounced, writes the record if any were
-  // added, and resolves to them.
-  award(ids: readonly Id[]): Promise<readonly Id[]>;
-  // Removes id from unannounced, writing the record if it was there.
-  announced(id: Id): Promise<void>;
+  // added, and resolves to them with the write's status.
+  award(ids: readonly Id[]): Promise<AwardResult<Id>>;
+  // Removes id from unannounced and writes the record, resolving to the write's status:
+  // undefined, with nothing written, when id was not unannounced.
+  announced(id: Id): Promise<StoreSaveResult | undefined>;
 }
 
 export function earnedStore<Id extends string>(
@@ -236,48 +268,52 @@ export function earnedStore<Id extends string>(
 ): EarnedStore<Id> {
   const store = saveStore(storage, keys, format);
   let current: EarnedRecord<Id> = format.fresh();
-  let loaded = false;
+  // The first read, which sets current when it resolves, or undefined before it starts.
+  let loaded: Promise<StoreLoadResult<EarnedRecord<Id>>> | undefined;
   let queue: Promise<unknown> = Promise.resolve();
 
-  // Runs operation after every earlier one, on the loaded record.
-  const enqueue = <T>(operation: () => Promise<T> | T): Promise<T> => {
+  // Runs operation after every earlier one, on the loaded record, with the first read's result.
+  const enqueue = <T>(
+    operation: (first: StoreLoadResult<EarnedRecord<Id>>) => Promise<T> | T,
+  ): Promise<T> => {
     const next = queue.then(async () => {
-      if (!loaded) {
-        loaded = true;
-        const { save } = await store.load();
-        current = save;
-      }
-      return operation();
+      loaded ??= store.load().then((result) => {
+        current = result.save;
+        return result;
+      });
+      return operation(await loaded);
     });
     queue = next.catch(() => undefined);
     return next;
   };
 
-  const write = async (next: EarnedRecord<Id>): Promise<void> => {
+  const write = (next: EarnedRecord<Id>): Promise<StoreSaveResult> => {
     current = next;
-    await store.save(next);
+    return store.save(next);
   };
 
   return {
     announced: (id) =>
       enqueue(async () => {
-        if (current.unannounced.includes(id)) {
-          await write({
-            earned: current.earned,
-            unannounced: current.unannounced.filter((pending) => pending !== id),
-          });
+        if (!current.unannounced.includes(id)) {
+          return undefined;
         }
+        return write({
+          earned: current.earned,
+          unannounced: current.unannounced.filter((pending) => pending !== id),
+        });
       }),
     award: (ids) =>
       enqueue(async () => {
         const earned = award(ids, current.earned);
         const added = earned.slice(current.earned.length);
-        if (added.length > 0) {
-          await write({ earned, unannounced: [...current.unannounced, ...added] });
+        if (added.length === 0) {
+          return { added, save: undefined };
         }
-        return added;
+        const save = await write({ earned, unannounced: [...current.unannounced, ...added] });
+        return { added, save };
       }),
-    load: () => enqueue(() => current),
+    load: () => enqueue((first) => ({ ...first, save: current })),
     record: () => current,
   };
 }

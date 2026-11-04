@@ -15,8 +15,9 @@ import {
   resolveThreshold,
   type Threshold,
 } from "./achievements.ts";
+import type { StoreLoadResult, StoreSaveResult } from "./save/saveStore.ts";
 import { memoryStorage, type SaveStorage } from "./save/storage.ts";
-import { loadSave } from "./save/versionedSave.ts";
+import { loadSave, type SaveFormat } from "./save/versionedSave.ts";
 
 // A synthetic catalogue: counters judged at either scope, a flag judged only at "end", and a
 // marker kind with no progress.
@@ -69,6 +70,19 @@ const CATALOGUE: readonly AchievementDef<Id, Cond, Tier>[] = [
 ];
 const IDS: readonly Id[] = CATALOGUE.map(({ id }) => id);
 const KEYS = { backup: "kit:earned-backup", save: "kit:earned" };
+const FRESH: EarnedRecord<Id> = { earned: [], unannounced: [] };
+const RECORD: EarnedRecord<Id> = { earned: ["a"], unannounced: [] };
+const stored = (value: object) => JSON.stringify({ ...value, version: 1 });
+const storageWith = (value: string) => memoryStorage(new Map([[KEYS.save, value]]));
+
+// Storage whose reads or writes throw.
+function failingStorage(failing: "read" | "write"): SaveStorage {
+  const inner = memoryStorage();
+  const fail = async (): Promise<never> => {
+    throw new Error("storage is offline");
+  };
+  return failing === "read" ? { ...inner, read: fail } : { ...inner, write: fail };
+}
 
 describe("judge.holds", () => {
   it.each<[string, Scope, Facts, Cond, boolean]>([
@@ -96,24 +110,32 @@ describe("judge.holds", () => {
   it("throws for an unregistered kind", () => {
     const stray = { kind: "toString" } as unknown as Cond;
     expect(() => JUDGE.holds("end", FACTS, stray)).toThrow(RangeError);
-    expect(() => JUDGE.progress(FACTS, [stray])).toThrow(RangeError);
+    expect(() => JUDGE.progress("end", FACTS, [stray])).toThrow(RangeError);
   });
 });
 
 describe("judge.progress", () => {
-  it.each<[string, Facts, readonly Cond[], ReturnType<typeof JUDGE.progress>]>([
-    ["one counter", FACTS, [{ count: 4, kind: "coins" }], { have: 3, need: 4 }],
-    ["a counter past its need, capped", FACTS, [{ count: 2, kind: "coins" }], { have: 2, need: 2 }],
+  it.each<[string, Scope, Facts, readonly Cond[], ReturnType<typeof JUDGE.progress>]>([
+    ["one counter", "step", FACTS, [{ count: 4, kind: "coins" }], { have: 3, need: 4 }],
+    [
+      "a held counter past its need, capped",
+      "step",
+      FACTS,
+      [{ count: 2, kind: "coins" }],
+      { have: 2, need: 2 },
+    ],
     [
       "a negative have, clamped",
+      "step",
       { ...FACTS, coins: -1 },
       [{ count: 2, kind: "coins" }],
       { have: 0, need: 2 },
     ],
-    ["only kinds without progress", FACTS, [{ flag: "x", kind: "flag" }], undefined],
-    ["no conditions", FACTS, [], undefined],
+    ["only kinds without progress", "end", FACTS, [{ flag: "x", kind: "flag" }], undefined],
+    ["no conditions", "end", FACTS, [], undefined],
     [
       "the minimum fraction, not the minimum have",
+      "step",
       { ...FACTS, gems: 5 },
       [
         { count: 4, kind: "coins" },
@@ -123,6 +145,7 @@ describe("judge.progress", () => {
     ],
     [
       "the first condition on a tied fraction",
+      "step",
       { ...FACTS, coins: 1, gems: 2 },
       [
         { count: 2, kind: "coins" },
@@ -131,16 +154,8 @@ describe("judge.progress", () => {
       { have: 1, need: 2 },
     ],
     [
-      "progress of a compound, leaving out a condition without progress",
-      FACTS,
-      [
-        { flag: "y", kind: "flag" },
-        { count: 3, kind: "coins" },
-      ],
-      { have: 3, need: 3 },
-    ],
-    [
       "a need of zero counted as done",
+      "step",
       { ...FACTS, gems: 0 },
       [
         { count: 0, kind: "gems" },
@@ -148,13 +163,64 @@ describe("judge.progress", () => {
       ],
       { have: 3, need: 6 },
     ],
-  ])("reports %s", (_, facts, conditions, progress) => {
-    expect(JUDGE.progress(facts, conditions)).toEqual(progress);
+    [
+      "a held compound as full",
+      "end",
+      FACTS,
+      [
+        { flag: "x", kind: "flag" },
+        { count: 3, kind: "coins" },
+      ],
+      { have: 3, need: 3 },
+    ],
+    [
+      "a compound one short while a condition without progress does not hold",
+      "end",
+      FACTS,
+      [
+        { flag: "y", kind: "flag" },
+        { count: 3, kind: "coins" },
+      ],
+      { have: 2, need: 3 },
+    ],
+    [
+      "a met counter one short outside its scope",
+      "end",
+      FACTS,
+      [{ count: 1, kind: "gems" }],
+      { have: 0, need: 1 },
+    ],
+    [
+      "a need between 0 and 1 as none of it while not held",
+      "end",
+      FACTS,
+      [{ count: 0.5, kind: "gems" }],
+      { have: 0, need: 0.5 },
+    ],
+    [
+      "a held need of zero as done",
+      "step",
+      FACTS,
+      [{ count: 0, kind: "gems" }],
+      { have: 0, need: 0 },
+    ],
+    [
+      "an unheld need of zero as none of one",
+      "end",
+      FACTS,
+      [{ count: 0, kind: "gems" }],
+      { have: 0, need: 1 },
+    ],
+  ])("reports %s", (_, scope, facts, conditions, progress) => {
+    expect(JUDGE.progress(scope, facts, conditions)).toEqual(progress);
   });
 
-  it("ignores scope", () => {
-    // gems is judged only at "step", but its progress is reported for display at any time.
-    expect(JUDGE.progress(FACTS, [{ count: 4, kind: "gems" }])).toEqual({ have: 1, need: 4 });
+  it("reports progress outside a kind's scopes", () => {
+    // gems is judged only at "step", but its progress is reported for display at any scope.
+    expect(JUDGE.progress("end", FACTS, [{ count: 4, kind: "gems" }])).toEqual({
+      have: 1,
+      need: 4,
+    });
   });
 });
 
@@ -250,7 +316,6 @@ describe("keepKnown", () => {
 
 describe("earnedFormat", () => {
   const FORMAT = earnedFormat(1, IDS);
-  const stored = (value: object) => JSON.stringify({ ...value, version: 1 });
 
   it.each<[string, object, EarnedRecord<Id>]>([
     [
@@ -338,7 +403,10 @@ describe("earnedStore", () => {
     ]);
     const store = earnedStore(memoryStorage(entries), KEYS, FORMAT);
     expect(store.record()).toEqual({ earned: [], unannounced: [] });
-    expect(await store.load()).toEqual({ earned: ["b"], unannounced: ["b"] });
+    expect(await store.load()).toEqual({
+      save: { earned: ["b"], unannounced: ["b"] },
+      status: "loaded",
+    });
     expect(store.record()).toEqual({ earned: ["b"], unannounced: ["b"] });
   });
 
@@ -363,7 +431,9 @@ describe("earnedStore", () => {
       // eslint-disable-next-line no-await-in-loop -- each award follows the previous one
       results.push(await store.award(ids));
     }
-    expect(results).toEqual(added);
+    expect(results).toEqual(
+      added.map((ids) => ({ added: ids, save: ids.length > 0 ? { status: "saved" } : undefined })),
+    );
     expect(store.record()).toEqual(record);
     expect(storedRecord(entries)).toEqual(record);
   });
@@ -379,7 +449,8 @@ describe("earnedStore", () => {
       store.announced("d"),
     ]);
     await drain();
-    await done;
+    const [, announced, repeated, unknown] = await done;
+    expect([announced, repeated, unknown]).toEqual([{ status: "saved" }, undefined, undefined]);
     expect(written).toEqual([
       { earned: ["a", "b", "c"], unannounced: ["a", "b", "c"], version: 1 },
       { earned: ["a", "b", "c"], unannounced: ["a", "c"], version: 1 },
@@ -402,9 +473,9 @@ describe("earnedStore", () => {
     ]);
     await drain();
     const [first, , second, , third, loaded] = await calls;
-    expect([first, second, third]).toEqual([["a"], ["b"], ["c"]]);
+    expect([first, second, third].map(({ added }) => added)).toEqual([["a"], ["b"], ["c"]]);
     const final = { earned: ["e", "a", "b", "c"], unannounced: ["b", "c"] };
-    expect(loaded).toEqual(final);
+    expect(loaded).toEqual({ save: final, status: "loaded" });
     expect(written.map(({ unannounced }) => unannounced)).toEqual([
       ["e", "a"],
       ["a"],
@@ -421,19 +492,123 @@ describe("earnedStore", () => {
       [KEYS.save, JSON.stringify({ earned: ["d"], unannounced: [], version: 1 })],
     ]);
     const store = earnedStore(memoryStorage(entries), KEYS, FORMAT);
-    expect(await store.award(["a", "d"])).toEqual(["a"]);
-    expect(await store.load()).toEqual({ earned: ["d", "a"], unannounced: ["a"] });
+    expect((await store.award(["a", "d"])).added).toEqual(["a"]);
+    expect(await store.load()).toEqual({
+      save: { earned: ["d", "a"], unannounced: ["a"] },
+      status: "loaded",
+    });
     expect(storedRecord(entries)).toEqual({ earned: ["d", "a"], unannounced: ["a"] });
   });
 
-  it("keeps a record from a later version and plays on in memory", async () => {
-    const newer = JSON.stringify({ earned: ["a"], unannounced: [], version: 2 });
-    const entries = new Map([[KEYS.save, newer]]);
-    const store = earnedStore(memoryStorage(entries), KEYS, FORMAT);
-    expect(await store.award(["b"])).toEqual(["b"]);
-    expect(store.record()).toEqual({ earned: ["b"], unannounced: ["b"] });
-    expect(entries.get(KEYS.save)).toBe(newer);
+  it.each<[string, () => SaveStorage, StoreLoadResult<EarnedRecord<Id>>]>([
+    ["a stored record", () => storageWith(stored(RECORD)), { save: RECORD, status: "loaded" }],
+    ["no stored record", () => memoryStorage(), { save: FRESH, status: "new" }],
+    [
+      "a corrupt record",
+      () => storageWith(stored({ earned: "a" })),
+      {
+        reason: "the record has no earned and unannounced lists",
+        save: FRESH,
+        status: "corrupt",
+      },
+    ],
+    [
+      "a record from a later version",
+      () => storageWith(JSON.stringify({ ...RECORD, version: 2 })),
+      {
+        reason: "the save is from version 2, newer than this game",
+        save: FRESH,
+        status: "newer",
+      },
+    ],
+    [
+      "unreadable storage",
+      () => failingStorage("read"),
+      {
+        reason: "storage is offline",
+        save: FRESH,
+        status: "unavailable",
+      },
+    ],
+  ])(
+    "passes through the load status for %s, with the current record",
+    async (_, storage, first) => {
+      const store = earnedStore(storage(), KEYS, FORMAT);
+      expect(await store.load()).toEqual(first);
+      await store.award(["e"]);
+      expect(await store.load()).toEqual({
+        ...first,
+        save: {
+          earned: [...first.save.earned, "e"],
+          unannounced: [...first.save.unannounced, "e"],
+        },
+      });
+    },
+  );
+
+  it("reads storage once, whichever call comes first", async () => {
+    let reads = 0;
+    const inner = storageWith(stored(RECORD));
+    const storage: SaveStorage = {
+      ...inner,
+      read: (key) => {
+        reads += 1;
+        return inner.read(key);
+      },
+    };
+    const store = earnedStore(storage, KEYS, FORMAT);
+    await store.award(["b"]);
+    await store.load();
+    await store.load();
+    expect(reads).toBe(1);
   });
+
+  it.each<[string, () => SaveStorage, SaveFormat<EarnedRecord<Id>>, StoreSaveResult]>([
+    [
+      "a failed write",
+      () => failingStorage("write"),
+      FORMAT,
+      {
+        reason: "storage is offline",
+        status: "unavailable",
+      },
+    ],
+    [
+      "a write blocked by a later version",
+      () => storageWith(JSON.stringify({ ...RECORD, version: 2 })),
+      FORMAT,
+      {
+        reason: "a newer version of the game wrote the stored save",
+        status: "unavailable",
+      },
+    ],
+    [
+      "a write blocked by unreadable storage",
+      () => failingStorage("read"),
+      FORMAT,
+      {
+        reason: "storage was unavailable at load",
+        status: "unavailable",
+      },
+    ],
+    [
+      "a record the format cannot encode",
+      () => memoryStorage(),
+      {
+        ...FORMAT,
+        encode: () => ({ ok: false, reason: "not encodable" }),
+      },
+      { reason: "not encodable", status: "invalid" },
+    ],
+  ])(
+    "reports %s from award and announced, keeping the record in memory",
+    async (_, storage, format, save) => {
+      const store = earnedStore(storage(), KEYS, format);
+      expect(await store.award(["b"])).toEqual({ added: ["b"], save });
+      expect(await store.announced("b")).toEqual(save);
+      expect(store.record()).toEqual({ earned: ["b"], unannounced: [] });
+    },
+  );
 
   it("keeps serving calls after a failed write", async () => {
     let fail = true;
@@ -449,11 +624,34 @@ describe("earnedStore", () => {
       },
     };
     const store = earnedStore(storage, KEYS, FORMAT);
-    expect(await store.award(["a"])).toEqual(["a"]);
+    expect(await store.award(["a"])).toEqual({
+      added: ["a"],
+      save: { reason: "quota exceeded", status: "unavailable" },
+    });
     expect(entries.has(KEYS.save)).toBe(false);
     fail = false;
-    expect(await store.award(["b"])).toEqual(["b"]);
+    expect(await store.award(["b"])).toEqual({ added: ["b"], save: { status: "saved" } });
     expect(storedRecord(entries)).toEqual({ earned: ["a", "b"], unannounced: ["a", "b"] });
+  });
+
+  it.each<[string, readonly Id[], Id]>([
+    ["nothing new to award", ["a"], "b"],
+    ["no ids to award", [], "c"],
+  ])("writes nothing and reports no status for %s or an id not unannounced", async (_, ids, id) => {
+    let writes = 0;
+    const inner = storageWith(stored(RECORD));
+    const storage: SaveStorage = {
+      ...inner,
+      write: (key, value) => {
+        writes += 1;
+        return inner.write(key, value);
+      },
+    };
+    const store = earnedStore(storage, KEYS, FORMAT);
+    expect(await store.award(ids)).toEqual({ added: [], save: undefined });
+    expect(await store.announced(id)).toBeUndefined();
+    expect(await store.announced("a")).toBeUndefined();
+    expect(writes).toBe(0);
   });
 });
 
