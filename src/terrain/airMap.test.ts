@@ -17,6 +17,7 @@ import {
   locateAir,
   nearestReachableAir,
   reachableAir,
+  sinksAir,
 } from "./airMap.ts";
 
 const TILE = 16;
@@ -361,5 +362,197 @@ describe("airMapHash", () => {
     expect(
       airMapHash(String, build(rows, perches, { ...OPTIONS, axisChangeSeconds: 1 }, PERCH_PROFILE)),
     ).not.toBe(airMapHash(String, first));
+  });
+});
+
+// Layouts whose hashes were recorded from the 0.16.0 build, before the build was restructured.
+const CAVES = ["c...#.....", "..#.#..c..", "..#...##..", "....c.....", "##..####..", ".........."];
+const tileBody = (x: number, y: number, width = TILE, height = TILE): Rect => ({
+  height,
+  width,
+  x,
+  y,
+});
+const CAVE_PERCHES = [tileBody(0, 48), tileBody(20, 48), tileBody(64, 48), tileBody(96, 16)];
+
+describe("build output", () => {
+  it.each([
+    {
+      hash: "8d98941c63d31ea7",
+      name: "caves",
+      perches: [...CAVE_PERCHES, tileBody(0, 48)],
+      profile: PROFILE,
+    },
+    {
+      hash: "79cd19ff4501181c",
+      name: "caves at two tiles a cell",
+      perches: CAVE_PERCHES.slice(0, 3),
+      profile: { ...PROFILE, cell: 2 },
+    },
+    {
+      hash: "4d3868d52e3c2912",
+      name: "caves with a body off the tile grid",
+      perches: [tileBody(64, 40, 20, 24), tileBody(3, 40, 20, 24)],
+      profile: { ...PROFILE, body: { ...PROFILE.body, height: 24, width: 20 } },
+    },
+  ])("matches the 0.16.0 hash for $name", ({ hash, perches, profile }) => {
+    expect(airMapHash(String, build(CAVES, perches, OPTIONS, profile))).toBe(hash);
+  });
+
+  it("sweeps each pair of neighbouring cells once for both of its edges", () => {
+    const sweeps: string[] = [];
+    const area = layout(["....", "....", "...."]);
+    const map = buildAirMap(OPTIONS, PROFILE, {
+      ...area,
+      blocked: (rect) => {
+        sweeps.push(`${rect.x},${rect.y},${rect.width},${rect.height}`);
+        return area.blocked(rect);
+      },
+    });
+    expect(sweeps).toHaveLength(map.nodes.length + map.edges.length / 2);
+    expect(new Set(sweeps).size).toBe(sweeps.length);
+    const [a, b] = [cell(map, 0, 0), cell(map, 1, 0)];
+    expect(map.edges[edgeBetween(map, a, b)]?.sweep).toBe(map.edges[edgeBetween(map, b, a)]?.sweep);
+  });
+});
+
+// The nodes and edges of a map described by hitboxes rather than ids, in id order.
+function shape(map: AirMap<string>): string[] {
+  const at = (id: AirNodeId) => {
+    const { body } = map.nodes[id] as { body: Rect };
+    return `${body.x},${body.y}`;
+  };
+  return [
+    ...map.nodes.map((node) => `${node.kind} ${at(node.id)} ${node.deps.join(",")}`),
+    ...map.edges.map(
+      (edge) =>
+        `${at(edge.from)}>${at(edge.to)} ${edge.kind} ${edge.axis} ${edge.seconds} ` +
+        `${edge.sweep.x},${edge.sweep.y},${edge.sweep.width},${edge.sweep.height} ${edge.deps.join(",")}`,
+    ),
+  ];
+}
+
+// The full map's subgraph on the nodes whose hitbox lies inside `window`, described as `shape`.
+function restricted(map: AirMap<string>, window: Rect): string[] {
+  const within = (id: AirNodeId) => {
+    const { body } = map.nodes[id] as { body: Rect };
+    return (
+      body.x >= window.x &&
+      body.y >= window.y &&
+      body.x + body.width <= window.x + window.width &&
+      body.y + body.height <= window.y + window.height
+    );
+  };
+  const lines = shape(map);
+  return [
+    ...lines.slice(0, map.nodes.length).filter((_, id) => within(id as AirNodeId)),
+    ...lines
+      .slice(map.nodes.length)
+      .filter((_, id) => within(map.edges[id]!.from) && within(map.edges[id]!.to)),
+  ];
+}
+
+describe("windows", () => {
+  const perches = CAVE_PERCHES;
+  const full = build(CAVES, perches);
+
+  it.each<{ name: string; nodes: number; window: Rect }>([
+    { name: "the whole bounds", nodes: full.nodes.length, window: tileBody(0, 0, 160, 96) },
+    { name: "an inner block on the grid", nodes: 22, window: tileBody(16, 0, 96, 64) },
+    { name: "a block off the grid", nodes: 14, window: tileBody(5, 7, 100, 70) },
+    { name: "a block past the bounds", nodes: 12, window: tileBody(-50, 40, 120, 200) },
+    { name: "a block outside the bounds", nodes: 0, window: tileBody(500, 0, 64, 64) },
+    { name: "an empty block", nodes: 0, window: tileBody(16, 16, 0, 0) },
+  ])("keeps the full map's subgraph inside $name", ({ nodes, window }) => {
+    const map = build(CAVES, perches, { ...OPTIONS, window });
+    expect(map.nodes).toHaveLength(nodes);
+    expect(shape(map)).toEqual(restricted(full, window));
+    expect(map.nodes.map((node) => node.id)).toEqual(map.nodes.map((_, index) => index));
+    expect(map.edges.map((edge) => edge.id)).toEqual(map.edges.map((_, index) => index));
+  });
+
+  it("leaves a perch without edges when its cell lies outside the window", () => {
+    const window = tileBody(0, 18, 48, 30);
+    const map = build(LEDGE, [PERCH], { ...OPTIONS, window }, PERCH_PROFILE);
+    const perch = map.nodes.find((node) => node.kind === "perch");
+    expect(perch?.body).toEqual(PERCH);
+    expect(map.outgoing[perch?.id as AirNodeId]).toEqual([]);
+    expect(map.edges.some((edge) => edge.to === perch?.id)).toBe(false);
+  });
+
+  it("finds no path that would leave the window", () => {
+    const rows = ["..#..", "..#..", "..#..", "....."];
+    const goal = (map: AirMap<string>) =>
+      airPath(map, OPEN, cell(map, 0, 0), { node: cell(map, 4, 0) });
+    expect(goal(build(rows))?.seconds).toBe(5);
+    expect(goal(build(rows, [], { ...OPTIONS, window: tileBody(0, 0, 80, 48) }))).toBeUndefined();
+  });
+
+  it("adds a window line to the canonical form only when built with one", () => {
+    const window = tileBody(0, 0, 32, 16);
+    const lines = airMapCanonical(String, build(["c."], [], { ...OPTIONS, window })).split("\n");
+    expect(lines.slice(0, 3)).toEqual(["air-map 1", "options 16 0.25", "window 0,0,32,16"]);
+    expect(airMapCanonical(String, build(["c."])).split("\n")[2]).toMatch(/^profile /);
+  });
+
+  it.each([
+    { name: "a non-finite origin", window: tileBody(Number.NaN, 0, 16, 16) },
+    { name: "a negative size", window: tileBody(0, 0, -1, 16) },
+  ])("rejects $name", ({ window }) => {
+    expect(() => build(["..."], [], { ...OPTIONS, window })).toThrow(RangeError);
+  });
+});
+
+describe("sinksAir", () => {
+  const corridor = build(["...."]);
+  const at = (column: number) => cell(corridor, column, 0);
+  // Edges leaving cell 1 toward cell 0 depart only before one second of travel.
+  const closing: AirMask = {
+    ...OPEN,
+    edge: (id, depart) => {
+      const edge = corridor.edges[id]!;
+      return !(edge.from === at(1) && edge.to === at(0)) || depart < 1;
+    },
+    key: "closing",
+  };
+
+  it.each<{ exits: number[]; from: number; mask: AirMask; name: string; sinks: number[] }>([
+    { exits: [0], from: 0, mask: OPEN, name: "an open corridor", sinks: [] },
+    { exits: [], from: 1, mask: OPEN, name: "no exits", sinks: [0, 1, 2, 3] },
+    { exits: [0], from: 0, mask: closing, name: "a return that closes", sinks: [2, 3] },
+    { exits: [3], from: 0, mask: closing, name: "an exit ahead of the closure", sinks: [] },
+    {
+      exits: [0],
+      from: 0,
+      mask: { ...OPEN, key: "none", node: () => false },
+      name: "a disabled start",
+      sinks: [],
+    },
+  ])("finds the nodes that cannot reach an exit in $name", ({ exits, from, mask, sinks }) => {
+    expect(
+      cells(
+        corridor,
+        sinksAir(
+          corridor,
+          mask,
+          at(from),
+          exits.map((column) => at(column)),
+        ),
+      ),
+    ).toEqual(sinks.map((column) => `${column},0`));
+  });
+
+  it("returns the far side of a wall's reach without the exits", () => {
+    const map = build(["..#..", "..#..", "..#.."]);
+    const exits = [cell(map, 0, 0), cell(map, 4, 0)];
+    expect(cells(map, sinksAir(map, OPEN, cell(map, 0, 0), exits))).toEqual([]);
+    expect(cells(map, sinksAir(map, OPEN, cell(map, 4, 0), [cell(map, 0, 0)]))).toEqual([
+      "3,0",
+      "4,0",
+      "3,1",
+      "4,1",
+      "3,2",
+      "4,2",
+    ]);
   });
 });

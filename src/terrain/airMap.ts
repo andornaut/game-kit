@@ -10,14 +10,18 @@ export interface FlightProfile {
 }
 
 // `tileSize` is pixels per tile. `axisChangeSeconds` is the search cost added where a route
-// changes between horizontal and vertical legs; it never adds to a path's `seconds`.
+// changes between horizontal and vertical legs; it never adds to a path's `seconds`. `window`
+// keeps only the nodes whose hitbox lies inside it, on the grid anchored at the area bounds.
 export interface AirBuildOptions {
   readonly axisChangeSeconds: number;
   readonly tileSize: number;
+  readonly window?: Readonly<Rect>;
 }
 
-// `bounds` limits every hitbox. `blocked` and `deps` receive hitboxes and edge sweeps. Each
-// perch is a landed hitbox the caller has already proved supported, at the profile's body size.
+// `bounds` limits every hitbox. `blocked` and `deps` receive hitboxes and edge sweeps and must be
+// pure: the build calls them in no promised order, once per candidate hitbox and once per
+// candidate pair of hitboxes, whose two edges share the result. Each perch is a landed hitbox the
+// caller has already proved supported, at the profile's body size.
 export interface AirArea<Id> {
   readonly blocked: (rect: Readonly<Rect>) => boolean;
   readonly bounds: Readonly<Rect>;
@@ -81,10 +85,6 @@ export interface AirPath {
 const finite = (value: number) => Number.isFinite(value);
 const positive = (value: number) => Number.isFinite(value) && value > 0;
 
-function sameRect(a: Readonly<Rect>, b: Readonly<Rect>): boolean {
-  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
-}
-
 function union(a: Readonly<Rect>, b: Readonly<Rect>): Rect {
   const x = Math.min(a.x, b.x);
   const y = Math.min(a.y, b.y);
@@ -102,6 +102,22 @@ function manhattan(a: Readonly<Rect>, b: Readonly<Rect>): number {
 
 function centre(rect: Readonly<Rect>): Point {
   return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+}
+
+// Finite, with a nonnegative size.
+function finiteRect(rect: Readonly<Rect>): boolean {
+  return (
+    [rect.x, rect.y].every(finite) && [rect.width, rect.height].every((v) => finite(v) && v >= 0)
+  );
+}
+
+function inside(outer: Readonly<Rect>, rect: Readonly<Rect>): boolean {
+  return (
+    rect.x >= outer.x &&
+    rect.y >= outer.y &&
+    rect.x + rect.width <= outer.x + outer.width &&
+    rect.y + rect.height <= outer.y + outer.height
+  );
 }
 
 function validate<Id>(options: AirBuildOptions, profile: FlightProfile, area: AirArea<Id>): void {
@@ -128,19 +144,14 @@ function validate<Id>(options: AirBuildOptions, profile: FlightProfile, area: Ai
     );
   }
   const { bounds } = area;
-  if (
-    ![bounds.x, bounds.y].every(finite) ||
-    ![bounds.width, bounds.height].every((v) => finite(v) && v >= 0)
-  ) {
+  if (!finiteRect(bounds)) {
     throw new RangeError("Air area bounds must be finite");
   }
+  if (options.window !== undefined && !finiteRect(options.window)) {
+    throw new RangeError("An air build window must be finite");
+  }
   for (const perch of area.perches) {
-    const inside =
-      perch.x >= bounds.x &&
-      perch.y >= bounds.y &&
-      perch.x + perch.width <= bounds.x + bounds.width &&
-      perch.y + perch.height <= bounds.y + bounds.height;
-    if (!inside || perch.width !== body.width || perch.height !== body.height) {
+    if (!inside(bounds, perch) || perch.width !== body.width || perch.height !== body.height) {
       throw new RangeError(
         "Each perch must be a hitbox inside the bounds at the profile's body size",
       );
@@ -148,27 +159,29 @@ function validate<Id>(options: AirBuildOptions, profile: FlightProfile, area: Ai
   }
 }
 
-interface Draft<Id> {
-  readonly kind: "air" | "perch";
-  readonly body: Readonly<Rect>;
+// An edge under construction, whose id changes when its node's land edges are sorted in.
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+
+// An unblocked pair of hitboxes; both of its edges share its sweep and deps.
+interface Leg<Id> {
   readonly deps: readonly Id[];
-  readonly column?: number;
-  readonly row?: number;
+  readonly seconds: number;
+  readonly sweep: Readonly<Rect>;
 }
 
-interface DraftEdge {
-  readonly from: number;
-  readonly to: number;
-  readonly kind: "fly" | "land" | "lift";
-  readonly axis: "x" | "y";
+// A perch's land and lift leg to the cell at index `cell`.
+interface Link<Id> {
+  readonly cell: number;
+  readonly leg: Leg<Id>;
 }
 
-const KIND_ORDER = { air: 0, fly: 0, land: 1, lift: 2, perch: 1 } as const;
+const KIND_ORDER = { fly: 0, land: 1, lift: 2 } as const;
 
 // Clear cells every `cell` tiles from the bounds' top-left where the hitbox fits, 4-neighbour
 // `fly` edges, and a `perch` node per perch linked by `land` and `lift` to the lowest clear cell
-// at or above it in its nearest column with an unblocked sweep. Nodes sort by (y, x, kind) and
-// edges by (from, to, kind).
+// at or above it in its nearest column with an unblocked sweep. A window keeps only the cells and
+// perches whose hitbox lies inside it, which yields the full build's subgraph on those nodes.
+// Nodes sort by (y, x, air before perch) and edges by (from, to, kind).
 export function buildAirMap<Id>(
   options: AirBuildOptions,
   profile: FlightProfile,
@@ -177,13 +190,17 @@ export function buildAirMap<Id>(
   validate(options, profile, area);
   const { body, speed } = profile;
   const { bounds } = area;
+  const { window } = options;
+  const kept = (rect: Readonly<Rect>) => window === undefined || inside(window, rect);
   const step = profile.cell * options.tileSize;
   const columns =
     bounds.width >= body.width ? Math.floor((bounds.width - body.width) / step) + 1 : 0;
   const rows =
     bounds.height >= body.height ? Math.floor((bounds.height - body.height) / step) + 1 : 0;
-  const drafts: Draft<Id>[] = [];
-  const cellDraft = new Map<number, number>();
+  // Each grid slot's index into `cells`, or -1 where no air node is kept.
+  const slots = new Int32Array(rows * columns).fill(-1);
+  const cells: Rect[] = [];
+  const cellSlot: number[] = [];
   for (let row = 0; row < rows; row += 1) {
     for (let column = 0; column < columns; column += 1) {
       const rect = {
@@ -192,90 +209,157 @@ export function buildAirMap<Id>(
         x: bounds.x + column * step,
         y: bounds.y + row * step,
       };
-      if (!area.blocked(rect)) {
-        cellDraft.set(row * columns + column, drafts.length);
-        drafts.push({ body: rect, column, deps: area.deps(rect), kind: "air", row });
+      if (kept(rect) && !area.blocked(rect)) {
+        slots[row * columns + column] = cells.length;
+        cells.push(rect);
+        cellSlot.push(row * columns + column);
       }
     }
   }
-  const edges: DraftEdge[] = [];
-  const link = (from: number, to: number, kind: DraftEdge["kind"], axis: DraftEdge["axis"]) => {
-    const a = drafts[from];
-    const b = drafts[to];
-    if (a !== undefined && b !== undefined && !area.blocked(union(a.body, b.body))) {
-      edges.push({ axis, from, kind, to });
+  const seen = new Set<string>();
+  const perches: Rect[] = [];
+  for (const perch of area.perches) {
+    const key = `${perch.x},${perch.y}`;
+    if (!seen.has(key) && kept(perch)) {
+      seen.add(key);
+      perches.push({ ...perch });
     }
+  }
+  perches.sort((a, b) => a.y - b.y || a.x - b.x);
+  // Cells are already in (y, x) order; merge the sorted perches into them.
+  const nodes: AirNode<Id>[] = [];
+  const cellId = new Int32Array(cells.length);
+  // Each node's index into `cells`, or -1 - its index into `perches`.
+  const source: number[] = [];
+  const add = (rect: Readonly<Rect>, kind: AirNode<Id>["kind"], index: number) => {
+    source.push(index);
+    nodes.push({ body: rect, deps: area.deps(rect), id: nodes.length as AirNodeId, kind });
   };
-  for (const [index, draft] of drafts.entries()) {
-    const { column = 0, row = 0 } = draft;
-    const neighbours = [
-      [column - 1, row, "x"],
-      [column + 1, row, "x"],
-      [column, row - 1, "y"],
-      [column, row + 1, "y"],
-    ] as const;
-    for (const [c, r, axis] of neighbours) {
-      const to =
-        c >= 0 && c < columns && r >= 0 && r < rows ? cellDraft.get(r * columns + c) : undefined;
-      if (to !== undefined) {
-        link(index, to, "fly", axis);
-      }
+  let next = 0;
+  for (let index = 0; index < cells.length; index += 1) {
+    const cell = cells[index] as Rect;
+    for (
+      let perch = perches[next];
+      perch !== undefined && (perch.y - cell.y || perch.x - cell.x) < 0;
+      perch = perches[next]
+    ) {
+      add(perch, "perch", -1 - next);
+      next += 1;
     }
+    cellId[index] = nodes.length;
+    add(cell, "air", index);
   }
-  const unique = area.perches.filter(
-    (perch, index) => area.perches.findIndex((p) => sameRect(p, perch)) === index,
-  );
-  for (const perch of unique) {
-    const index = drafts.length;
-    drafts.push({ body: { ...perch }, deps: area.deps(perch), kind: "perch" });
+  for (; next < perches.length; next += 1) {
+    add(perches[next] as Rect, "perch", -1 - next);
+  }
+  const perchId = new Int32Array(perches.length);
+  source.forEach((index, id) => {
+    if (index < 0) {
+      perchId[-1 - index] = id;
+    }
+  });
+  const leg = (a: Readonly<Rect>, b: Readonly<Rect>): Leg<Id> | undefined => {
+    const sweep = union(a, b);
+    return area.blocked(sweep)
+      ? undefined
+      : { deps: area.deps(sweep), seconds: manhattan(a, b) / speed, sweep };
+  };
+  // The fly legs to the next cell right and below, by cell index.
+  const rightLeg: (Leg<Id> | undefined)[] = [];
+  const belowLeg: (Leg<Id> | undefined)[] = [];
+  for (let index = 0; index < cells.length; index += 1) {
+    const cell = cells[index] as Rect;
+    const slot = cellSlot[index] as number;
+    const right = slot % columns < columns - 1 ? (slots[slot + 1] as number) : -1;
+    const below = slot + columns < slots.length ? (slots[slot + columns] as number) : -1;
+    rightLeg.push(right >= 0 ? leg(cell, cells[right] as Rect) : undefined);
+    belowLeg.push(below >= 0 ? leg(cell, cells[below] as Rect) : undefined);
+  }
+  // Each perch's link to its cell, and the perches linked to each cell.
+  const links: (Link<Id> | undefined)[] = [];
+  const landings = new Map<number, number[]>();
+  for (const [index, perch] of perches.entries()) {
     const column = Math.min(columns - 1, Math.max(0, Math.round((perch.x - bounds.x) / step)));
     const lowest = Math.min(rows - 1, Math.floor((perch.y - bounds.y) / step));
-    for (let row = lowest; row >= 0; row -= 1) {
-      const above = cellDraft.get(row * columns + column);
-      const cell = above === undefined ? undefined : drafts[above];
-      if (above !== undefined && cell !== undefined && !area.blocked(union(cell.body, perch))) {
-        edges.push({ axis: "y", from: above, kind: "land", to: index });
-        edges.push({ axis: "y", from: index, kind: "lift", to: above });
-        break;
-      }
+    let link: Link<Id> | undefined;
+    for (let row = column >= 0 ? lowest : -1; link === undefined && row >= 0; row -= 1) {
+      const above = slots[row * columns + column] as number;
+      const found = above >= 0 ? leg(cells[above] as Rect, perch) : undefined;
+      link = found && { cell: above, leg: found };
+    }
+    links.push(link);
+    if (link !== undefined) {
+      landings.set(link.cell, [...(landings.get(link.cell) ?? []), index]);
     }
   }
-  const order = drafts
-    .map((_, index) => index)
-    .sort((a, b) => {
-      const p = drafts[a] as Draft<Id>;
-      const q = drafts[b] as Draft<Id>;
-      return p.body.y - q.body.y || p.body.x - q.body.x || KIND_ORDER[p.kind] - KIND_ORDER[q.kind];
+  // Edges in (from, to, kind) order. A cell's fly edges run up, left, right and down, which is
+  // ascending id order; its land edges, if any, are sorted in.
+  const edges: Mutable<AirEdge<Id>>[] = [];
+  const emit = (from: number, to: number, kind: AirEdge<Id>["kind"], axis: "x" | "y", l: Leg<Id>) =>
+    edges.push({
+      axis,
+      deps: l.deps,
+      from: from as AirNodeId,
+      id: edges.length as AirEdgeId,
+      kind,
+      seconds: l.seconds,
+      sweep: l.sweep,
+      to: to as AirNodeId,
     });
-  const idOf = new Array<number>(drafts.length);
-  order.forEach((draft, id) => {
-    idOf[draft] = id;
+  const outgoing = source.map((index, id) => {
+    const start = edges.length;
+    if (index < 0) {
+      const link = links[-1 - index];
+      if (link !== undefined) {
+        emit(id, cellId[link.cell] as number, "lift", "y", link.leg);
+      }
+      return start < edges.length ? [start as AirEdgeId] : [];
+    }
+    const slot = cellSlot[index] as number;
+    const up = slot >= columns ? (slots[slot - columns] as number) : -1;
+    const left = slot % columns > 0 ? (slots[slot - 1] as number) : -1;
+    const right = rightLeg[index];
+    const below = belowLeg[index];
+    const upLeg = up >= 0 ? belowLeg[up] : undefined;
+    const leftLeg = left >= 0 ? rightLeg[left] : undefined;
+    if (upLeg !== undefined) {
+      emit(id, cellId[up] as number, "fly", "y", upLeg);
+    }
+    if (leftLeg !== undefined) {
+      emit(id, cellId[left] as number, "fly", "x", leftLeg);
+    }
+    if (right !== undefined) {
+      emit(id, cellId[slots[slot + 1] as number] as number, "fly", "x", right);
+    }
+    if (below !== undefined) {
+      emit(id, cellId[slots[slot + columns] as number] as number, "fly", "y", below);
+    }
+    const landed = landings.get(index);
+    if (landed !== undefined) {
+      for (const perch of landed) {
+        emit(id, perchId[perch] as number, "land", "y", (links[perch] as Link<Id>).leg);
+      }
+      const sorted = edges
+        .slice(start)
+        .sort((a, b) => a.to - b.to || KIND_ORDER[a.kind] - KIND_ORDER[b.kind]);
+      sorted.forEach((edge, offset) => {
+        edge.id = (start + offset) as AirEdgeId;
+        edges[start + offset] = edge;
+      });
+    }
+    const ids: AirEdgeId[] = [];
+    for (let edge = start; edge < edges.length; edge += 1) {
+      ids.push(edge as AirEdgeId);
+    }
+    return ids;
   });
-  const nodes: AirNode<Id>[] = order.map((draft, id) => {
-    const { body: rect, deps, kind } = drafts[draft] as Draft<Id>;
-    return { body: rect, deps, id: id as AirNodeId, kind };
-  });
-  const sorted = edges
-    .map((edge) => ({ ...edge, from: idOf[edge.from] as number, to: idOf[edge.to] as number }))
-    .sort((a, b) => a.from - b.from || a.to - b.to || KIND_ORDER[a.kind] - KIND_ORDER[b.kind]);
-  const outgoing: AirEdgeId[][] = nodes.map(() => []);
-  const built: AirEdge<Id>[] = sorted.map((edge, id) => {
-    const from = nodes[edge.from] as AirNode<Id>;
-    const to = nodes[edge.to] as AirNode<Id>;
-    const sweep = union(from.body, to.body);
-    outgoing[edge.from]?.push(id as AirEdgeId);
-    return {
-      axis: edge.axis,
-      deps: area.deps(sweep),
-      from: from.id,
-      id: id as AirEdgeId,
-      kind: edge.kind,
-      seconds: manhattan(from.body, to.body) / speed,
-      sweep,
-      to: to.id,
-    };
-  });
-  return { edges: built, nodes, options: { ...options }, outgoing, profile };
+  return {
+    edges,
+    nodes,
+    options: { ...options, ...(window && { window: { ...window } }) },
+    outgoing,
+    profile,
+  };
 }
 
 // The node nearest `body` by top-left Manhattan distance among nodes whose hitbox overlaps it,
@@ -367,12 +451,14 @@ interface SearchResult {
 const AXES = { x: 1, y: 2 } as const;
 const stateKey = (node: AirNodeId, axis: number) => node * 3 + axis;
 
-// Best-first search over (node, incoming axis) states. Cost is travel seconds plus the
-// axis-change cost; `heuristic` must not overestimate the remaining travel seconds.
+// Best-first search over (node, incoming axis) states, departing `from` at `startSeconds` of
+// travel. Cost is travel seconds plus the axis-change cost; `heuristic` must not overestimate the
+// remaining travel seconds.
 function search<Id>(
   map: AirMap<Id>,
   mask: AirMask,
   from: AirNodeId,
+  startSeconds: number,
   penalty: number,
   done: (node: AirNode<Id>) => boolean,
   heuristic: (node: AirNode<Id>) => number,
@@ -385,7 +471,7 @@ function search<Id>(
     return { parents, settled };
   }
   const heap = new Heap();
-  heap.push({ axis: 0, cost: 0, node: from, priority: heuristic(start), seconds: 0 });
+  heap.push({ axis: 0, cost: 0, node: from, priority: heuristic(start), seconds: startSeconds });
   best.set(stateKey(from, 0), 0);
   for (let entry = heap.pop(); entry !== undefined; entry = heap.pop()) {
     const key = stateKey(entry.node, entry.axis);
@@ -463,6 +549,7 @@ export function airPath<Id>(
     map,
     mask,
     from,
+    0,
     map.options.axisChangeSeconds,
     goalTest(goal),
     goalHeuristic(map, goal),
@@ -493,6 +580,7 @@ export function reachableAir<Id>(
     mask,
     from,
     0,
+    0,
     () => false,
     () => 0,
   );
@@ -519,12 +607,47 @@ export function nearestReachableAir<Id>(
   return best;
 }
 
+// The nodes reachable from `from`, other than `exits`, from which no exit is reachable when
+// departing at the earliest travel time that reaches them, in id order. Masks see departure
+// seconds measured from `from`. It runs one search per reachable node.
+export function sinksAir<Id>(
+  map: AirMap<Id>,
+  mask: AirMask,
+  from: AirNodeId,
+  exits: readonly AirNodeId[],
+): readonly AirNodeId[] {
+  const targets = new Set(exits);
+  const first = new Map<AirNodeId, number>();
+  const { settled } = search(
+    map,
+    mask,
+    from,
+    0,
+    0,
+    () => false,
+    () => 0,
+  );
+  for (const entry of settled.values()) {
+    if (!first.has(entry.node)) {
+      first.set(entry.node, entry.seconds);
+    }
+  }
+  const exit = (node: AirNode<Id>) => targets.has(node.id);
+  return [...first.keys()]
+    .sort((a, b) => a - b)
+    .filter(
+      (id) =>
+        !targets.has(id) && !search(map, mask, id, first.get(id) ?? 0, 0, exit, () => 0).found,
+    );
+}
+
 const rectText = (rect: Readonly<Rect>) => `${rect.x},${rect.y},${rect.width},${rect.height}`;
 
 // The canonical form, one line per entry joined by "\n", numbers in JavaScript's shortest
 // round-trip form and deps as depKey values joined by "," in the area's order:
 //   air-map 1
 //   options <tileSize> <axisChangeSeconds>
+//   window <x>,<y>,<width>,<height>                           (only when built with a window)
 //   profile <width>,<height>,<offset x>,<offset y> <speed> <cell>
 //   node <id> <kind> <x>,<y>,<width>,<height> <deps>          (in id order)
 //   edge <id> <from> <to> <kind> <axis> <seconds> <sweep> <deps>   (in id order)
@@ -534,6 +657,7 @@ export function airMapCanonical<Id>(depKey: (id: Id) => string, map: AirMap<Id>)
   const lines = [
     "air-map 1",
     `options ${map.options.tileSize} ${map.options.axisChangeSeconds}`,
+    ...(map.options.window === undefined ? [] : [`window ${rectText(map.options.window)}`]),
     `profile ${body.width},${body.height},${body.offset.x},${body.offset.y} ${speed} ${cell}`,
     ...map.nodes.map(
       (node) => `node ${node.id} ${node.kind} ${rectText(node.body)} ${deps(node.deps)}`,
