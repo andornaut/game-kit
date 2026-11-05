@@ -20,7 +20,13 @@ Pure imports need no runtime peers. Phaser, TypeScript, Vite and Vitest are opti
 
 The `exports` map and the exported declarations define the public interface. Internal imports are relative and acyclic, and there is no root barrel, so a pure import loads no engine.
 
+Modules take data and callbacks only. They never depend on a game's types, control flow or test usage.
+
 Compatible fixes are patch versions and additions are minor versions. Incompatible changes are major versions after 1.0, and minor versions with a migration section below before 1.0. Update the manifest and lockfile together. Documentation-only changes need no version bump.
+
+The kit's own tests define each module's contract. A release is also proven against both games' current `main`, or, for an incompatible change, against branches where each game has adopted it.
+
+`testing/phaser/sceneStub` covers the scene members both games' tests use as of 0.19.0 and is otherwise frozen: a test that needs more extends the stub through its overrides.
 
 ## Modules and environments
 
