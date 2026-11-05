@@ -36,6 +36,7 @@
     "src/save/storage.ts",
     "src/save/versionedSave.ts",
     "src/terrain/crumbling.ts",
+    "src/terrain/movementMap.ts",
     "src/terrain/traversal.ts",
     "src/text/bitmapFont.ts",
     "src/text/overflow.ts",

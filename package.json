@@ -86,6 +86,7 @@
     "./save/storage": "./src/save/storage.ts",
     "./save/versionedSave": "./src/save/versionedSave.ts",
     "./terrain/crumbling": "./src/terrain/crumbling.ts",
+    "./terrain/movementMap": "./src/terrain/movementMap.ts",
     "./terrain/traversal": "./src/terrain/traversal.ts",
     "./text/bitmapFont": "./src/text/bitmapFont.ts",
     "./text/overflow": "./src/text/overflow.ts",
