@@ -42,6 +42,7 @@
     "src/terrain/movementMap.ts",
     "src/terrain/traversal.ts",
     "src/terrain/traversalStep.ts",
+    "src/testing/storageFixture.ts",
     "src/text/bitmapFont.ts",
     "src/text/overflow.ts",
     "src/text/pixelFont.ts",

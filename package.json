@@ -90,6 +90,8 @@
     "./terrain/crumbling": "./src/terrain/crumbling.ts",
     "./terrain/movementMap": "./src/terrain/movementMap.ts",
     "./terrain/traversal": "./src/terrain/traversal.ts",
+    "./testing/storageFixture": "./src/testing/storageFixture.ts",
+    "./testing/phaser/sceneStub": "./src/testing/phaser/sceneStub.ts",
     "./text/bitmapFont": "./src/text/bitmapFont.ts",
     "./text/overflow": "./src/text/overflow.ts",
     "./text/phaser/phaserBitmapFont": "./src/text/phaser/phaserBitmapFont.ts",

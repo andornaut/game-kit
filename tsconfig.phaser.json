@@ -9,6 +9,7 @@
     "src/input/phaser/catchOutsideTaps.ts",
     "src/input/phaser/guardSceneInput.ts",
     "src/progress/phaser/drawProgressBar.ts",
+    "src/testing/phaser/sceneStub.ts",
     "src/text/phaser/phaserBitmapFont.ts",
     "src/text/phaser/registerPixelFont.ts",
     "src/text/phaser/uiGlyphPen.ts",

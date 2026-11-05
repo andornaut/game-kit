@@ -40,6 +40,7 @@ Paths are relative to `src/`, and tests sit beside their modules. Every module i
 | `terrain/crumbling`, `terrain/traversal`                                                                          | Pure                     | Fixed-tick support lifecycle, bounded search and shared collision stepping       |
 | `terrain/airMap`                                                                                                  | Pure                     | Flyer clear-cell graph, perch links and axis-change-penalty search               |
 | `terrain/movementMap`                                                                                             | Pure                     | Baked ground spans, kernel-witnessed edges and masked shortest-time queries      |
+| `testing/storageFixture`, `testing/phaser/sceneStub`                                                              | Pure, Phaser types only  | Failing save storage and a Scene stand-in with injected spies                    |
 | `text/*` except `text/phaser/*`                                                                                   | Pure                     | Bitmap font metrics, fixed-size wrapping, overflow and pixel atlas geometry      |
 | `view/fitCheck`, `view/modalDim`, `view/pagePoint`, `view/settleFit`                                              | Pure                     | Fit decisions, palette dimming, coordinate mapping and bounded settling          |
 | `web/build/buildLabel`, `web/build/buildVersion`, `web/build/phaserBuild`                                         | Pure                     | Build labels, commit selection, reduced Phaser entries and feature flags         |
@@ -154,6 +155,13 @@ Node and edge construction, window clipping and the canonical line format are do
 ## Utility scoring
 
 `ai/utility` scores candidate actions as `gate × base × Π curveValue × multiplier` and chooses one with hysteresis and a single seeded draw among near-equal scores, so replays from the same seed and inputs choose the same actions. Games own the inputs, actions, values and behaviour. Curves, hold rules and result reasons are documented in `src/ai/utility.ts`.
+
+## Testing fixtures
+
+Fixtures for game unit tests. They import no test framework and load no Phaser at runtime, so a test that mocks `phaser` needs no inlining for them.
+
+- **Save storage:** `storageFixture(failures?, entries?)` from `testing/storageFixture` is a `SaveStorage` over the `entries` Map. It exposes `entries` and the mutable `failures`, which are checked on each call. `unavailable` rejects every call with an `Error` named `SecurityError`, as blocked site data does. `quota` is the most characters the keys and values may hold together, or a predicate that is true when a write exceeds it; such a write rejects with an `Error` named `QuotaExceededError` and changes nothing. `readThrows` and `writeThrows`, when present, are the rejection of every read or write. `saveStore` reports each as `unavailable`. The `memoryStorage(entries)` in `save/storage` is unchanged.
+- **Scene stand-in:** `sceneStub(spy, overrides?)` from `testing/phaser/sceneStub` takes a spy factory such as `vi.fn` or `jest.fn` and returns `add` (empty), `anims` (`create`, `exists` and `get` over a Map), `cache.bitmapFont` and `cache.json` (`add`, `exists`, `get` and `remove`, each over its own Map), `cameras.main` (1024 by 768 with `scrollX`, `scrollY` and `setScroll`), `events` (the Scene's own emitter), `game.canvas`, `game.events`, `load` (an emitter with `bitmapFont`, `image`, `json` and `setPath`), `scene.launch`, `scene.start`, `scene.stop` and `textures` (`exists` and `get` over `list`, which a test seeds by key; `get` returns one shared `__MISSING` texture with no sources for any other key, as Phaser does). Methods are spies typed with Phaser's signatures that return their owner where Phaser returns `this`; read their calls with `vi.mocked`. The emitters implement `on`, `once`, `off`, `emit` and `listenerCount`. `overrides` replaces or adds top-level members. Code typed with `Scene` takes the stub with `as unknown as Scene`. For game scenes to extend it, a `vi.mock("phaser")` factory imports it with `await import` and returns `Scene: class { constructor() { Object.assign(this, sceneStub(vi.fn)); } }`.
 
 ## Numbers and text measurement
 
