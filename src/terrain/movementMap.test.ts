@@ -493,3 +493,258 @@ describe("movement map heavy layouts", () => {
     },
   );
 });
+
+const within = (outer: Readonly<Rect>, r: Readonly<Rect>) =>
+  r.x >= outer.x - 1e-7 &&
+  r.y >= outer.y - 1e-7 &&
+  r.x + r.width <= outer.x + outer.width + 1e-7 &&
+  r.y + r.height <= outer.y + outer.height + 1e-7;
+const withoutId = <T extends { readonly id: unknown }>(item: T): Omit<T, "id"> =>
+  Object.fromEntries(Object.entries(item).filter(([key]) => key !== "id")) as Omit<T, "id">;
+// The full map's nodes whose hitbox range lies inside the window and the edges among them whose
+// sweep lies inside it, renumbered in order, without ids.
+const restrict = (full: MovementMap<string>, window: Rect) => {
+  const kept = full.nodes.filter((n) =>
+    within(window, rect(n.left, n.y - 2, n.right - n.left + 2, 2)),
+  );
+  const index = new Map(kept.map((n, i) => [n.id, i]));
+  return {
+    edges: full.edges
+      .filter((e) => index.has(e.from) && index.has(e.to) && within(window, e.sweep))
+      .map((e) => ({ ...withoutId(e), from: index.get(e.from), to: index.get(e.to) })),
+    nodes: kept.map(withoutId),
+  };
+};
+const strip = (map: MovementMap<string>) => ({
+  edges: map.edges.map(withoutId),
+  nodes: map.nodes.map(withoutId),
+});
+// Whether every span meets the window wholly or not at all.
+const uncut = (full: MovementMap<string>, window: Rect) =>
+  full.nodes.every((n) => {
+    const span = rect(n.left, n.y - 2, n.right - n.left + 2, 2);
+    const apart =
+      n.y - 2 < window.y ||
+      n.y > window.y + window.height ||
+      n.right + 2 <= window.x ||
+      n.left >= window.x + window.width;
+    return apart || within(window, span);
+  });
+
+describe("movement map windows", () => {
+  const heavyArea = (seed: number, width: number): MapArea<string> => ({
+    blocked: () => false,
+    bounds: rect(-20, -40, width + 40, 80),
+    colliders: heavy(seed, width),
+    deps: () => [],
+  });
+  it.each([
+    ["every span", layouts.gap, rect(-5, 0, 45, 15)],
+    ["one of two spans", layouts.gap, rect(-5, 0, 16, 15)],
+    ["wall top", layouts.wall, rect(0, -10, 40, 25)],
+    ["upper ledge only", layouts.drop, rect(-1, 0, 12, 11)],
+  ] as const)("equals the full map's subgraph for a window holding: %s", (_, colliders, window) => {
+    const full = buildMovementMap(options, profile, area([...colliders]));
+    expect(uncut(full, window)).toBe(true);
+    const map = buildMovementMap({ ...options, window }, profile, area([...colliders]));
+    expect(strip(map)).toEqual(restrict(full, window));
+    expect(map.nodes.map((n) => n.id)).toEqual(map.nodes.map((_, i) => i));
+  });
+
+  it("equals the full map's subgraph over a heavy layout and costs fewer kernel steps", () => {
+    const window = rect(40, -40, 50, 80);
+    const full = buildMovementMap(options, profile, heavyArea(1, 160));
+    const map = buildMovementMap({ ...options, window }, profile, heavyArea(1, 160));
+    expect(map.edges.every((e) => within(window, e.sweep))).toBe(true);
+    expect(map.work.steps).toBeLessThan(full.work.steps / 2);
+    if (uncut(full, window)) {
+      expect(strip(map)).toEqual(restrict(full, window));
+    }
+  });
+
+  it("clips a span cut by the window and keeps only edges inside it", () => {
+    const flat = buildMovementMap(
+      { ...options, window: rect(10, 0, 12, 15) },
+      profile,
+      area([...layouts.flat]),
+    );
+    expect(flat.nodes.map((n) => [n.y, n.left, n.right])).toEqual([[10, 10, 20]]);
+    const window = rect(-1, 0, 18, 17);
+    const full = buildMovementMap(options, profile, area([...layouts.drop]));
+    const map = buildMovementMap({ ...options, window }, profile, area([...layouts.drop]));
+    expect(map.nodes.map((n) => [n.y, n.left, n.right])).toEqual([
+      [10, 0, 8],
+      [16, 10, 15],
+    ]);
+    // The short jump lands inside the clipped range; the drop and the long jump land past it.
+    const inside = full.edges.filter((e) => e.land.right <= 15 && within(window, e.sweep));
+    expect(inside.map((e) => [e.kind, e.launch.left, e.land.left])).toEqual([["jump", 8, 13]]);
+    expect(map.edges.map(withoutId)).toEqual(inside.map(withoutId));
+  });
+
+  it("builds nothing for a window with no spans", () => {
+    const map = buildMovementMap(
+      { ...options, window: rect(50, 0, 5, 5) },
+      profile,
+      area([...layouts.gap]),
+    );
+    expect([map.nodes, map.edges, map.work.steps]).toEqual([[], [], 0]);
+  });
+
+  it("adds the window line to the canonical form only when built with a window", () => {
+    const full = buildMovementMap(options, profile, area([...layouts.gap]));
+    const window = rect(-5, 0, 45, 15);
+    const map = buildMovementMap({ ...options, window }, profile, area([...layouts.gap]));
+    const lines = mapCanonical(String, map).split("\n");
+    expect(lines[2]).toBe("window -5,0,45,15");
+    expect(map.options.window).toEqual(window);
+    expect([...lines.slice(0, 2), ...lines.slice(3)].join("\n")).toBe(mapCanonical(String, full));
+    expect(mapHash(String, map)).not.toBe(mapHash(String, full));
+    expect("window" in full.options).toBe(false);
+    expect(mapCanonical(String, full)).not.toMatch(/^window /m);
+  });
+
+  it.each([
+    ["negative width", rect(0, 0, -1, 5)],
+    ["non-finite origin", rect(Number.NaN, 0, 5, 5)],
+  ])("rejects a window with a %s", (_, window) => {
+    expect(() => buildMovementMap({ ...options, window }, profile, area([...layouts.gap]))).toThrow(
+      RangeError,
+    );
+  });
+});
+
+describe("movement map track climbs", () => {
+  const every = () => true;
+  const tracks = (map: MovementMap<string>) => map.edges.filter((e) => e.kind === "track-climb");
+  const shelves = [
+    solid("floor", rect(0, 10, 30, 5)),
+    ledge("low", rect(10, 7, 6, 1)),
+    ledge("shelf", rect(10, 4, 6, 1)),
+  ];
+  it.each([
+    ["a climb profile and trackStart", climber, every, 1],
+    ["no climb profile", profile, every, 0],
+    ["no trackStart", climber, undefined, 0],
+    ["a trackStart that refuses the launch", climber, (x: number) => x !== 12, 0],
+  ] as const)("builds track climbs only with %s", (_, mover, trackStart, count) => {
+    const map = buildMovementMap(
+      { ...options, ...(trackStart && { trackStart }) },
+      mover,
+      area([...layouts.climb]),
+    );
+    expect(tracks(map)).toHaveLength(count);
+    expect(map.edges.filter((e) => e.kind === "climb")).toHaveLength(mover.climb ? 1 : 0);
+  });
+
+  it("passes trackStart each launch point with its node", () => {
+    const seen: [number, number][] = [];
+    buildMovementMap(
+      {
+        ...options,
+        trackStart: (x, node) => {
+          seen.push([x, node.y]);
+          return true;
+        },
+      },
+      climber,
+      area([...layouts.climb]),
+    );
+    expect(seen.filter(([, y]) => y === 10).map(([x]) => x)).toEqual([0, 4, 8, 12, 16, 20, 24, 28]);
+  });
+
+  it.each([
+    ["a solid ceiling", [...layouts.climb, solid("roof", rect(11, 0, 4, 1))], () => false],
+    ["a blocked column", [...layouts.climb], hazardsIn(rect(12, 1, 2, 1))],
+  ] as const)("refuses a column with %s", (_, colliders, blocked) => {
+    const map = buildMovementMap(
+      { ...options, trackStart: every },
+      climber,
+      area([...colliders], blocked),
+    );
+    expect(tracks(map)).toEqual([]);
+  });
+
+  it.each([
+    ["rising past both ledges lands on the higher", 8, 4],
+    ["rising past the lower ledge lands on it", 5, 7],
+  ] as const)("drops onto the first support: %s", (_, height, landY) => {
+    const mover = { ...profile, climb: { height, speed: 4 } };
+    const map = buildMovementMap({ ...options, trackStart: every }, mover, area([...shelves]));
+    const [edge, ...rest] = tracks(map).filter((e) => map.nodes[e.from]!.y === 10);
+    expect(rest).toEqual([]);
+    expect(map.nodes[edge!.to]!.y).toBe(landY);
+    expect(edge!.launch).toEqual({ left: 12, right: 12 });
+    // Replay the drop witness from the launch hitbox raised by the climb height.
+    const geometry = { colliders: shelves, complete: true };
+    let state: TraversalState<string> = {
+      fallFromY: 10 - height,
+      grounded: false,
+      vy: 0,
+      x: 12,
+      y: 10 - height - 2,
+    };
+    for (const [tick, command] of edge!.commands.entries()) {
+      state = stepTraversal(
+        {
+          body: profile.body,
+          bounds: rect(-20, -30, 100, 60),
+          dtSeconds: 0.1,
+          epsilon: 1e-7,
+          maxCollisionSteps: 32,
+          maxDrop: 60,
+          profile,
+          safe: () => true,
+          sampleColliders: () => geometry,
+        },
+        { ...command, timeSeconds: tick * 0.1 },
+        state,
+      ).state;
+    }
+    expect(state.grounded).toBe(true);
+    expect(state.y + 2).toBeCloseTo(landY);
+    expect(edge!.seconds).toBeCloseTo(height / 4 + edge!.commands.length * 0.1);
+    expect(edge!.commands.every((c) => !c.jump && c.move === 0)).toBe(true);
+  });
+
+  it("is disabled by a mask", () => {
+    const map = buildMovementMap({ ...options, trackStart: every }, climber, area([...shelves]));
+    const from = { node: nodeAt(map, 0, 10), x: 0 };
+    const goal = { node: nodeAt(map, 12, 4) };
+    const noClimb = withoutKind(map, "climb");
+    expect(pathTo(map, noClimb, from, goal)?.edges.map((id) => map.edges[id]!.kind)).toEqual([
+      "track-climb",
+    ]);
+    const neither: MapMask = {
+      edge: (id) => !["climb", "track-climb"].includes(map.edges[id]!.kind),
+      key: "no-climbs",
+      node: () => true,
+    };
+    expect(pathTo(map, neither, from, goal)).toBeUndefined();
+  });
+
+  const heavyArea = (seed: number, width: number): MapArea<string> => ({
+    blocked: () => false,
+    bounds: rect(-20, -40, width + 40, 80),
+    colliders: heavy(seed, width),
+    deps: () => [],
+  });
+  const tallOptions = { ...options, horizonSteps: 60, launchStride: 3 };
+  it.each([
+    ["no climb profile accepting every start", options, profile, true, 1, 160, "181dca81c0e1eef4"],
+    ["a climb profile refusing every start", tallOptions, tall, false, 2, 120, "d6499ee6d263560e"],
+  ] as const)(
+    "keeps the 0.16.1 hash with %s",
+    (_, buildOptions, mover, accept, seed, width, golden) => {
+      const trackStart = () => accept;
+      const map = buildMovementMap({ ...buildOptions, trackStart }, mover, heavyArea(seed, width));
+      expect(mapHash(String, map)).toBe(golden);
+    },
+  );
+
+  it("matches the golden hash with track climbs on a heavy layout", () => {
+    const map = buildMovementMap({ ...tallOptions, trackStart: every }, tall, heavyArea(2, 120));
+    expect(tracks(map).length).toBeGreaterThan(0);
+    expect(mapHash(String, map)).toBe("29672fbc424d4806");
+  });
+});

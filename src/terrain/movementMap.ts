@@ -70,6 +70,11 @@ export interface MapBuildOptions<Id> {
   readonly launchStride: number;
   readonly maxCollisionSteps: number;
   readonly step?: MapStep<Id>;
+  // Builds only the part of the map inside this rect; see `buildMovementMap`.
+  readonly window?: Readonly<Rect>;
+  // Enables `track-climb` edges for a profile with `climb`, from the launch points it accepts
+  // (hitbox-left x on the node); `() => true` accepts every valid start.
+  readonly trackStart?: (x: number, node: MapNode<Id>) => boolean;
 }
 
 // A closed range of hitbox-left x positions.
@@ -90,7 +95,7 @@ export interface MapNode<Id> {
   readonly deps: readonly Id[];
 }
 
-export type MapEdgeKind = "climb" | "drop" | "jump" | "walk" | "wall-top";
+export type MapEdgeKind = "climb" | "drop" | "jump" | "track-climb" | "walk" | "wall-top";
 
 export interface MapEdge<Id> {
   readonly id: EdgeId;
@@ -99,7 +104,8 @@ export interface MapEdge<Id> {
   readonly kind: MapEdgeKind;
   readonly launch: MapRange;
   readonly land: MapRange;
-  // Kernel witness, proven from each sampled launch point; empty for climbs.
+  // Kernel witness, proven from each sampled launch point; empty for climbs. A track climb's
+  // witness is its drop, from the launch hitbox raised by the climb height.
   readonly commands: readonly TraversalCommand[];
   readonly seconds: number;
   readonly sweep: Readonly<Rect>;
@@ -107,11 +113,11 @@ export interface MapEdge<Id> {
 }
 
 // Nodes and edges are indexed by id; `outgoing` lists each node's edge ids in ascending order.
-// `options` holds the resolved jump scripts and leaves out the caller's step.
+// `options` holds the resolved jump scripts and window and leaves out the caller's functions.
 export interface MovementMap<Id> {
   readonly edges: readonly MapEdge<Id>[];
   readonly nodes: readonly MapNode<Id>[];
-  readonly options: Omit<MapBuildOptions<Id>, "jumps" | "step"> & {
+  readonly options: Omit<MapBuildOptions<Id>, "jumps" | "step" | "trackStart"> & {
     readonly jumps: readonly MapJumpScript[];
   };
   readonly outgoing: readonly (readonly EdgeId[])[];
@@ -168,6 +174,15 @@ function overlaps(epsilon: number, a: Readonly<Rect>, b: Readonly<Rect>): boolea
 }
 function finite(...values: number[]): boolean {
   return values.every(Number.isFinite);
+}
+// Whether `rect` lies inside `outer` widened by `margin` on every side.
+function inside(margin: number, outer: Readonly<Rect>, rect: Readonly<Rect>): boolean {
+  return (
+    rect.x >= outer.x - margin &&
+    rect.y >= outer.y - margin &&
+    rect.x + rect.width <= outer.x + outer.width + margin &&
+    rect.y + rect.height <= outer.y + outer.height + margin
+  );
 }
 function clamp(low: number, high: number, value: number): number {
   return Math.min(high, Math.max(low, value));
@@ -289,6 +304,7 @@ function validateBuild<Id>(
   area: MapArea<Id>,
 ): void {
   const { body, climb } = profile;
+  const { window } = options;
   const positive = (v: number) => Number.isFinite(v) && v > 0;
   const nonNegative = (v: number) => Number.isFinite(v) && v >= 0;
   const count = (v: number) => Number.isSafeInteger(v) && v >= 1;
@@ -310,6 +326,8 @@ function validateBuild<Id>(
     !nonNegative(profile.jumpSpeed) ||
     (climb !== undefined && (!nonNegative(climb.height) || !positive(climb.speed))) ||
     !finite(area.bounds.x, area.bounds.y, area.bounds.width, area.bounds.height) ||
+    (window !== undefined &&
+      (!finite(window.x, window.y) || !nonNegative(window.width) || !nonNegative(window.height))) ||
     !scripts.every(
       (s) =>
         (s.lead ?? []).every(command) &&
@@ -501,6 +519,20 @@ interface Trace<Id> {
  * the script's own jump rise, its steered leg resumes the plain jump at the tick it first stands
  * over the top, and a leg ends once it falls below every node it can land on. These cuts drop only
  * legs whose edges the kernel cannot prove.
+ *
+ * With `trackStart` and `profile.climb`, each launch point `trackStart` accepts gets a
+ * `track-climb` edge when one step from the launch hitbox rises it `climb.height` without meeting a
+ * ceiling, solid or blocked sweep, and a drop with move released from that height lands on another
+ * node. It takes `climb.height / climb.speed` seconds plus the drop's ticks.
+ *
+ * A `window` clips each span to the hitbox-left range whose hitbox lies inside it, drops spans left
+ * empty, and keeps the edges whose merged sweep lies inside it within epsilon, so paths never leave
+ * it. Where every span the window meets lies wholly inside it, the result is exactly the full
+ * build's nodes inside the window and the edges among them whose sweep lies inside, renumbered in
+ * the same order. A span cut by the window edge differs: its range, deps and kind are the clipped
+ * range's, its launches are sampled from the clipped ends, landings past the cut find no node, and
+ * an edge merged over launches on both sides of the cut keeps only the inside ones' range and
+ * sweep. Ids belong to one map.
  */
 export function buildMovementMap<Id>(
   options: MapBuildOptions<Id>,
@@ -526,7 +558,19 @@ export function buildMovementMap<Id>(
     x: s.left,
     y: s.y - h,
   });
-  const built = spans(options, profile, area, rise);
+  const { window } = options;
+  // Spans come from the whole area, then each is clipped to the hitbox-left range whose hitbox
+  // lies inside the window, so a span the window holds keeps its full-build range.
+  const built = spans(options, profile, area, rise).flatMap((s) => {
+    if (!window) {
+      return [s];
+    }
+    const left = Math.max(s.left, window.x);
+    const right = Math.min(s.right, window.x + window.width - w);
+    return s.y - h >= window.y && s.y <= window.y + window.height && left <= right
+      ? [{ ...s, left, right }]
+      : [];
+  });
   const nodes: MapNode<Id>[] = built.map((s, i) => ({
     deps: area.deps(spanRect(s)),
     id: i as NodeId,
@@ -885,6 +929,60 @@ export function buildMovementMap<Id>(
         }
       }
     }
+    // Track climbs: rise the climb height through a column the step proves clear, then drop.
+    if (profile.climb && options.trackStart && profile.climb.height > e) {
+      const { height: climbHeight, speed } = profile.climb;
+      const accept = options.trackStart;
+      for (const x of xs) {
+        if (!accept(x, from)) {
+          continue;
+        }
+        // One kernel tick whose velocity, after gravity, carries the hitbox up the climb height;
+        // a ceiling zeroes the vertical speed, and a solid or blocked sweep fails the step.
+        const start = standing(x, from);
+        work.steps++;
+        const rise = step(
+          base,
+          { jump: false, move: 0, timeSeconds: 0 },
+          { ...start, grounded: false, vy: -climbHeight / dt - profile.gravity * dt },
+        );
+        if (
+          rise.status !== "ok" ||
+          rise.state.grounded ||
+          rise.state.vy >= 0 ||
+          Math.abs(start.y - rise.state.y - climbHeight) > e
+        ) {
+          continue;
+        }
+        const top: TraversalState<Id> = {
+          fallFromY: from.y - climbHeight,
+          grounded: false,
+          vy: 0,
+          x: start.x,
+          y: start.y - climbHeight,
+        };
+        const fall = run(base, "drop", from, top, 0, () => ({ jump: false, move: 0 }), {
+          resume: { airborne: true, begin: 0, commands: [], sweep: undefined },
+        });
+        if (!fall) {
+          continue;
+        }
+        let sweep = union(hitbox(x, from.y), hitbox(x, from.y - climbHeight));
+        if (fall.sweep) {
+          sweep = union(sweep, fall.sweep);
+        }
+        candidates.push({
+          commands: fall.commands,
+          from: from.id,
+          kind: "track-climb",
+          land: fall.state.x + body.offset.x,
+          launch: x,
+          seconds: climbHeight / speed + fall.commands.length * dt,
+          sweep,
+          to: fall.to.id,
+        });
+      }
+    }
   }
   const groups = new Map<string, Candidate[]>();
   for (const c of candidates) {
@@ -896,7 +994,18 @@ export function buildMovementMap<Id>(
       groups.set(key, [c]);
     }
   }
-  const merged = [...groups.values()].map((group) => {
+  // A window keeps the edges whose merged sweep lies inside it, within epsilon.
+  const kept = [...groups.values()].filter((group) => {
+    if (!window) {
+      return true;
+    }
+    let sweep: Rect | undefined;
+    for (const c of group) {
+      sweep = union(sweep, c.sweep);
+    }
+    return inside(e, window, sweep!);
+  });
+  const merged = kept.map((group) => {
     const first = group[0]!;
     let sweep: Rect | undefined;
     for (const c of group) {
@@ -958,6 +1067,7 @@ export function buildMovementMap<Id>(
       jumps: scripts,
       launchStride: options.launchStride,
       maxCollisionSteps: options.maxCollisionSteps,
+      ...(window && { window: { ...window } }),
     },
     outgoing,
     profile,
@@ -1189,9 +1299,10 @@ const scriptText = (script: MapJumpScript) =>
 // round-trip form, caller ids (support ids and deps) as depKey values, deps joined by "," in the
 // area's order, and commands one character each (l, s or r for move -1, 0 or 1, upper case when
 // jump is true). A jump script is <lead>/<hold>/<afterApex or ->/<jumpSpeed or ->; scripts and
-// ranges are joined by ",". The caller's step is not part of the form.
+// ranges are joined by ",". The caller's step and trackStart are not part of the form.
 //   movement-map 1
 //   options <dtSeconds> <epsilon> <horizonSteps> <launchStride> <maxCollisionSteps> <scripts>
+//   window <x>,<y>,<width>,<height>                         (only when built with a window)
 //   profile <width>,<height>,<offset x>,<offset y> <walkSpeed> <gravity> <jumpSpeed>
 //     <maxFallSpeed> <climb height>,<climb speed or -,->
 //   node <id> <kind> <y> <left>,<right> <support> <deps>                       (in id order)
@@ -1207,6 +1318,7 @@ export function mapCanonical<Id>(depKey: (id: Id) => string, map: MovementMap<Id
     "movement-map 1",
     `options ${o.dtSeconds} ${o.epsilon} ${o.horizonSteps} ${o.launchStride} ` +
       `${o.maxCollisionSteps} ${o.jumps.map(scriptText).join(",")}`,
+    ...(o.window === undefined ? [] : [`window ${rectText(o.window)}`]),
     `profile ${body.width},${body.height},${body.offset.x},${body.offset.y} ${p.walkSpeed} ` +
       `${p.gravity} ${p.jumpSpeed} ${p.maxFallSpeed} ${climb}`,
     ...map.nodes.map(
