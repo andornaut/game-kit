@@ -22,25 +22,6 @@ The `exports` map and the exported declarations define the public interface. Int
 
 Compatible fixes are patch versions and additions are minor versions. Incompatible changes are major versions after 1.0, and minor versions with a migration section below before 1.0. Update the manifest and lockfile together. Documentation-only changes need no version bump.
 
-## Migration to 0.15.0
-
-- `web/pwa/dom/offlinePlay`: `OfflinePlay.setRegistrationReady(ready)` is replaced by `registrationReady()`. Replace `play.setRegistrationReady(true)` with `play.registrationReady()`, and delete calls that pass `false`, which did nothing. `OfflinePlay.setOfferVisible` is removed: replace `play.setOfferVisible(visible)` with `play.flow.setOfferVisible(visible)`.
-- `web/pwa/updateReady`: `UpdateState.onHome` and `ResumeState.onHome` are renamed `offerVisible`.
-
-## Migration to 0.14.0
-
-- `web/pwa/cachePolicy`: `CachePolicy.revalidatedUrls` is removed. Delete it from the game's policy.
-- `web/pwa/dom/offlinePlay`: `OfflinePlay.setOnHome` is removed. Call `setOfferVisible` with whether the home screen is in front, and `setRegistrationReady(true)` once the first screen is ready to register the service worker.
-- `web/pwa/dom/updateReady`: `UpdateFlow.setOnHome` and `registerWhenDue` are removed. Call `setOfferVisible` for offer eligibility and `beginOfferVisit` to start an offer visit and clear its dismissal; `startOfflinePlay` registers the service worker.
-
-## Addition in 0.17.0
-
-`terrain/movementMap` and `terrain/airMap` take an optional build `window` (a map of only that rect, grid and spans anchored to the area). `terrain/movementMap` adds opt-in `track-climb` edges through `trackStart`, and `terrain/airMap` adds `sinksAir`. Maps built without the new options hash as in 0.16.1.
-
-## Addition in 0.16.0
-
-Adds `terrain/movementMap` (ground spans and links for a body profile, with masked path and reachability queries), `terrain/airMap` (the flyer equivalent with perches) and `ai/utility` (seeded scored action choice with hysteresis). Nothing existing changes.
-
 ## Modules and environments
 
 Paths are relative to `src/`, and tests sit beside their modules. Every module is a public path except `input/tapGuard` and `text/phaser/uiGlyphPen`, which are internal.
