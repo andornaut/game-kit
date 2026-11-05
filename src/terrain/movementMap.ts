@@ -1399,10 +1399,15 @@ function pop(heap: Arrival[]): Arrival {
 
 // Dijkstra on seconds: edge seconds plus walking within a node from the arrival x to the launch
 // range at walkSpeed. Each edge settles once, at its earliest arrival the mask accepts, since a
-// node's best departure depends on its arrival x; ties go to the lower node id, then edge id, and
-// equal arrivals over one edge settle in heap order. Returns the first arrival per node, or the
-// arrival that satisfied `stop`. Masks are pure within a query, so each node's verdict is asked
-// once; every arrival the mask accepts enters the heap, since the heap order decides those ties.
+// node's best departure depends on its arrival x. Arrivals settle in order of seconds, then node
+// id, then edge id. Equal seconds over one edge go to the arrival generated first: arrivals are
+// generated as their predecessors settle, so the one whose predecessor settled first wins.
+// Returns the first arrival per node, or the arrival that satisfied `stop`.
+//
+// Masks are pure within a query, so each node's verdict is asked once, and an edge's mask is
+// asked only for an arrival earlier than every arrival already accepted for that edge, since a
+// later one cannot settle it. The edge check stays at generation: deferring it to settling would
+// let an earlier arrival the mask later rejects suppress a later one it accepts.
 function search<Id>(
   map: MovementMap<Id>,
   mask: MapMask,
@@ -1422,17 +1427,20 @@ function search<Id>(
   // Node verdicts: 0 not asked, 1 open, 2 masked.
   const verdicts = new Uint8Array(nodes.length);
   verdicts[from.node] = 1;
-  const settled = new Uint8Array(edges.length);
+  // Edge states: 0 no arrival, 1 an accepted arrival pending at `pending` seconds, 2 settled.
+  const states = new Uint8Array(edges.length);
+  const pending = new Float64Array(edges.length);
   const heap: Arrival[] = [];
   push(heap, { edge: -1, node: from.node, previous: undefined, seconds: startSeconds, x: from.x });
   while (heap.length) {
     const arrival = pop(heap);
-    // Only the start arrival has no edge.
+    // Only the start arrival has no edge. A superseded arrival pops after the earlier one that
+    // settled its edge.
     if (arrival.edge !== -1) {
-      if (settled[arrival.edge]) {
+      if (states[arrival.edge] === 2) {
         continue;
       }
-      settled[arrival.edge] = 1;
+      states[arrival.edge] = 2;
     }
     const node = nodes[arrival.node]!;
     if (!first.has(node.id)) {
@@ -1442,7 +1450,8 @@ function search<Id>(
       }
     }
     for (const id of outgoing[node.id]!) {
-      if (settled[id]) {
+      const state = states[id]!;
+      if (state === 2) {
         continue;
       }
       const edge = edges[id]!;
@@ -1458,14 +1467,20 @@ function search<Id>(
       const distance = Math.abs(arrival.x - p);
       const walk = distance === 0 ? 0 : distance / walkSpeed;
       const depart = arrival.seconds + walk;
-      if (!Number.isFinite(depart) || !mask.edge(id, depart)) {
+      if (!Number.isFinite(depart)) {
         continue;
       }
+      const seconds = depart + edge.seconds;
+      if ((state === 1 && !(seconds < pending[id]!)) || !mask.edge(id, depart)) {
+        continue;
+      }
+      states[id] = 1;
+      pending[id] = seconds;
       push(heap, {
         edge: id,
         node: edge.to,
         previous: arrival,
-        seconds: depart + edge.seconds,
+        seconds,
         x: clamp(edge.land.left, edge.land.right, edge.land.left + (p - edge.launch.left)),
       });
     }

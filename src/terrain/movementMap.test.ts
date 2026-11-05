@@ -796,9 +796,10 @@ describe("movement map track climbs", () => {
   });
 });
 
-// The 0.18.0 queries, which the current ones must match result for result. `ties` counts edges
-// settled while another accepted arrival over the same edge with the same seconds was pending,
-// whose order only the binary heap decides.
+// The documented search, implemented plainly: every arrival the masks accept is kept unless an
+// accepted arrival over the same edge is at least as early, and each step settles the pending
+// arrival first in order of seconds, node id and edge id, by a linear scan. `ties` counts
+// accepted arrivals that lost to an equal one generated earlier.
 const reference = (() => {
   interface Arrival {
     readonly seconds: number;
@@ -811,42 +812,6 @@ const reference = (() => {
   const clamp = (low: number, high: number, value: number) => Math.min(high, Math.max(low, value));
   const before = (a: Arrival, b: Arrival) =>
     (a.seconds - b.seconds || a.node - b.node || a.edge - b.edge) < 0;
-  const push = (heap: Arrival[], item: Arrival) => {
-    let i = heap.length;
-    heap.push(item);
-    while (i > 0) {
-      const parent = (i - 1) >> 1;
-      if (!before(item, heap[parent]!)) {
-        break;
-      }
-      heap[i] = heap[parent]!;
-      i = parent;
-    }
-    heap[i] = item;
-  };
-  const pop = (heap: Arrival[]) => {
-    const top = heap[0]!;
-    const last = heap.pop()!;
-    if (heap.length) {
-      let i = 0;
-      for (;;) {
-        let child = i * 2 + 1;
-        if (child >= heap.length) {
-          break;
-        }
-        if (child + 1 < heap.length && before(heap[child + 1]!, heap[child]!)) {
-          child++;
-        }
-        if (!before(heap[child]!, last)) {
-          break;
-        }
-        heap[i] = heap[child]!;
-        i = child;
-      }
-      heap[i] = last;
-    }
-    return top;
-  };
   const search = (
     map: MovementMap<string>,
     mask: MapMask,
@@ -861,32 +826,27 @@ const reference = (() => {
     if (!mask.node(from.node)) {
       return { first, found: undefined };
     }
-    const settled = new Set<number>();
-    const heap: Arrival[] = [];
-    push(heap, {
+    const settled = new Set<EdgeId>();
+    const pending = new Map<EdgeId, Arrival>();
+    let arrival: Arrival | undefined = {
       edge: -1,
       node: from.node,
       previous: undefined,
       seconds: startSeconds,
       x: from.x,
-    });
-    while (heap.length) {
-      const arrival = pop(heap);
-      if (settled.has(arrival.edge)) {
-        continue;
+    };
+    while (arrival) {
+      if (arrival.edge !== -1) {
+        settled.add(arrival.edge);
+        pending.delete(arrival.edge);
       }
-      settled.add(arrival.edge);
-      if (heap.some((a) => a.edge === arrival.edge && a.seconds === arrival.seconds)) {
-        counts.ties++;
-      }
-      const node = map.nodes[arrival.node]!;
-      if (!first.has(node.id)) {
-        first.set(node.id, arrival);
-        if (stop?.(node)) {
+      if (!first.has(arrival.node)) {
+        first.set(arrival.node, arrival);
+        if (stop?.(map.nodes[arrival.node]!)) {
           return { first, found: arrival };
         }
       }
-      for (const id of map.outgoing[node.id]!) {
+      for (const id of map.outgoing[arrival.node]!) {
         const edge = map.edges[id]!;
         if (settled.has(id) || !mask.node(edge.to)) {
           continue;
@@ -898,13 +858,25 @@ const reference = (() => {
         if (!Number.isFinite(depart) || !mask.edge(id, depart)) {
           continue;
         }
-        push(heap, {
+        const next: Arrival = {
           edge: id,
           node: edge.to,
           previous: arrival,
           seconds: depart + edge.seconds,
           x: clamp(edge.land.left, edge.land.right, edge.land.left + (p - edge.launch.left)),
-        });
+        };
+        const held = pending.get(id);
+        if (!held || next.seconds < held.seconds) {
+          pending.set(id, next);
+        } else if (next.seconds === held.seconds) {
+          counts.ties++;
+        }
+      }
+      arrival = undefined;
+      for (const candidate of pending.values()) {
+        if (!arrival || before(candidate, arrival)) {
+          arrival = candidate;
+        }
       }
     }
     return { first, found: undefined };
@@ -1037,7 +1009,7 @@ const queryArea = (colliders: TraversalCollider<string>[]): MapArea<string> => (
   deps: () => [],
 });
 
-describe("movement map queries match 0.18.0", () => {
+describe("movement map queries match the documented search", () => {
   const cases = [
     ["integer grid", 5, 0, options, profile],
     ["integer grid with hops", 6, 0, { ...options, jumps: hops }, profile],
@@ -1045,7 +1017,7 @@ describe("movement map queries match 0.18.0", () => {
     ["jittered, offset body and climb", 8, 0.61, { ...options, launchStride: 3 }, tall],
   ] as const;
   it.each(cases)(
-    "returns every 0.18.0 result over random starts, goals and masks: %s",
+    "returns every reference result over random starts, goals and masks: %s",
     (_, seed, jitter, buildOptions, mover) => {
       const map = buildMovementMap(buildOptions, mover, queryArea(jittered(seed, 100, jitter)));
       expect(map.edges.length).toBeGreaterThan(100);
@@ -1094,8 +1066,97 @@ describe("movement map queries match 0.18.0", () => {
       expect(compared).toBe(4 * 16 * 3);
       expect(paths).toBeGreaterThan(compared / 4);
       expect(paths).toBeLessThan(compared);
-      // The layouts exercise equal arrivals over one edge, which must still match.
+      // The layouts exercise equal arrivals over one edge.
       expect(reference.counts.ties).toBeGreaterThan(0);
     },
   );
+});
+
+describe("movement map query ties", () => {
+  // A reaches D by B at 1.5 s, landing at x 0, and by C at 2 s, landing at x 5; both depart D for
+  // E from x 5 at 2 s and arrive at 3 s. The arrival by B is generated first, since it settles at D
+  // first, although it uses the higher edge id into D.
+  const node = (id: number, right: number): MapNode<string> => ({
+    deps: [],
+    id: id as NodeId,
+    kind: "static",
+    left: 0,
+    right,
+    supportId: `n${id}`,
+    y: 0,
+  });
+  const edge = (
+    id: number,
+    from: number,
+    to: number,
+    seconds: number,
+    launch: number,
+    land: number,
+  ): MovementMap<string>["edges"][number] => ({
+    commands: [],
+    deps: [],
+    from: from as NodeId,
+    id: id as EdgeId,
+    kind: "walk",
+    land: { left: land, right: land },
+    launch: { left: launch, right: launch },
+    seconds,
+    sweep: rect(0, 0, 1, 1),
+    to: to as NodeId,
+  });
+  const base = buildMovementMap(options, profile, area([]));
+  const map: MovementMap<string> = {
+    ...base,
+    edges: [
+      edge(0, 0, 1, 1.5, 0, 0),
+      edge(1, 0, 2, 1, 0, 0),
+      edge(2, 2, 3, 1, 0, 5),
+      edge(3, 1, 3, 0, 0, 0),
+      edge(4, 3, 4, 1, 5, 0),
+    ],
+    nodes: [node(0, 0), node(1, 0), node(2, 0), node(3, 10), node(4, 20)],
+    outgoing: [[0, 1], [3], [2], [4], []] as EdgeId[][],
+  };
+  const from = { node: 0 as NodeId, x: 0 };
+  const goal = { node: 4 as NodeId };
+
+  it("gives equal seconds over one edge to the arrival generated first", () => {
+    const path = { edges: [0, 3, 4], nodes: [0, 1, 3, 4], seconds: 3 };
+    expect(pathTo(map, open, from, goal)).toEqual(path);
+    expect(reference.pathTo(map, open, from, goal)).toEqual(path);
+    expect(pathOrNearest(map, open, from, { node: 9 as NodeId }, { x: 30, y: 0 })).toEqual({
+      fallback: { path, target: { node: 4, x: 20 } },
+      path: undefined,
+    });
+  });
+
+  it("takes the other equal route when the mask rejects the first, asking each edge once", () => {
+    // With the edge from B into D rejected, the arrival by C reaches E.
+    const calls: [EdgeId, number][] = [];
+    const late: MapMask = {
+      edge: (id, depart) => {
+        calls.push([id, depart]);
+        return id !== 3;
+      },
+      key: "late",
+      node: () => true,
+    };
+    expect(pathTo(map, late, from, goal)).toEqual({
+      edges: [1, 2, 4],
+      nodes: [0, 2, 3, 4],
+      seconds: 3,
+    });
+    // The edge out of D is asked once: the second arrival at D is no earlier.
+    const timed: MapMask = {
+      edge: (id, depart) => {
+        calls.push([id, depart]);
+        return true;
+      },
+      key: "timed",
+      node: () => true,
+    };
+    calls.length = 0;
+    pathTo(map, timed, from, goal);
+    expect(calls.filter(([id]) => id === 4)).toEqual([[4, 2]]);
+  });
 });

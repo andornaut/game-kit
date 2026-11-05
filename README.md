@@ -32,6 +32,7 @@ The kit's own tests define each module's contract. A release is also proven agai
 
 - `testing/phaser/sceneStub`: an override member that is an object literal now merges into the stub's member one level deep instead of replacing it, so `{ scene: { get } }` keeps the other `scene` spies. A class instance, function, array or emitter still replaces the member. To replace a whole member with a literal, assign it after construction: `Object.assign(stub, { scene: { get } })`. Every override in both games' tests at the time of the change works unchanged: none read a member it left out.
 - `testing/phaser/sceneStub`: `add` holds game object factories instead of starting empty, and `textures.list` holds `StubTexture` values, which tests seed without a cast.
+- `terrain/movementMap`: equal-seconds arrivals over one edge now resolve by the documented rule (the arrival generated first wins) instead of by heap layout, so a path may differ from 0.18.0 only where two routes take exactly the same time.
 
 ## Modules and environments
 
@@ -157,6 +158,7 @@ Node and edge construction, window clipping and the canonical line format are do
 - An optional `window` builds only the part of the map inside it; ids belong to one map, so carry positions between maps as hitboxes through `locate` or `locateAir`. In an air map window, a path costs the same as the full map's when the full map's least-cost path lies inside it; rebuild around the subject when it or its goal nears the window's edge.
 - Area callbacks (`blocked`, `deps` and the movement map's `kind`) must be pure: builds call them in no promised order and skip states they can prove produce no edge.
 - Queries are pure and cache nothing: cache per (from, goal, mask key). Ties go to the lower node id.
+- Movement map queries settle each edge once, at its earliest arrival the mask accepts, in order of seconds, then node id, then edge id. Equal seconds over one edge go to the arrival generated first, which is the one whose predecessor settled first. Masks must be pure within a query: each node verdict is asked once, and an edge's only for an arrival earlier than every arrival it already accepted for that edge.
 - Hashes are FNV-1a 64 of the canonical form; build and queries use no `Math.random`, `Date` or `performance`.
 
 ## Achievements
