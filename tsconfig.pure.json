@@ -37,6 +37,7 @@
     "src/save/versionedSave.ts",
     "src/terrain/airMap.ts",
     "src/terrain/crumbling.ts",
+    "src/terrain/fnv1a64.ts",
     "src/terrain/movementMap.ts",
     "src/terrain/traversal.ts",
     "src/text/bitmapFont.ts",
