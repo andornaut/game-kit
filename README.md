@@ -30,7 +30,7 @@ The kit's own tests define each module's contract. A release is also proven agai
 
 ## Migration to 0.19.0
 
-- `testing/phaser/sceneStub`: an override member that is an object literal now merges into the stub's member one level deep instead of replacing it, so `{ scene: { get } }` keeps the other `scene` spies. A class instance, function, array or emitter still replaces the member. To replace a whole member with a literal, assign it after construction: `Object.assign(stub, { scene: { get } })`. Every override in both games' tests at the time of the change works unchanged: none read a member it left out.
+- `testing/phaser/sceneStub`: an override member that is an object literal now merges into the stub's member one level deep instead of replacing it, so `{ scene: { get } }` keeps the other `scene` spies. A class instance, function, array or emitter still replaces the member. To replace a whole member with a literal, assign it after construction: `Object.assign(stub, { scene: { get } })`. The literal is copied, not shared: a test that changes a value later, such as advancing `time.now`, changes the stub's member (`const { time } = stub`), not its own literal.
 - `testing/phaser/sceneStub`: `add` holds game object factories instead of starting empty, and `textures.list` holds `StubTexture` values, which tests seed without a cast.
 - `terrain/movementMap`: equal-seconds arrivals over one edge now resolve by the documented rule (the arrival generated first wins) instead of by heap layout, so a path may differ from 0.18.0 only where two routes take exactly the same time.
 
