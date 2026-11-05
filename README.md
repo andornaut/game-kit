@@ -33,6 +33,10 @@ Compatible fixes are patch versions and additions are minor versions. Incompatib
 - `web/pwa/dom/offlinePlay`: `OfflinePlay.setOnHome` is removed. Call `setOfferVisible` with whether the home screen is in front, and `setRegistrationReady(true)` once the first screen is ready to register the service worker.
 - `web/pwa/dom/updateReady`: `UpdateFlow.setOnHome` and `registerWhenDue` are removed. Call `setOfferVisible` for offer eligibility and `beginOfferVisit` to start an offer visit and clear its dismissal; `startOfflinePlay` registers the service worker.
 
+## Addition in 0.16.0
+
+Adds `terrain/movementMap` (ground spans and links for a body profile, with masked path and reachability queries), `terrain/airMap` (the flyer equivalent with perches) and `ai/utility` (seeded scored action choice with hysteresis). Nothing existing changes.
+
 ## Modules and environments
 
 Paths are relative to `src/`, and tests sit beside their modules. Every module is a public path except `input/tapGuard` and `text/phaser/uiGlyphPen`, which are internal.
