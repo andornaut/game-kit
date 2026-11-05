@@ -12,6 +12,7 @@ import {
   type MapEdgeKind,
   mapHash,
   type MapMask,
+  type MapStep,
   type MovementMap,
   type MovementProfile,
   nearestReachable,
@@ -396,4 +397,99 @@ describe("movement map determinism and work", () => {
     expect(map.work.steps).toBeLessThanOrEqual(bound);
     expect(buildMovementMap(options, profile, area([...layouts.wall])).work).toEqual(map.work);
   });
+});
+
+// Ground runs with gaps, scattered ledges and solid platforms, and walls, from a fixed seed.
+const heavy = (seed: number, width: number) => {
+  let s = seed;
+  const next = () => (s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+  const int = (low: number, span: number) => low + Math.floor(next() * span);
+  const colliders: TraversalCollider<string>[] = [];
+  for (let x = 0, i = 0; x < width; i++) {
+    const w = int(8, 20);
+    colliders.push(solid(`g${i}`, rect(x, int(20, 3), w, 10)));
+    x += w + (next() < 0.4 ? int(2, 5) : 0);
+  }
+  for (let i = 0; i < width / 6; i++) {
+    const make = next() < 0.5 ? ledge : solid;
+    const x = int(0, width);
+    const y = int(-10, 28) + (next() < 0.3 ? 0.5 : 0);
+    colliders.push(make(`p${i}`, rect(x, y, int(3, 9), 1)));
+  }
+  for (let i = 0; i < width / 20; i++) {
+    const top = int(6, 12);
+    colliders.push(solid(`w${i}`, rect(int(0, width), top, 2, 22 - top)));
+  }
+  return colliders;
+};
+const callerStep: MapStep<string> = (context, input, state) => stepTraversal(context, input, state);
+const tall: MovementProfile = {
+  ...profile,
+  body: { height: 3, offset: { x: 1, y: 2 }, width: 1.5 },
+  climb: { height: 6, speed: 4 },
+  jumpSpeed: 12,
+  maxFallSpeed: 9,
+};
+const hops: MapBuildOptions<string>["jumps"] = [
+  { hold: { jump: true, move: 1 } },
+  { hold: { jump: true, move: -1 }, jumpSpeed: 6 },
+  {
+    afterApex: { jump: false, move: 0 },
+    hold: { jump: true, move: 1 },
+    lead: [
+      { jump: true, move: -1 },
+      { jump: true, move: -1 },
+      { jump: false, move: 0 },
+    ],
+  },
+  { afterApex: { jump: true, move: 0 }, hold: { jump: true, move: -1 }, jumpSpeed: 14 },
+];
+
+describe("movement map heavy layouts", () => {
+  // Hashes and kernel steps of the same builds from the unpruned, unindexed v0.16.0 builder.
+  it.each([
+    ["default step", options, profile, 1, 160, false, "181dca81c0e1eef4", 16852],
+    [
+      "caller step",
+      { ...options, step: callerStep },
+      profile,
+      1,
+      160,
+      false,
+      "181dca81c0e1eef4",
+      16852,
+    ],
+    [
+      "offset body, fall clamp and climb",
+      { ...options, horizonSteps: 60, launchStride: 3 },
+      tall,
+      2,
+      120,
+      false,
+      "d6499ee6d263560e",
+      27595,
+    ],
+    [
+      "lead, short and long hops and a hazard",
+      { ...options, jumps: hops },
+      profile,
+      3,
+      120,
+      true,
+      "edf4a3d258215f8b",
+      13559,
+    ],
+  ] as const)(
+    "builds the v0.16.0 map in fewer kernel steps: %s",
+    (_, buildOptions, buildProfile, seed, width, hazard, golden, steps) => {
+      const map = buildMovementMap(buildOptions, buildProfile, {
+        blocked: hazard ? hazardsIn(rect(59, 5, 2, 10)) : () => false,
+        bounds: rect(-20, -40, width + 40, 80),
+        colliders: heavy(seed, width),
+        deps: () => [],
+      });
+      expect(mapHash(String, map)).toBe(golden);
+      expect(map.work.steps).toBeLessThan(steps);
+    },
+  );
 });
