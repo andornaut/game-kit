@@ -41,6 +41,7 @@
     "src/terrain/fnv1a64.ts",
     "src/terrain/movementMap.ts",
     "src/terrain/traversal.ts",
+    "src/terrain/traversalStep.ts",
     "src/text/bitmapFont.ts",
     "src/text/overflow.ts",
     "src/text/pixelFont.ts",

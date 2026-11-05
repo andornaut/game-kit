@@ -143,6 +143,7 @@ Node and edge construction, window clipping and the canonical line format are do
 
 - Built geometry is static. Movers, crumbling supports and timed hazards stay with the caller, which names them through `deps` and disables them per query through the mask. Invalid input throws `RangeError`.
 - An optional `window` builds only the part of the map inside it; ids belong to one map, so carry positions between maps as hitboxes through `locate` or `locateAir`. In an air map window, a path costs the same as the full map's when the full map's least-cost path lies inside it; rebuild around the subject when it or its goal nears the window's edge.
+- Area callbacks (`blocked`, `deps` and the movement map's `kind`) must be pure: builds call them in no promised order and skip states they can prove produce no edge.
 - Queries are pure and cache nothing: cache per (from, goal, mask key). Ties go to the lower node id.
 - Hashes are FNV-1a 64 of the canonical form; build and queries use no `Math.random`, `Date` or `performance`.
 

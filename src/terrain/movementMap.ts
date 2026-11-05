@@ -11,6 +11,7 @@ import {
   type TraversalState,
   type TraversalStepResult,
 } from "./traversal.ts";
+import { stepStaticTraversal, validGeometry } from "./traversalStep.ts";
 
 // Branded indices into `MovementMap.nodes` and `MovementMap.edges`.
 export type NodeId = number & { readonly __brand: "NodeId" };
@@ -22,7 +23,8 @@ export interface MovementProfile extends TraversalProfile {
   readonly climb?: { readonly height: number; readonly speed: number };
 }
 
-// Static geometry only: every collider has `before` equal to `after` and no segments.
+// Static geometry only: every collider has `before` equal to `after` and no segments. The
+// functions must be pure; the build calls them in no promised order.
 export interface MapArea<Id> {
   readonly bounds: Readonly<Rect>;
   readonly colliders: readonly TraversalCollider<Id>[];
@@ -164,6 +166,27 @@ function union(a: Readonly<Rect> | undefined, b: Readonly<Rect>): Rect {
     y,
   };
 }
+// `union(union(a, b), c)` with the same arithmetic, without the intermediate rect.
+function union3(a: Readonly<Rect> | undefined, b: Readonly<Rect>, c: Readonly<Rect>): Rect {
+  let x = b.x;
+  let y = b.y;
+  let width = b.width;
+  let height = b.height;
+  if (a) {
+    x = Math.min(a.x, b.x);
+    y = Math.min(a.y, b.y);
+    width = Math.max(a.x + a.width, b.x + b.width) - x;
+    height = Math.max(a.y + a.height, b.y + b.height) - y;
+  }
+  const left = Math.min(x, c.x);
+  const top = Math.min(y, c.y);
+  return {
+    height: Math.max(y + height, c.y + c.height) - top,
+    width: Math.max(x + width, c.x + c.width) - left,
+    x: left,
+    y: top,
+  };
+}
 function overlaps(epsilon: number, a: Readonly<Rect>, b: Readonly<Rect>): boolean {
   return (
     a.x < b.x + b.width - epsilon &&
@@ -257,26 +280,7 @@ function colliderIndex<Id>(
   const cache = new Map<number, TraversalGeometry<Id>>();
   const seen = new Uint32Array(colliders.length);
   let stamp = 0;
-  return (query) => {
-    const x0 = column(query.x - margin);
-    const x1 = column(query.x + query.width + margin);
-    const y0 = row(query.y - margin);
-    const y1 = row(query.y + query.height + margin);
-    if (!finite(x0, x1, y0, y1)) {
-      return all;
-    }
-    if (x1 < 0 || y1 < 0 || x0 >= columns || y0 >= rows) {
-      return none;
-    }
-    const cx0 = Math.max(0, x0);
-    const cx1 = Math.min(columns - 1, x1);
-    const cy0 = Math.max(0, y0);
-    const cy1 = Math.min(rows - 1, y1);
-    const key = ((cx0 * rows + cy0) * columns + cx1) * rows + cy1;
-    const cached = cache.get(key);
-    if (cached) {
-      return cached;
-    }
+  const collect = (cx0: number, cx1: number, cy0: number, cy1: number, key: number) => {
     stamp++;
     const found: number[] = [];
     for (let cx = cx0; cx <= cx1; cx++) {
@@ -294,6 +298,51 @@ function colliderIndex<Id>(
       complete: true,
     };
     cache.set(key, geometry);
+    return geometry;
+  };
+  interface Recent {
+    readonly cx0: number;
+    readonly cx1: number;
+    readonly cy0: number;
+    readonly cy1: number;
+    readonly geometry: TraversalGeometry<Id>;
+  }
+  let last: Recent = { cx0: NaN, cx1: NaN, cy0: NaN, cy1: NaN, geometry: none };
+  let prior = last;
+  return (query) => {
+    const x0 = column(query.x - margin);
+    const x1 = column(query.x + query.width + margin);
+    const y0 = row(query.y - margin);
+    const y1 = row(query.y + query.height + margin);
+    if (!(
+      Number.isFinite(x0) &&
+      Number.isFinite(x1) &&
+      Number.isFinite(y0) &&
+      Number.isFinite(y1)
+    )) {
+      return all;
+    }
+    if (x1 < 0 || y1 < 0 || x0 >= columns || y0 >= rows) {
+      return none;
+    }
+    const cx0 = Math.max(0, x0);
+    const cx1 = Math.min(columns - 1, x1);
+    const cy0 = Math.max(0, y0);
+    const cy1 = Math.min(rows - 1, y1);
+    // Consecutive queries mostly repeat one of the last two cell ranges.
+    if (cx0 === last.cx0 && cy0 === last.cy0 && cx1 === last.cx1 && cy1 === last.cy1) {
+      return last.geometry;
+    }
+    if (cx0 === prior.cx0 && cy0 === prior.cy0 && cx1 === prior.cx1 && cy1 === prior.cy1) {
+      const swap = prior;
+      prior = last;
+      last = swap;
+      return last.geometry;
+    }
+    const key = ((cx0 * rows + cy0) * columns + cx1) * rows + cy1;
+    const geometry = cache.get(key) ?? collect(cx0, cx1, cy0, cy1, key);
+    prior = last;
+    last = { cx0, cx1, cy0, cy1, geometry };
     return geometry;
   };
 }
@@ -501,6 +550,29 @@ interface Resume {
   readonly commands: readonly TraversalCommand[];
   readonly sweep: Rect | undefined;
 }
+// The x a traced leg's hitbox left must reach, from the left when d > 0 or the right when d < 0.
+interface TraceLine {
+  readonly d: number;
+  readonly x: number;
+}
+// What a leg's landing can use, for ending it once it cannot land: the largest |move| its policy
+// can command from the next tick, the nodes it may land on (every node when omitted), one more
+// node it may not, and the trace lines a traced leg must still be able to cross.
+interface Reach<Id> {
+  readonly moves: number;
+  readonly targets?: readonly MapNode<Id>[];
+  readonly exclude?: MapNode<Id>;
+  readonly pending?: readonly TraceLine[];
+}
+// One leg's kernel results by tick from its start, with each tick's command as
+// (move + 1) * 2 + jump.
+interface Trail<Id> {
+  readonly context: TraversalContext<Id>;
+  readonly startTick: number;
+  readonly begin: number;
+  readonly codes: number[];
+  readonly results: TraversalStepResult<Id>[];
+}
 interface Trace<Id> {
   readonly states: TraversalState<Id>[];
   readonly sweeps: (Rect | undefined)[];
@@ -512,13 +584,17 @@ interface Trace<Id> {
  * Bakes the static movement graph of one area for one profile. Spans are maximal hitbox-left ranges
  * per support with body-height headroom, split at blocked sweeps, ceiling changes within jump rise
  * and support changes; touching spans at one height are joined by `walk` edges. Edge witnesses run
- * through `options.step`; without one, each step samples a collider grid built for the area. Work
- * is counted in kernel steps in `work.steps`, at most `horizonSteps` per leg; legs per node are at
- * most 2 walks, 4 drops, L × S jumps and L × S × T × (S + 2) wall-top legs, where L is the launch
- * count, S the script count and T the higher nodes in reach. A wall-top candidate must lie within
- * the script's own jump rise, its steered leg resumes the plain jump at the tick it first stands
- * over the top, and a leg ends once it falls below every node it can land on. These cuts drop only
- * legs whose edges the kernel cannot prove.
+ * through `options.step`. Without one, the area geometry is validated once per build, each step
+ * samples a collider grid built for the area without revalidating it, and a step repeated from the
+ * same state with the same command reuses its result. Work is counted in kernel steps in
+ * `work.steps`, at most `horizonSteps` per leg; legs per node are at most 2 walks, 4 drops, L × S
+ * jumps and L × S × T × (S + 2) wall-top legs, where L is the launch count, S the script count and
+ * T the higher nodes in reach. A wall-top candidate must lie within the script's own jump rise, its
+ * steered leg resumes the plain jump at the tick it first stands over the top, and a leg ends once
+ * it falls below every node it can land on. Without `options.step`, a falling leg also ends once
+ * no node it may use lies within the remaining ticks' reach at `walkSpeed` and `maxFallSpeed`,
+ * unless its trace must still find a wall-top stop there. These cuts drop only legs whose edges the
+ * kernel cannot prove.
  *
  * With `trackStart` and `profile.climb`, each launch point `trackStart` accepts gets a
  * `track-climb` edge when one step from the launch hitbox rises it `climb.height` without meeting a
@@ -544,7 +620,6 @@ export function buildMovementMap<Id>(
   const { body } = profile;
   const { height: h, width: w } = body;
   const scripts = options.jumps ?? DEFAULT_JUMP_SCRIPTS;
-  const step: MapStep<Id> = options.step ?? ((c, i, s) => stepTraversal(c, i, s));
   const rise = Math.max(
     ...[profile.jumpSpeed, ...scripts.map((s) => s.jumpSpeed ?? 0)].map(
       (v) => (v * v) / (2 * profile.gravity),
@@ -608,7 +683,20 @@ export function buildMovementMap<Id>(
   });
   const base = context(profile.jumpSpeed);
   const work = { steps: 0 };
-  const standing = (x: number, n: { y: number }): TraversalState<Id> => {
+  // The default step validates the static area geometry once per build, then steps without
+  // revalidating each sample, a subset of it. It is deterministic, so a leg that starts from the
+  // same state object, context and clock as an earlier leg from that launch point reuses that
+  // leg's results for as long as its commands match. A caller's step runs every time.
+  const kernel: MapStep<Id> = validGeometry(0, dt, geometry)
+    ? stepStaticTraversal
+    : (c, i, s) => stepTraversal(c, i, s);
+  const step: MapStep<Id> = (c, input, state) => {
+    work.steps++;
+    return (options.step ?? kernel)(c, input, state);
+  };
+  // The legs run so far from each start state at this launch point.
+  const trails = new Map<TraversalState<Id>, Trail<Id>[]>();
+  const standAt = (x: number, n: { y: number }): TraversalState<Id> => {
     const box = hitbox(x, n.y);
     const support = supportOf(e, near(box).colliders, box)!;
     return {
@@ -620,10 +708,55 @@ export function buildMovementMap<Id>(
       y: n.y - h - body.offset.y,
     };
   };
+  // Bounds on a falling body under the default kernel over static colliders: once airborne with
+  // vy not negative it has no carrier, every contact only zeroes a velocity and gravity never
+  // lifts it, so its bottom never rises, it descends at most maxFallSpeed per second and it moves
+  // sideways at most walkSpeed times the largest |move| its policy can still command. The slack
+  // covers rounding in the kernel's swept positions.
+  const slack = (remaining: number, value: number, extent: number) =>
+    1e-9 * (remaining + 1) * (1 + Math.abs(value) + extent);
+  // The most a falling body at vertical speed `vy` can descend in `remaining` ticks: tick j's
+  // speed is at most min(maxFallSpeed, vy + j * gravity * dt), since a contact only zeroes it.
+  const descent = (remaining: number, vy: number) => {
+    const g = profile.gravity * dt;
+    const rising = Math.max(0, Math.min(remaining, Math.floor((profile.maxFallSpeed - vy) / g)));
+    return (
+      dt * (rising * vy + (g * rising * (rising + 1)) / 2) +
+      (remaining - rising) * profile.maxFallSpeed * dt
+    );
+  };
+  const landable = (
+    moves: number,
+    remaining: number,
+    x: number,
+    bottom: number,
+    ry: number,
+    n: MapNode<Id>,
+  ): boolean => {
+    const rx = remaining * moves * profile.walkSpeed * dt;
+    const sx = slack(remaining, x, rx);
+    const sy = slack(remaining, bottom, ry);
+    return (
+      n.y >= bottom - e - sy &&
+      n.y <= bottom + ry + e + sy &&
+      n.left - e <= x + rx + sx &&
+      n.right + e >= x - rx - sx
+    );
+  };
+  const crossed = (line: TraceLine, x: number) => (line.d > 0 ? x >= line.x : x <= line.x);
+  const reachable = (moves: number, remaining: number, x: number, line: TraceLine) => {
+    const rx = remaining * moves * profile.walkSpeed * dt + slack(remaining, x, 0);
+    return line.d > 0 ? x + rx >= line.x : x - rx <= line.x;
+  };
   // A leg ends without an edge once it falls (vy not negative, so it only descends) with its
   // bottom more than epsilon below `floor`, since no node at or above `floor` can then hold it.
   // `resume` continues a traced prefix at tick `begin`; `trace` records the state, sweep and
   // airborne flag before each tick, and the commands so far.
+  const scratch: { jump: boolean; move: -1 | 0 | 1; timeSeconds: number } = {
+    jump: false,
+    move: 0,
+    timeSeconds: 0,
+  };
   const run = (
     c: TraversalContext<Id>,
     mode: "drop" | "jump" | "walk",
@@ -631,9 +764,30 @@ export function buildMovementMap<Id>(
     start: TraversalState<Id>,
     startTick: number,
     policy: (tick: number, state: TraversalState<Id>) => TraversalCommand,
-    extra: { floor?: number; resume?: Resume; trace?: Trace<Id> } = {},
+    extra: { floor?: number; reach?: Reach<Id>; resume?: Resume; trace?: Trace<Id> } = {},
   ): Leg<Id> | undefined => {
-    const { floor = lowest, resume, trace } = extra;
+    const { floor = lowest, reach, resume, trace } = extra;
+    // With the default kernel, the nodes this falling leg can still land on, narrowed each tick,
+    // and the trace lines it has not crossed yet.
+    const cut = reach && !options.step ? reach : undefined;
+    let landings: MapNode<Id>[] | undefined;
+    let lines = cut?.pending;
+    const begin = resume?.begin ?? 0;
+    // Earlier legs from this start that every command so far has matched.
+    let shared: Trail<Id>[] | undefined;
+    let mine: Trail<Id> | undefined;
+    if (!options.step) {
+      const earlier = trails.get(start);
+      shared = earlier?.filter(
+        (t) => t.context === c && t.startTick === startTick && t.begin === begin,
+      );
+      mine = { begin, codes: [], context: c, results: [], startTick };
+      if (earlier) {
+        earlier.push(mine);
+      } else {
+        trails.set(start, [mine]);
+      }
+    }
     let state = start;
     let airborne = resume?.airborne ?? false;
     let sweep = resume?.sweep;
@@ -641,26 +795,42 @@ export function buildMovementMap<Id>(
     if (trace) {
       trace.commands = commands;
     }
-    for (let tick = resume?.begin ?? 0; tick < horizonSteps; tick++) {
+    for (let tick = begin; tick < horizonSteps; tick++) {
       if (trace) {
         trace.states.push(state);
         trace.sweeps.push(sweep);
         trace.airborne.push(airborne);
+        const bx = state.x + body.offset.x;
+        if (lines?.some((l) => crossed(l, bx))) {
+          lines = lines.filter((l) => !crossed(l, bx));
+        }
       }
       const command = policy(tick, state);
-      work.steps++;
-      const input = {
-        jump: command.jump,
-        move: command.move,
-        timeSeconds: (startTick + tick) * dt,
-      };
-      const result = step(c, input, state);
+      // The default kernel keeps no reference to its input, so it reuses one object.
+      const input = options.step ? { jump: false, move: 0 as -1 | 0 | 1, timeSeconds: 0 } : scratch;
+      input.jump = command.jump;
+      input.move = command.move;
+      input.timeSeconds = (startTick + tick) * dt;
+      let result: TraversalStepResult<Id> | undefined;
+      if (mine) {
+        const code = (input.move + 1) * 2 + (input.jump ? 1 : 0);
+        const k = mine.codes.length;
+        if (shared?.length) {
+          shared = shared.filter((t) => t.codes[k] === code);
+          result = shared[0]?.results[k];
+        }
+        mine.codes.push(code);
+        result ??= step(c, input, state);
+        mine.results.push(result);
+      } else {
+        result = step(c, input, state);
+      }
       if (result.status !== "ok") {
         return undefined;
       }
       commands.push({ jump: command.jump, move: command.move });
       for (const s of result.segments) {
-        sweep = union(union(sweep, s.from), s.to);
+        sweep = union3(sweep, s.from, s.to);
       }
       const previousX = state.x;
       state = result.state;
@@ -671,6 +841,33 @@ export function buildMovementMap<Id>(
         airborne = true;
         if (state.vy >= 0 && state.y + body.offset.y + h > floor + e) {
           return undefined;
+        }
+        if (cut && state.vy >= 0) {
+          const remaining = horizonSteps - 1 - tick;
+          const x = state.x + body.offset.x;
+          const bottom = state.y + body.offset.y + h;
+          // A body that cannot leave the hitbox-left range of its own span, every point of which
+          // has full support, meets that support before it can sink more than epsilon below it.
+          const rx = remaining * cut.moves * profile.walkSpeed * dt + slack(remaining, x, 0);
+          const held = bottom <= from.y + e && x - rx >= from.left && x + rx <= from.right;
+          const fall = descent(remaining, state.vy);
+          // Narrow in place; the bounds only shrink as the leg falls.
+          landings ??= [...(cut.targets ?? nodes)];
+          let kept = 0;
+          for (const n of landings) {
+            if (
+              n !== from &&
+              n !== cut.exclude &&
+              !(held && n.y > from.y + e) &&
+              landable(cut.moves, remaining, x, bottom, fall, n)
+            ) {
+              landings[kept++] = n;
+            }
+          }
+          landings.length = kept;
+          if (landings.length === 0 && !lines?.some((l) => reachable(cut.moves, remaining, x, l))) {
+            return undefined;
+          }
         }
         continue;
       }
@@ -687,9 +884,26 @@ export function buildMovementMap<Id>(
       if (mode === "jump" || state.x === previousX) {
         return undefined;
       }
+      // Still on its own span: a walk or drop, whose grounded moves are at most 1, leaves only
+      // past an end, and every hitbox-left x more than twice epsilon inside both ends has full
+      // support and locates no other node.
+      if (cut) {
+        const remaining = horizonSteps - 1 - tick;
+        const x = state.x + body.offset.x;
+        const rx = remaining * profile.walkSpeed * dt + slack(remaining, x, 0);
+        if (x - rx > from.left + 2 * e && x + rx < from.right - 2 * e) {
+          return undefined;
+        }
+      }
     }
     return undefined;
   };
+  const movesOf = (script: MapJumpScript) =>
+    Math.max(
+      Math.abs(script.hold.move),
+      Math.abs(script.afterApex?.move ?? 0),
+      ...(script.lead ?? []).map((c) => Math.abs(c.move)),
+    );
   const scriptPolicy = (
     script: MapJumpScript,
     target?: (x: number) => boolean,
@@ -747,7 +961,19 @@ export function buildMovementMap<Id>(
       : d < 0
         ? n.left <= x + e && n.right >= x - reach - e
         : n.left <= x + e && n.right >= x - e;
-  const contexts = scripts.map((s) => (s.jumpSpeed === undefined ? base : context(s.jumpSpeed)));
+  // The default step shares one context per jump speed, so equal scripts share steps.
+  const speeds = new Map([[profile.jumpSpeed, base]]);
+  const contexts = scripts.map((s) => {
+    if (s.jumpSpeed === undefined) {
+      return base;
+    }
+    if (options.step) {
+      return context(s.jumpSpeed);
+    }
+    const shared = speeds.get(s.jumpSpeed) ?? context(s.jumpSpeed);
+    speeds.set(s.jumpSpeed, shared);
+    return shared;
+  });
   // The highest free-flight point of each script's jump above the launch, plus a tolerance for
   // rounding in the kernel's swept positions. A ceiling only zeroes upward speed, so no witness
   // rises higher. A falling body can rest on a partly supporting top and keep its height, so time
@@ -764,6 +990,17 @@ export function buildMovementMap<Id>(
     return peak + 2 * e + 1e-7 * (1 + peak + Math.abs(area.bounds.y) + area.bounds.height);
   });
   for (const from of nodes) {
+    // One start state per launch point, so legs from it share their common steps.
+    const starts = new Map<number, TraversalState<Id>>();
+    trails.clear();
+    const standing = (x: number): TraversalState<Id> => {
+      let state = starts.get(x);
+      if (!state) {
+        state = standAt(x, from);
+        starts.set(x, state);
+      }
+      return state;
+    };
     // Walks across a seam with a touching span at the same height.
     for (const [d, x] of [
       [1, from.right],
@@ -776,7 +1013,9 @@ export function buildMovementMap<Id>(
           Math.abs((d > 0 ? n.left : n.right) - x) <= e,
       );
       if (touching) {
-        const leg = run(base, "walk", from, standing(x, from), 0, () => ({ jump: false, move: d }));
+        const leg = run(base, "walk", from, standing(x), 0, () => ({ jump: false, move: d }), {
+          reach: { moves: 1 },
+        });
         if (leg) {
           add("walk", from, x, [leg]);
         }
@@ -791,10 +1030,13 @@ export function buildMovementMap<Id>(
         continue;
       }
       for (const release of [false, true]) {
-        const leg = run(base, "drop", from, standing(x, from), 0, (_, s) => ({
+        const policy = (_: number, s: TraversalState<Id>): TraversalCommand => ({
           jump: false,
           move: release && !s.grounded ? 0 : d,
-        }));
+        });
+        const leg = run(base, "drop", from, standing(x), 0, policy, {
+          reach: { moves: release ? 0 : 1 },
+        });
         if (leg) {
           add("drop", from, x, [leg]);
         }
@@ -803,6 +1045,20 @@ export function buildMovementMap<Id>(
     const xs = launches(from);
     const inReach = (n: MapNode<Id>) => n !== from && n.y >= from.y - rise - e;
     for (const x of xs) {
+      trails.clear();
+      // The higher nodes each script's wall-top legs from this launch can steer onto.
+      const wallTops = scripts.map((script, i) => {
+        const d = script.hold.move;
+        return d === 0
+          ? []
+          : nodes.filter(
+              (top) =>
+                inReach(top) &&
+                top.y < from.y - e &&
+                ahead(d, x, top) &&
+                !(from.y - top.y > peaks[i]!),
+            );
+      });
       const plain: { leg: Leg<Id> | undefined; trace: Trace<Id> }[] = [];
       scripts.forEach((script, i) => {
         const d = script.hold.move;
@@ -810,7 +1066,10 @@ export function buildMovementMap<Id>(
           return;
         }
         const trace: Trace<Id> = { airborne: [], commands: [], states: [], sweeps: [] };
-        const leg = run(contexts[i]!, "jump", from, standing(x, from), 0, scriptPolicy(script), {
+        // The plain trace must still find where it first stands over each wall top.
+        const pending = wallTops[i]!.map((top) => ({ d, x: d > 0 ? top.left - e : top.right + e }));
+        const leg = run(contexts[i]!, "jump", from, standing(x), 0, scriptPolicy(script), {
+          reach: { moves: movesOf(script), pending },
           trace,
         });
         plain[i] = { leg, trace };
@@ -830,13 +1089,7 @@ export function buildMovementMap<Id>(
         const { leg: plainLeg, trace } = traced;
         const c = contexts[i]!;
         const tops: { top: MapNode<Id>; stop: number }[] = [];
-        for (const top of nodes) {
-          if (
-            !(inReach(top) && top.y < from.y - e && ahead(d, x, top)) ||
-            from.y - top.y > peaks[i]!
-          ) {
-            continue;
-          }
+        for (const top of wallTops[i]!) {
           const over = (bx: number) => (d > 0 ? bx >= top.left - e : bx <= top.right + e);
           tops.push({ stop: trace.states.findIndex((s) => over(s.x + body.offset.x)), top });
         }
@@ -862,7 +1115,14 @@ export function buildMovementMap<Id>(
             () => true,
             lead.some((s) => !s.grounded && s.vy >= 0),
           );
-          const leg = run(c, "jump", from, trace.states[stop]!, 0, policy, { floor, resume });
+          // Only a landing on a top this stop serves makes an edge, and the stopped policy no
+          // longer moves.
+          const targets = tops.filter((t) => t.stop === stop).map((t) => t.top);
+          const leg = run(c, "jump", from, trace.states[stop]!, 0, policy, {
+            floor,
+            reach: { moves: 0, targets },
+            resume,
+          });
           steered.set(stop, leg);
         }
         for (const { stop, top } of tops) {
@@ -874,13 +1134,17 @@ export function buildMovementMap<Id>(
           const onward: Leg<Id>[] = [];
           scripts.forEach((next, j) => {
             if (next.hold.move === d) {
-              const leg = run(contexts[j]!, "jump", top, first.state, tick, scriptPolicy(next));
+              const leg = run(contexts[j]!, "jump", top, first.state, tick, scriptPolicy(next), {
+                reach: { exclude: from, moves: movesOf(next) },
+              });
               if (leg) {
                 onward.push(leg);
               }
             }
           });
-          const fall = run(base, "drop", top, first.state, tick, () => ({ jump: false, move: d }));
+          const fall = run(base, "drop", top, first.state, tick, () => ({ jump: false, move: d }), {
+            reach: { exclude: from, moves: 1 },
+          });
           if (fall) {
             onward.push(fall);
           }
@@ -939,8 +1203,7 @@ export function buildMovementMap<Id>(
         }
         // One kernel tick whose velocity, after gravity, carries the hitbox up the climb height;
         // a ceiling zeroes the vertical speed, and a solid or blocked sweep fails the step.
-        const start = standing(x, from);
-        work.steps++;
+        const start = standing(x);
         const rise = step(
           base,
           { jump: false, move: 0, timeSeconds: 0 },
@@ -962,6 +1225,7 @@ export function buildMovementMap<Id>(
           y: start.y - climbHeight,
         };
         const fall = run(base, "drop", from, top, 0, () => ({ jump: false, move: 0 }), {
+          reach: { moves: 0 },
           resume: { airborne: true, begin: 0, commands: [], sweep: undefined },
         });
         if (!fall) {

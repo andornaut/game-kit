@@ -494,6 +494,48 @@ describe("movement map heavy layouts", () => {
   );
 });
 
+describe("movement map at a fine timestep", () => {
+  // A heavy layout at six times the scale, stepped at 1/120 s with fixed-impulse jumps, so legs
+  // run long enough for the default step's falling-leg cuts and shared leg prefixes to apply.
+  const scaled = heavy(4, 160).map((c) => {
+    const r = rect(c.before.x * 6, c.before.y * 6, c.before.width * 6, c.before.height * 6);
+    return { ...c, after: r, before: r };
+  });
+  const fixedImpulse: MapBuildOptions<string>["jumps"] = ([-1, 0, 1] as const).flatMap((d) => {
+    const script = { hold: { jump: false, move: d }, lead: [{ jump: true, move: d }] };
+    return d === 0 ? [script] : [script, { ...script, afterApex: { jump: false, move: 0 } }];
+  });
+  const fineOptions: MapBuildOptions<string> = {
+    dtSeconds: 1 / 120,
+    epsilon: 1e-6,
+    horizonSteps: 120,
+    jumps: fixedImpulse,
+    launchStride: 24,
+    maxCollisionSteps: 16,
+    window: rect(240, -240, 480, 480),
+  };
+  const fine: MovementProfile = {
+    body: { height: 10, offset: { x: 1, y: 2 }, width: 10 },
+    gravity: 900,
+    jumpSpeed: 330,
+    maxFallSpeed: 420,
+    walkSpeed: 70,
+  };
+  const fineArea: MapArea<string> = {
+    blocked: () => false,
+    bounds: rect(-120, -240, 1200, 480),
+    colliders: scaled,
+    deps: () => [],
+  };
+  it("matches the v0.17.0 hash with the default and a caller step, in fewer default steps", () => {
+    const map = buildMovementMap(fineOptions, fine, fineArea);
+    const called = buildMovementMap({ ...fineOptions, step: callerStep }, fine, fineArea);
+    expect(mapHash(String, map)).toBe("97857d53b988e219");
+    expect(mapHash(String, called)).toBe("97857d53b988e219");
+    expect(map.work.steps).toBeLessThan(called.work.steps * 0.6);
+  });
+});
+
 const within = (outer: Readonly<Rect>, r: Readonly<Rect>) =>
   r.x >= outer.x - 1e-7 &&
   r.y >= outer.y - 1e-7 &&
