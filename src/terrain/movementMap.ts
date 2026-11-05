@@ -1398,8 +1398,11 @@ function pop(heap: Arrival[]): Arrival {
 }
 
 // Dijkstra on seconds: edge seconds plus walking within a node from the arrival x to the launch
-// range at walkSpeed. Each edge settles once, at its earliest arrival; ties go to the lower node id,
-// then edge id. Returns the first arrival per node, or the arrival that satisfied `stop`.
+// range at walkSpeed. Each edge settles once, at its earliest arrival the mask accepts, since a
+// node's best departure depends on its arrival x; ties go to the lower node id, then edge id, and
+// equal arrivals over one edge settle in heap order. Returns the first arrival per node, or the
+// arrival that satisfied `stop`. Masks are pure within a query, so each node's verdict is asked
+// once; every arrival the mask accepts enters the heap, since the heap order decides those ties.
 function search<Id>(
   map: MovementMap<Id>,
   mask: MapMask,
@@ -1408,36 +1411,52 @@ function search<Id>(
   stop: ((node: MapNode<Id>) => boolean) | undefined,
 ): { readonly first: Map<NodeId, Arrival>; readonly found: Arrival | undefined } {
   const first = new Map<NodeId, Arrival>();
-  if (!map.nodes[from.node] || !Number.isFinite(from.x)) {
+  const { edges, nodes, outgoing } = map;
+  if (!nodes[from.node] || !Number.isFinite(from.x)) {
     throw new RangeError("Unknown movement map node");
   }
   if (!mask.node(from.node)) {
     return { first, found: undefined };
   }
-  const settled = new Set<number>();
+  const { walkSpeed } = map.profile;
+  // Node verdicts: 0 not asked, 1 open, 2 masked.
+  const verdicts = new Uint8Array(nodes.length);
+  verdicts[from.node] = 1;
+  const settled = new Uint8Array(edges.length);
   const heap: Arrival[] = [];
   push(heap, { edge: -1, node: from.node, previous: undefined, seconds: startSeconds, x: from.x });
   while (heap.length) {
     const arrival = pop(heap);
-    if (settled.has(arrival.edge)) {
-      continue;
+    // Only the start arrival has no edge.
+    if (arrival.edge !== -1) {
+      if (settled[arrival.edge]) {
+        continue;
+      }
+      settled[arrival.edge] = 1;
     }
-    settled.add(arrival.edge);
-    const node = map.nodes[arrival.node]!;
+    const node = nodes[arrival.node]!;
     if (!first.has(node.id)) {
       first.set(node.id, arrival);
       if (stop?.(node)) {
         return { first, found: arrival };
       }
     }
-    for (const id of map.outgoing[node.id]!) {
-      const edge = map.edges[id]!;
-      if (settled.has(id) || !mask.node(edge.to)) {
+    for (const id of outgoing[node.id]!) {
+      if (settled[id]) {
+        continue;
+      }
+      const edge = edges[id]!;
+      let verdict = verdicts[edge.to]!;
+      if (verdict === 0) {
+        verdict = mask.node(edge.to) ? 1 : 2;
+        verdicts[edge.to] = verdict;
+      }
+      if (verdict === 2) {
         continue;
       }
       const p = clamp(edge.launch.left, edge.launch.right, arrival.x);
       const distance = Math.abs(arrival.x - p);
-      const walk = distance === 0 ? 0 : distance / map.profile.walkSpeed;
+      const walk = distance === 0 ? 0 : distance / walkSpeed;
       const depart = arrival.seconds + walk;
       if (!Number.isFinite(depart) || !mask.edge(id, depart)) {
         continue;
@@ -1460,24 +1479,16 @@ function distanceTo<Id>(map: MovementMap<Id>, point: Point, node: MapNode<Id>): 
   return Math.hypot(dx, point.y - node.y);
 }
 
-// The fastest path under the mask, from a node position to the first node meeting the goal. A
-// `point` goal accepts a node whose hitbox bottom-centre range lies within `radius` of the point.
-export function pathTo<Id>(
-  map: MovementMap<Id>,
-  mask: MapMask,
-  from: NodeRef,
-  goal: MapGoal<Id>,
-): MapPath | undefined {
-  const test =
-    "node" in goal
-      ? (n: MapNode<Id>) => n.id === goal.node
-      : "point" in goal
-        ? (n: MapNode<Id>) => distanceTo(map, goal.point, n) <= goal.radius
-        : goal.predicate;
-  const { found } = search(map, mask, from, 0, test);
-  if (!found) {
-    return undefined;
-  }
+function goalTest<Id>(map: MovementMap<Id>, goal: MapGoal<Id>): (node: MapNode<Id>) => boolean {
+  return "node" in goal
+    ? (n) => n.id === goal.node
+    : "point" in goal
+      ? (n) => distanceTo(map, goal.point, n) <= goal.radius
+      : goal.predicate;
+}
+
+// The path along an arrival chain, from the search start to the arrival.
+function pathOf(found: Arrival): MapPath {
   const edges: EdgeId[] = [];
   const nodes: NodeId[] = [];
   for (let a: Arrival | undefined = found; a; a = a.previous) {
@@ -1487,6 +1498,44 @@ export function pathTo<Id>(
     }
   }
   return { edges: edges.reverse(), nodes: nodes.reverse(), seconds: found.seconds };
+}
+
+// The first arrival at the reachable node nearest the point, then the earliest, then the lowest id.
+function nearestArrival<Id>(
+  map: MovementMap<Id>,
+  toward: Point,
+  first: ReadonlyMap<NodeId, Arrival>,
+): Arrival | undefined {
+  let best: { arrival: Arrival; distance: number } | undefined;
+  for (const [id, arrival] of first) {
+    const distance = distanceTo(map, toward, map.nodes[id]!);
+    if (
+      !best ||
+      (distance - best.distance ||
+        arrival.seconds - best.arrival.seconds ||
+        id - best.arrival.node) < 0
+    ) {
+      best = { arrival, distance };
+    }
+  }
+  return best?.arrival;
+}
+
+function positionToward<Id>(map: MovementMap<Id>, toward: Point, id: NodeId): NodeRef {
+  const node = map.nodes[id]!;
+  return { node: id, x: clamp(node.left, node.right, toward.x - map.profile.body.width / 2) };
+}
+
+// The fastest path under the mask, from a node position to the first node meeting the goal. A
+// `point` goal accepts a node whose hitbox bottom-centre range lies within `radius` of the point.
+export function pathTo<Id>(
+  map: MovementMap<Id>,
+  mask: MapMask,
+  from: NodeRef,
+  goal: MapGoal<Id>,
+): MapPath | undefined {
+  const { found } = search(map, mask, from, 0, goalTest(map, goal));
+  return found && pathOf(found);
 }
 
 // Every node reachable under the mask, in id order.
@@ -1508,23 +1557,39 @@ export function nearestReachable<Id>(
   toward: Point,
 ): NodeRef | undefined {
   const { first } = search(map, mask, from, 0, undefined);
-  let best: { node: MapNode<Id>; distance: number; seconds: number } | undefined;
-  for (const [id, arrival] of first) {
-    const node = map.nodes[id]!;
-    const distance = distanceTo(map, toward, node);
-    if (
-      !best ||
-      (distance - best.distance || arrival.seconds - best.seconds || node.id - best.node.id) < 0
-    ) {
-      best = { distance, node, seconds: arrival.seconds };
-    }
+  const nearest = nearestArrival(map, toward, first);
+  return nearest && positionToward(map, toward, nearest.node);
+}
+
+export interface MapPathOrNearest {
+  // What `pathTo` returns for the goal.
+  readonly path: MapPath | undefined;
+  // Without a path: what `nearestReachable` returns toward the point, and the path `pathTo`
+  // returns to its node. Undefined when there is a path or no node is reachable.
+  readonly fallback: { readonly target: NodeRef; readonly path: MapPath } | undefined;
+}
+
+// `pathTo` for the goal, else `nearestReachable` toward the point with the path to it, from one
+// search: a search that never meets the goal settles every arrival the unstopped search does.
+export function pathOrNearest<Id>(
+  map: MovementMap<Id>,
+  mask: MapMask,
+  from: NodeRef,
+  goal: MapGoal<Id>,
+  toward: Point,
+): MapPathOrNearest {
+  const { first, found } = search(map, mask, from, 0, goalTest(map, goal));
+  if (found) {
+    return { fallback: undefined, path: pathOf(found) };
   }
-  return (
-    best && {
-      node: best.node.id,
-      x: clamp(best.node.left, best.node.right, toward.x - map.profile.body.width / 2),
-    }
-  );
+  const nearest = nearestArrival(map, toward, first);
+  return {
+    fallback: nearest && {
+      path: pathOf(nearest),
+      target: positionToward(map, toward, nearest.node),
+    },
+    path: undefined,
+  };
 }
 
 // Reachable nodes from which no exit is reachable when leaving at the earliest arrival, in id order.

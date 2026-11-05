@@ -146,10 +146,10 @@ Hooks return `TraversalAvailability<World>`; unknown geometry, occupancy or acto
 
 ### Movement and air maps
 
-| Module                | Builds                                                                                                                                                                             | Queries                                                                                                    |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `terrain/movementMap` | `buildMovementMap(options, profile, area)`: ground spans; `walk`, `jump`, `drop`, `wall-top`, `climb` and `track-climb` edges witnessed by the kernel; Dijkstra queries on seconds | `locate`, `pathTo`, `nearestReachable`, `reachableSet`, `sinks`; `mapCanonical`, `mapHash`                 |
-| `terrain/airMap`      | `buildAirMap(options, profile, area)`: flyer cell grid, `fly` edges and perch `land`/`lift`; A\* queries with an axis-change penalty                                               | `locateAir`, `airPath`, `nearestReachableAir`, `reachableAir`, `sinksAir`; `airMapCanonical`, `airMapHash` |
+| Module                | Builds                                                                                                                                                                             | Queries                                                                                                     |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `terrain/movementMap` | `buildMovementMap(options, profile, area)`: ground spans; `walk`, `jump`, `drop`, `wall-top`, `climb` and `track-climb` edges witnessed by the kernel; Dijkstra queries on seconds | `locate`, `pathTo`, `nearestReachable`, `pathOrNearest`, `reachableSet`, `sinks`; `mapCanonical`, `mapHash` |
+| `terrain/airMap`      | `buildAirMap(options, profile, area)`: flyer cell grid, `fly` edges and perch `land`/`lift`; A\* queries with an axis-change penalty                                               | `locateAir`, `airPath`, `nearestReachableAir`, `reachableAir`, `sinksAir`; `airMapCanonical`, `airMapHash`  |
 
 Node and edge construction, window clipping and the canonical line format are documented on `buildMovementMap`, `mapCanonical`, `buildAirMap` and `airMapCanonical`. Caller contracts common to both:
 

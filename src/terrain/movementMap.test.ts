@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Rect } from "../rect.ts";
+import type { Point, Rect } from "../rect.ts";
 import {
   buildMovementMap,
   DEFAULT_JUMP_SCRIPTS,
@@ -10,13 +10,18 @@ import {
   type MapBuildOptions,
   mapCanonical,
   type MapEdgeKind,
+  type MapGoal,
   mapHash,
   type MapMask,
+  type MapNode,
+  type MapPath,
   type MapStep,
   type MovementMap,
   type MovementProfile,
   nearestReachable,
   type NodeId,
+  type NodeRef,
+  pathOrNearest,
   pathTo,
   reachableSet,
   sinks,
@@ -789,4 +794,308 @@ describe("movement map track climbs", () => {
     expect(tracks(map).length).toBeGreaterThan(0);
     expect(mapHash(String, map)).toBe("29672fbc424d4806");
   });
+});
+
+// The 0.18.0 queries, which the current ones must match result for result. `ties` counts edges
+// settled while another accepted arrival over the same edge with the same seconds was pending,
+// whose order only the binary heap decides.
+const reference = (() => {
+  interface Arrival {
+    readonly seconds: number;
+    readonly node: NodeId;
+    readonly x: number;
+    readonly edge: EdgeId | -1;
+    readonly previous: Arrival | undefined;
+  }
+  const counts = { ties: 0 };
+  const clamp = (low: number, high: number, value: number) => Math.min(high, Math.max(low, value));
+  const before = (a: Arrival, b: Arrival) =>
+    (a.seconds - b.seconds || a.node - b.node || a.edge - b.edge) < 0;
+  const push = (heap: Arrival[], item: Arrival) => {
+    let i = heap.length;
+    heap.push(item);
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (!before(item, heap[parent]!)) {
+        break;
+      }
+      heap[i] = heap[parent]!;
+      i = parent;
+    }
+    heap[i] = item;
+  };
+  const pop = (heap: Arrival[]) => {
+    const top = heap[0]!;
+    const last = heap.pop()!;
+    if (heap.length) {
+      let i = 0;
+      for (;;) {
+        let child = i * 2 + 1;
+        if (child >= heap.length) {
+          break;
+        }
+        if (child + 1 < heap.length && before(heap[child + 1]!, heap[child]!)) {
+          child++;
+        }
+        if (!before(heap[child]!, last)) {
+          break;
+        }
+        heap[i] = heap[child]!;
+        i = child;
+      }
+      heap[i] = last;
+    }
+    return top;
+  };
+  const search = (
+    map: MovementMap<string>,
+    mask: MapMask,
+    from: NodeRef,
+    startSeconds: number,
+    stop: ((node: MapNode<string>) => boolean) | undefined,
+  ) => {
+    const first = new Map<NodeId, Arrival>();
+    if (!map.nodes[from.node] || !Number.isFinite(from.x)) {
+      throw new RangeError("Unknown movement map node");
+    }
+    if (!mask.node(from.node)) {
+      return { first, found: undefined };
+    }
+    const settled = new Set<number>();
+    const heap: Arrival[] = [];
+    push(heap, {
+      edge: -1,
+      node: from.node,
+      previous: undefined,
+      seconds: startSeconds,
+      x: from.x,
+    });
+    while (heap.length) {
+      const arrival = pop(heap);
+      if (settled.has(arrival.edge)) {
+        continue;
+      }
+      settled.add(arrival.edge);
+      if (heap.some((a) => a.edge === arrival.edge && a.seconds === arrival.seconds)) {
+        counts.ties++;
+      }
+      const node = map.nodes[arrival.node]!;
+      if (!first.has(node.id)) {
+        first.set(node.id, arrival);
+        if (stop?.(node)) {
+          return { first, found: arrival };
+        }
+      }
+      for (const id of map.outgoing[node.id]!) {
+        const edge = map.edges[id]!;
+        if (settled.has(id) || !mask.node(edge.to)) {
+          continue;
+        }
+        const p = clamp(edge.launch.left, edge.launch.right, arrival.x);
+        const distance = Math.abs(arrival.x - p);
+        const walk = distance === 0 ? 0 : distance / map.profile.walkSpeed;
+        const depart = arrival.seconds + walk;
+        if (!Number.isFinite(depart) || !mask.edge(id, depart)) {
+          continue;
+        }
+        push(heap, {
+          edge: id,
+          node: edge.to,
+          previous: arrival,
+          seconds: depart + edge.seconds,
+          x: clamp(edge.land.left, edge.land.right, edge.land.left + (p - edge.launch.left)),
+        });
+      }
+    }
+    return { first, found: undefined };
+  };
+  const distanceTo = (map: MovementMap<string>, point: Point, node: MapNode<string>) => {
+    const half = map.profile.body.width / 2;
+    const dx = Math.max(0, node.left + half - point.x, point.x - node.right - half);
+    return Math.hypot(dx, point.y - node.y);
+  };
+  const pathTo = (
+    map: MovementMap<string>,
+    mask: MapMask,
+    from: NodeRef,
+    goal: MapGoal<string>,
+  ): MapPath | undefined => {
+    const test =
+      "node" in goal
+        ? (n: MapNode<string>) => n.id === goal.node
+        : "point" in goal
+          ? (n: MapNode<string>) => distanceTo(map, goal.point, n) <= goal.radius
+          : goal.predicate;
+    const { found } = search(map, mask, from, 0, test);
+    if (!found) {
+      return undefined;
+    }
+    const edges: EdgeId[] = [];
+    const nodes: NodeId[] = [];
+    for (let a: Arrival | undefined = found; a; a = a.previous) {
+      nodes.push(a.node);
+      if (a.edge !== -1) {
+        edges.push(a.edge);
+      }
+    }
+    return { edges: edges.reverse(), nodes: nodes.reverse(), seconds: found.seconds };
+  };
+  const reachableSet = (map: MovementMap<string>, mask: MapMask, from: NodeRef) => {
+    const { first } = search(map, mask, from, 0, undefined);
+    return new Set([...first.keys()].sort((a, b) => a - b));
+  };
+  const nearestReachable = (
+    map: MovementMap<string>,
+    mask: MapMask,
+    from: NodeRef,
+    toward: Point,
+  ): NodeRef | undefined => {
+    const { first } = search(map, mask, from, 0, undefined);
+    let best: { node: MapNode<string>; distance: number; seconds: number } | undefined;
+    for (const [id, arrival] of first) {
+      const node = map.nodes[id]!;
+      const distance = distanceTo(map, toward, node);
+      if (
+        !best ||
+        (distance - best.distance || arrival.seconds - best.seconds || node.id - best.node.id) < 0
+      ) {
+        best = { distance, node, seconds: arrival.seconds };
+      }
+    }
+    return (
+      best && {
+        node: best.node.id,
+        x: clamp(best.node.left, best.node.right, toward.x - map.profile.body.width / 2),
+      }
+    );
+  };
+  const sinks = (
+    map: MovementMap<string>,
+    mask: MapMask,
+    from: NodeRef,
+    exits: readonly NodeId[],
+  ) => {
+    const targets = new Set(exits);
+    const { first } = search(map, mask, from, 0, undefined);
+    const result: NodeId[] = [];
+    for (const id of [...first.keys()].sort((a, b) => a - b)) {
+      const arrival = first.get(id)!;
+      if (
+        !targets.has(id) &&
+        !search(map, mask, { node: id, x: arrival.x }, arrival.seconds, (n) => targets.has(n.id))
+          .found
+      ) {
+        result.push(id);
+      }
+    }
+    return result;
+  };
+  return { counts, nearestReachable, pathTo, reachableSet, sinks };
+})();
+
+// A deterministic hash of integers into [0, 1).
+const unit = (...values: number[]) => {
+  let h = 0x811c9dc5;
+  for (const v of values) {
+    h = Math.imul(h ^ (v | 0), 0x01000193) >>> 0;
+    h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d) >>> 0;
+  }
+  return h / 2 ** 32;
+};
+// Masks drawn from a seed: open, nodes and edges closed at random, and edges open only in
+// departure windows that shift with the edge, so arrivals at different seconds settle differently.
+const masks = (seed: number): MapMask[] => [
+  open,
+  { edge: (id) => unit(seed, id, 1) >= 0.15, key: "edges", node: (id) => unit(seed, id) >= 0.1 },
+  {
+    edge: (id, depart) => Math.floor(depart * (1 + unit(seed, id, 2) * 3) + id) % 3 !== 0,
+    key: "windows",
+    node: () => true,
+  },
+  {
+    edge: (id, depart) => unit(seed, id, Math.floor(depart * 2)) >= 0.35,
+    key: "slots",
+    node: (id) => unit(seed, id, 3) >= 0.05,
+  },
+];
+// The heavy layout, its coordinates optionally moved off the integer grid.
+const jittered = (seed: number, width: number, jitter: number) =>
+  heavy(seed, width).map((c, i) => {
+    const b = c.before;
+    const r = rect(
+      b.x + unit(seed, i, 4) * jitter,
+      b.y + unit(seed, i, 5) * jitter,
+      b.width,
+      b.height,
+    );
+    return { ...c, after: r, before: r };
+  });
+const queryArea = (colliders: TraversalCollider<string>[]): MapArea<string> => ({
+  blocked: () => false,
+  bounds: rect(-20, -40, 160, 80),
+  colliders,
+  deps: () => [],
+});
+
+describe("movement map queries match 0.18.0", () => {
+  const cases = [
+    ["integer grid", 5, 0, options, profile],
+    ["integer grid with hops", 6, 0, { ...options, jumps: hops }, profile],
+    ["jittered", 7, 0.37, options, profile],
+    ["jittered, offset body and climb", 8, 0.61, { ...options, launchStride: 3 }, tall],
+  ] as const;
+  it.each(cases)(
+    "returns every 0.18.0 result over random starts, goals and masks: %s",
+    (_, seed, jitter, buildOptions, mover) => {
+      const map = buildMovementMap(buildOptions, mover, queryArea(jittered(seed, 100, jitter)));
+      expect(map.edges.length).toBeGreaterThan(100);
+      reference.counts.ties = 0;
+      let compared = 0;
+      let paths = 0;
+      for (const mask of masks(seed)) {
+        for (let k = 0; k < 16; k++) {
+          const node = map.nodes[Math.floor(unit(seed, k, 6) * map.nodes.length)]!;
+          const from = {
+            node: node.id,
+            x: node.left + (node.right - node.left) * unit(seed, k, 7),
+          };
+          const point = { x: unit(seed, k, 8) * 120 - 10, y: unit(seed, k, 9) * 50 - 15 };
+          const target = Math.floor(unit(seed, k, 10) * map.nodes.length) as NodeId;
+          const goals: MapGoal<string>[] = [
+            { node: target },
+            { point, radius: 1 + unit(seed, k, 11) * 4 },
+            { predicate: (n) => n.y < point.y && n.kind === "static" },
+          ];
+          for (const goal of goals) {
+            const path = pathTo(map, mask, from, goal);
+            expect(path).toEqual(reference.pathTo(map, mask, from, goal));
+            const combined = pathOrNearest(map, mask, from, goal, point);
+            expect(combined.path).toEqual(path);
+            const nearest = path ? undefined : nearestReachable(map, mask, from, point);
+            expect(combined.fallback?.target).toEqual(nearest);
+            if (combined.fallback) {
+              expect(combined.fallback.path).toEqual(
+                pathTo(map, mask, from, { node: combined.fallback.target.node }),
+              );
+            }
+            paths += path ? 1 : 0;
+            compared++;
+          }
+          expect(nearestReachable(map, mask, from, point)).toEqual(
+            reference.nearestReachable(map, mask, from, point),
+          );
+          expect(reachableSet(map, mask, from)).toEqual(reference.reachableSet(map, mask, from));
+          if (k < 4) {
+            const exits = [target, node.id];
+            expect(sinks(map, mask, from, exits)).toEqual(reference.sinks(map, mask, from, exits));
+          }
+        }
+      }
+      expect(compared).toBe(4 * 16 * 3);
+      expect(paths).toBeGreaterThan(compared / 4);
+      expect(paths).toBeLessThan(compared);
+      // The layouts exercise equal arrivals over one edge, which must still match.
+      expect(reference.counts.ties).toBeGreaterThan(0);
+    },
+  );
 });
