@@ -227,6 +227,16 @@ node scripts/check-release-consumers.ts \
 
 The proof installs the exact artifact into immutable snapshots of both games' pinned revisions, offline. It checks that the installed bytes and lockfile integrity match the tarball, that each game's kit imports resolve into it, each game's type check and Vite and Vitest configuration, and runs each game's `test:game-kit` npm script, which tests its kit wiring; a snapshot without that script fails. It never edits a checkout or builds or deploys a game. `GAME_KIT_ARCHIE_CACHE` and `GAME_KIT_CHIBI_CACHE` are required and name each game's populated offline npm cache, mounted read-only. Logs, archive listings and results are kept in the printed evidence directory. The tarball's own exports, native imports and declarations are checked by the gate, on the same bytes.
 
+A single-game proof uses only that game's repository, revision and cache:
+
+```bash
+GAME_KIT_CHIBI_CACHE=<Chibi-npm-cache> \
+node scripts/check-release-consumers.ts --game chibi \
+  <artifact.tgz> <sha256> <source-commit> <Chibi-repository> <Chibi-revision>
+```
+
+Use `--game archie` with `GAME_KIT_ARCHIE_CACHE` for Archie. The omitted game and its cache are never read, resolved, fingerprinted, mounted or checked. A successful single-game run records `PARTIAL PASS`, `incomplete-release-proof` and the selected game in its receipts. It does not satisfy the required two-game publication proof; the default seven-argument command still proves both games.
+
 Tag a release only after every required workflow is green for that `main` commit and the artifact passes the consumer proof. Tags and release assets are never moved.
 
 ## Licence

@@ -203,19 +203,26 @@ function proveGame(
 export function releaseConsumerJob(args: string[]): void {
   const expectedNode = `v${nodeImage("/harness").slice("node:".length)}`;
   assert.equal(process.version, expectedNode);
-  if (args.length !== 5) {
+  const single = args[0] === "--game";
+  if ((single && args.length !== 6) || (!single && args.length !== 5)) {
     throw new ScriptError(
-      "Usage: release-consumer-job.ts <sha256> <source> <version> <archie> <chibi>",
+      "Usage: release-consumer-job.ts <sha256> <source> <version> <archie> <chibi> " +
+        "or --game <archie|chibi> <sha256> <source> <version> <revision>",
       2,
     );
   }
-  const [hash, sourceRevision, version, archieRevision, chibiRevision] = args as [
-    string,
-    string,
+  const game = args[1];
+  if (single && game !== "archie" && game !== "chibi") {
+    throw new ScriptError(`Unsupported game selection: ${game}`, 2);
+  }
+  const [hash, sourceRevision, version] = args.slice(single ? 2 : 0, single ? 5 : 3) as [
     string,
     string,
     string,
   ];
+  const selected = single
+    ? [{ game: game as Game, revision: args[5]! }]
+    : GAMES.map((game, index) => ({ game, revision: args[index + 3]! }));
   assert.equal(createHash("sha256").update(readFileSync(ARTIFACT)).digest("hex"), hash);
   const reference = join(WORK, "reference");
   mkdirSync(EVIDENCE, { recursive: true });
@@ -230,9 +237,16 @@ export function releaseConsumerJob(args: string[]): void {
   writeFileSync(join(EVIDENCE, "artifact-modes.txt"), modes);
   assert.deepEqual(unsafeArchiveModes(modes), []);
   execFileSync("tar", ["-xzf", ARTIFACT, "-C", reference, "--no-same-owner"]);
+  const scope = single ? "incomplete-release-proof" : "complete-release-proof";
+  writeFileSync(
+    join(EVIDENCE, "scope.json"),
+    `${JSON.stringify({ selectedGames: selected.map(({ game }) => game), scope })}\n`,
+  );
+  console.log(
+    `Consumer proof scope: ${scope}; selected_games=${selected.map(({ game }) => game).join(",")}`,
+  );
   let failed = false;
-  for (const game of GAMES) {
-    const revision = game === "archie" ? archieRevision : chibiRevision;
+  for (const { game, revision } of selected) {
     if (proveGame({ revision, sourceRevision, version }, game)) {
       writeFileSync(join(EVIDENCE, `${game}.RESULT`), "PASS\n");
       console.log(`${game} release proof passed at ${revision} with kit ${sourceRevision}`);
