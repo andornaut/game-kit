@@ -16,8 +16,8 @@ import { main, ScriptError } from "./runtime.ts";
 
 export function containerCheck(env: NodeJS.ProcessEnv, args: string[]): void {
   const [task, ...focused] = args;
-  if (!["lint", "test", "build", "format", "exec"].includes(task ?? "")) {
-    throw new ScriptError("Expected a lint, test, build, format or exec category.", 2);
+  if (!["lint", "lint-features", "test", "build", "format", "exec"].includes(task ?? "")) {
+    throw new ScriptError("Expected lint, lint-features, test, build, format or exec.", 2);
   }
   if (task === "format" && env.CHECK_WRITABLE !== "1") {
     throw new ScriptError("Formatting requires explicit writable container execution.", 2);
@@ -71,11 +71,13 @@ export function containerCheck(env: NodeJS.ProcessEnv, args: string[]): void {
       throw new ScriptError("Test worker limits are owned by the container dispatcher.", 2);
     }
     run(process.execPath, ["node_modules/vitest/vitest.mjs", "run", "--maxWorkers=4", ...focused]);
-  } else if (task === "lint") {
+  } else if (task === "lint" || task === "lint-features") {
     run(process.execPath, ["scripts/typecheck.ts"]);
     run(process.execPath, ["node_modules/prettier/bin/prettier.cjs", "--check", "."]);
     run(process.execPath, ["node_modules/eslint/bin/eslint.js", "--max-warnings", "0", "."]);
-    run(process.execPath, ["node_modules/markdownlint-cli2/markdownlint-cli2.mjs"]);
+    if (task === "lint") {
+      run(process.execPath, ["node_modules/markdownlint-cli2/markdownlint-cli2.mjs"]);
+    }
   } else {
     const artifact = packageSource(tools, process.cwd(), resolve(".claude/release-output"));
     run(process.execPath, ["scripts/release-artifact.ts", artifact]);

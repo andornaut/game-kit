@@ -8,7 +8,8 @@ RUN mkdir /tmp/dependencies && cp /opt/check/package*.json /tmp/dependencies/ &&
     cd /tmp/dependencies && npm ci --ignore-scripts --no-audit --no-fund
 
 FROM node:${NODE_VERSION}
-ENV HOME=/tmp
+ENV HOME=/tmp PATH="/opt/check/node_modules/.bin:${PATH}"
+COPY --from=koalaman/shellcheck:v0.11.0 --chmod=0555 /bin/shellcheck /usr/local/bin/shellcheck
 COPY --from=dependencies /tmp/dependencies/node_modules /opt/check/node_modules
 COPY --chmod=0555 tests/container/check /opt/check/run
 USER 19001:19001
