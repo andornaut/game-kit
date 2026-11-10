@@ -15,6 +15,8 @@ import {
   type MapMask,
   type MapNode,
   type MapPath,
+  type MapQueryContext,
+  type MapQueryWork,
   type MapStep,
   type MovementMap,
   type MovementProfile,
@@ -1158,5 +1160,220 @@ describe("movement map query ties", () => {
     calls.length = 0;
     pathTo(map, timed, from, goal);
     expect(calls.filter(([id]) => id === 4)).toEqual([[4, 2]]);
+  });
+});
+
+describe("movement map query work", () => {
+  const node = (id: number): MapNode<string> => ({
+    deps: [],
+    id: id as NodeId,
+    kind: "static",
+    left: 0,
+    right: 20,
+    supportId: String(id),
+    y: 0,
+  });
+  const edge = (
+    id: number,
+    from: number,
+    to: number,
+    seconds: number,
+    launch = 0,
+    land = 0,
+  ): MovementMap<string>["edges"][number] => ({
+    commands: [],
+    deps: [],
+    from: from as NodeId,
+    id: id as EdgeId,
+    kind: "walk",
+    land: { left: land, right: land },
+    launch: { left: launch, right: launch },
+    seconds,
+    sweep: rect(0, 0, 1, 1),
+    to: to as NodeId,
+  });
+  const base = buildMovementMap(options, profile, area([]));
+  // The later arrival at node 3 lands closer to edge 4's launch, superseding its pending arrival.
+  const map: MovementMap<string> = {
+    ...base,
+    edges: [
+      edge(0, 0, 1, 1.5),
+      edge(1, 0, 2, 1),
+      edge(2, 2, 3, 1, 0, 10),
+      edge(3, 1, 3, 0),
+      edge(4, 3, 4, 1, 10),
+    ],
+    nodes: [0, 1, 2, 3, 4].map(node),
+    outgoing: [[0, 1], [3], [2], [4], []] as EdgeId[][],
+  };
+  const from = { node: 0 as NodeId, x: 0 };
+  const toward = { x: 40, y: 0 };
+  const collect = () => {
+    const reports: MapQueryWork[] = [];
+    const context: MapQueryContext = { ...open, onWork: (work) => reports.push(work) };
+    return { context, reports };
+  };
+  it("counts stale heap pops separately from settled arrivals and counts only reached nodes", () => {
+    const { context, reports } = collect();
+    expect(reachableSet(map, context, from)).toEqual(new Set([0, 1, 2, 3, 4]));
+    expect(reports).toEqual([{ arrivalsSettled: 6, heapPops: 7, heapPushes: 7, nodesReached: 5 }]);
+  });
+  it("reports early goals without draining queued arrivals or stale entries", () => {
+    const { context, reports } = collect();
+    expect(pathTo(map, context, from, { node: 3 as NodeId })).toEqual({
+      edges: [0, 3],
+      nodes: [0, 1, 3],
+      seconds: 1.5,
+    });
+    expect(reports).toEqual([{ arrivalsSettled: 4, heapPops: 4, heapPushes: 5, nodesReached: 4 }]);
+    reports.length = 0;
+    expect(pathTo(map, context, from, { node: from.node })?.edges).toEqual([]);
+    expect(reports).toEqual([{ arrivalsSettled: 1, heapPops: 1, heapPushes: 1, nodesReached: 1 }]);
+  });
+  it("reports no-path completion and the successful combined-query branch once each", () => {
+    const { context, reports } = collect();
+    expect(pathTo(map, context, from, { node: 99 as NodeId })).toBeUndefined();
+    expect(reports).toEqual([{ arrivalsSettled: 6, heapPops: 7, heapPushes: 7, nodesReached: 5 }]);
+    reports.length = 0;
+    expect(pathOrNearest(map, context, from, { node: 3 as NodeId }, toward).path).toEqual({
+      edges: [0, 3],
+      nodes: [0, 1, 3],
+      seconds: 1.5,
+    });
+    expect(reports).toEqual([{ arrivalsSettled: 4, heapPops: 4, heapPushes: 5, nodesReached: 4 }]);
+  });
+  it("reports one exhaustive search for a fallback rather than repeating the search", () => {
+    const { context, reports } = collect();
+    const result = pathOrNearest(map, context, from, { node: 99 as NodeId }, toward);
+    expect(result.fallback?.path).toEqual({ edges: [], nodes: [0], seconds: 0 });
+    expect(result.path).toBeUndefined();
+    expect(reports).toEqual([{ arrivalsSettled: 6, heapPops: 7, heapPushes: 7, nodesReached: 5 }]);
+  });
+  it("sums the initial reachability search and each actual sink search into one report", () => {
+    const line: MovementMap<string> = {
+      ...base,
+      edges: [edge(0, 0, 1, 1)],
+      nodes: [node(0), node(1)],
+      outgoing: [[0], []] as EdgeId[][],
+    };
+    const { context, reports } = collect();
+    expect(sinks(line, context, from, [])).toEqual([0, 1]);
+    expect(reports).toEqual([{ arrivalsSettled: 5, heapPops: 5, heapPushes: 5, nodesReached: 5 }]);
+  });
+  const queries = [
+    [
+      "path",
+      (context: MapQueryContext) => pathTo(map, context, from, { predicate: (n) => n.id === 4 }),
+    ],
+    ["reachable", (context: MapQueryContext) => reachableSet(map, context, from)],
+    ["nearest", (context: MapQueryContext) => nearestReachable(map, context, from, toward)],
+    [
+      "fallback",
+      (context: MapQueryContext) =>
+        pathOrNearest(map, context, from, { node: 99 as NodeId }, toward),
+    ],
+    ["sinks", (context: MapQueryContext) => sinks(map, context, from, [4 as NodeId])],
+  ] as const;
+  it.each(queries)("reports masked-start zeros once for %s", (_, query) => {
+    const { context, reports } = collect();
+    query({
+      ...context,
+      edge: () => {
+        throw new Error("unexpected edge");
+      },
+      node: () => false,
+    });
+    expect(reports).toEqual([{ arrivalsSettled: 0, heapPops: 0, heapPushes: 0, nodesReached: 0 }]);
+  });
+  it.each(queries)(
+    "preserves result and exact mask trace with diagnostics enabled for %s",
+    (_, query) => {
+      const trace: unknown[] = [];
+      const context: MapQueryContext = {
+        edge: (id, seconds) => {
+          trace.push(["edge", id, seconds]);
+          return true;
+        },
+        key: "trace",
+        node: (id) => {
+          trace.push(["node", id]);
+          return true;
+        },
+      };
+      const expected = query(context);
+      const expectedTrace = [...trace];
+      trace.length = 0;
+      let reports = 0;
+      expect(
+        query({
+          ...context,
+          onWork: () => {
+            expect(trace).toEqual(expectedTrace);
+            reports++;
+          },
+        }),
+      ).toEqual(expected);
+      expect(trace).toEqual(expectedTrace);
+      expect(reports).toBe(1);
+    },
+  );
+  it("does not report validation, node mask, edge mask or predicate failures", () => {
+    const { context, reports } = collect();
+    const failure = new Error("query failed");
+    expect(() => pathTo(map, context, { ...from, x: NaN }, { node: from.node })).toThrow(
+      RangeError,
+    );
+    expect(() =>
+      pathTo(
+        map,
+        {
+          ...context,
+          node: () => {
+            throw failure;
+          },
+        },
+        from,
+        { node: from.node },
+      ),
+    ).toThrow(failure);
+    expect(() =>
+      pathTo(
+        map,
+        {
+          ...context,
+          edge: () => {
+            throw failure;
+          },
+        },
+        from,
+        { node: 4 as NodeId },
+      ),
+    ).toThrow(failure);
+    expect(() =>
+      pathTo(map, context, from, {
+        predicate: () => {
+          throw failure;
+        },
+      }),
+    ).toThrow(failure);
+    expect(reports).toEqual([]);
+  });
+  it("propagates observer errors after the query has completed", () => {
+    const failure = new Error("observer failed");
+    const reports: MapQueryWork[] = [];
+    expect(() =>
+      reachableSet(
+        map,
+        {
+          ...open,
+          onWork: (work) => {
+            reports.push(work);
+            throw failure;
+          },
+        },
+        from,
+      ),
+    ).toThrow(failure);
+    expect(reports).toEqual([{ arrivalsSettled: 6, heapPops: 7, heapPushes: 7, nodesReached: 5 }]);
   });
 });

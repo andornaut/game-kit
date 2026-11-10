@@ -141,6 +141,29 @@ export interface MapMask {
   readonly edge: (id: EdgeId, departSeconds: number) => boolean;
 }
 
+// Actual search work summed over one completed public query.
+export interface MapQueryWork {
+  // Sum of first-arrival map sizes, one size per internal search.
+  readonly nodesReached: number;
+  // Nonstale arrivals processed, including each admitted start.
+  readonly arrivalsSettled: number;
+  // Actual heap operations, including start entries and stale pops.
+  readonly heapPushes: number;
+  readonly heapPops: number;
+}
+
+export interface MapQueryContext extends MapMask {
+  readonly onWork?: (work: MapQueryWork) => void;
+}
+
+type QueryWork = { -readonly [K in keyof MapQueryWork]: MapQueryWork[K] };
+
+function queryWork(context: MapQueryContext): QueryWork | undefined {
+  return context.onWork === undefined
+    ? undefined
+    : { arrivalsSettled: 0, heapPops: 0, heapPushes: 0, nodesReached: 0 };
+}
+
 export type MapGoal<Id> =
   | { readonly node: NodeId }
   | { readonly point: Point; readonly radius: number }
@@ -1411,6 +1434,7 @@ function pop(heap: Arrival[]): Arrival {
 function search<Id>(
   map: MovementMap<Id>,
   mask: MapMask,
+  work: QueryWork | undefined,
   from: NodeRef,
   startSeconds: number,
   stop: ((node: MapNode<Id>) => boolean) | undefined,
@@ -1432,8 +1456,14 @@ function search<Id>(
   const pending = new Float64Array(edges.length);
   const heap: Arrival[] = [];
   push(heap, { edge: -1, node: from.node, previous: undefined, seconds: startSeconds, x: from.x });
+  if (work) {
+    work.heapPushes++;
+  }
   while (heap.length) {
     const arrival = pop(heap);
+    if (work) {
+      work.heapPops++;
+    }
     // Only the start arrival has no edge. A superseded arrival pops after the earlier one that
     // settled its edge.
     if (arrival.edge !== -1) {
@@ -1442,9 +1472,15 @@ function search<Id>(
       }
       states[arrival.edge] = 2;
     }
+    if (work) {
+      work.arrivalsSettled++;
+    }
     const node = nodes[arrival.node]!;
     if (!first.has(node.id)) {
       first.set(node.id, arrival);
+      if (work) {
+        work.nodesReached++;
+      }
       if (stop?.(node)) {
         return { first, found: arrival };
       }
@@ -1483,6 +1519,9 @@ function search<Id>(
         seconds,
         x: clamp(edge.land.left, edge.land.right, edge.land.left + (p - edge.launch.left)),
       });
+      if (work) {
+        work.heapPushes++;
+      }
     }
   }
   return { first, found: undefined };
@@ -1545,35 +1584,50 @@ function positionToward<Id>(map: MovementMap<Id>, toward: Point, id: NodeId): No
 // `point` goal accepts a node whose hitbox bottom-centre range lies within `radius` of the point.
 export function pathTo<Id>(
   map: MovementMap<Id>,
-  mask: MapMask,
+  mask: MapQueryContext,
   from: NodeRef,
   goal: MapGoal<Id>,
 ): MapPath | undefined {
-  const { found } = search(map, mask, from, 0, goalTest(map, goal));
-  return found && pathOf(found);
+  const work = queryWork(mask);
+  const { found } = search(map, mask, work, from, 0, goalTest(map, goal));
+  const result = found && pathOf(found);
+  if (work) {
+    mask.onWork!(work);
+  }
+  return result;
 }
 
 // Every node reachable under the mask, in id order.
 export function reachableSet<Id>(
   map: MovementMap<Id>,
-  mask: MapMask,
+  mask: MapQueryContext,
   from: NodeRef,
 ): ReadonlySet<NodeId> {
-  const { first } = search(map, mask, from, 0, undefined);
-  return new Set([...first.keys()].sort((a, b) => a - b));
+  const work = queryWork(mask);
+  const { first } = search(map, mask, work, from, 0, undefined);
+  const result = new Set([...first.keys()].sort((a, b) => a - b));
+  if (work) {
+    mask.onWork!(work);
+  }
+  return result;
 }
 
 // The reachable position nearest the point (hitbox bottom-centre distance), then the earliest
 // arrival, then the lowest node id.
 export function nearestReachable<Id>(
   map: MovementMap<Id>,
-  mask: MapMask,
+  mask: MapQueryContext,
   from: NodeRef,
   toward: Point,
 ): NodeRef | undefined {
-  const { first } = search(map, mask, from, 0, undefined);
+  const work = queryWork(mask);
+  const { first } = search(map, mask, work, from, 0, undefined);
   const nearest = nearestArrival(map, toward, first);
-  return nearest && positionToward(map, toward, nearest.node);
+  const result = nearest && positionToward(map, toward, nearest.node);
+  if (work) {
+    mask.onWork!(work);
+  }
+  return result;
 }
 
 export interface MapPathOrNearest {
@@ -1588,44 +1642,58 @@ export interface MapPathOrNearest {
 // search: a search that never meets the goal settles every arrival the unstopped search does.
 export function pathOrNearest<Id>(
   map: MovementMap<Id>,
-  mask: MapMask,
+  mask: MapQueryContext,
   from: NodeRef,
   goal: MapGoal<Id>,
   toward: Point,
 ): MapPathOrNearest {
-  const { first, found } = search(map, mask, from, 0, goalTest(map, goal));
+  const work = queryWork(mask);
+  const { first, found } = search(map, mask, work, from, 0, goalTest(map, goal));
   if (found) {
-    return { fallback: undefined, path: pathOf(found) };
+    const result = { fallback: undefined, path: pathOf(found) };
+    if (work) {
+      mask.onWork!(work);
+    }
+    return result;
   }
   const nearest = nearestArrival(map, toward, first);
-  return {
+  const result = {
     fallback: nearest && {
       path: pathOf(nearest),
       target: positionToward(map, toward, nearest.node),
     },
     path: undefined,
   };
+  if (work) {
+    mask.onWork!(work);
+  }
+  return result;
 }
 
 // Reachable nodes from which no exit is reachable when leaving at the earliest arrival, in id order.
 export function sinks<Id>(
   map: MovementMap<Id>,
-  mask: MapMask,
+  mask: MapQueryContext,
   from: NodeRef,
   exits: readonly NodeId[],
 ): readonly NodeId[] {
   const targets = new Set(exits);
-  const { first } = search(map, mask, from, 0, undefined);
+  const work = queryWork(mask);
+  const { first } = search(map, mask, work, from, 0, undefined);
   const result: NodeId[] = [];
   for (const id of [...first.keys()].sort((a, b) => a - b)) {
     const arrival = first.get(id)!;
     if (
       !targets.has(id) &&
-      !search(map, mask, { node: id, x: arrival.x }, arrival.seconds, (n) => targets.has(n.id))
-        .found
+      !search(map, mask, work, { node: id, x: arrival.x }, arrival.seconds, (n) =>
+        targets.has(n.id),
+      ).found
     ) {
       result.push(id);
     }
+  }
+  if (work) {
+    mask.onWork!(work);
   }
   return result;
 }

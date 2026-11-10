@@ -159,6 +159,7 @@ Node and edge construction, window clipping and the canonical line format are do
 - Area callbacks (`blocked`, `deps` and the movement map's `kind`) must be pure: builds call them in no promised order and skip states they can prove produce no edge.
 - Queries are pure and cache nothing: cache per (from, goal, mask key). Ties go to the lower node id.
 - Movement map queries settle each edge once, at its earliest arrival the mask accepts, in order of seconds, then node id, then edge id. Equal seconds over one edge go to the arrival generated first, which is the one whose predecessor settled first. Masks must be pure within a query: each node verdict is asked once, and an edge's only for an arrival earlier than every arrival it already accepted for that edge.
+- Movement queries accept `MapQueryContext extends MapMask` at the existing mask argument. Its optional `onWork` receives one `MapQueryWork` on normal completion, including a masked start, no path or a fallback. `nodesReached` sums first arrivals per node, `arrivalsSettled` counts processed nonstale arrivals including the start, and `heapPushes`/`heapPops` count actual heap operations including stale entries. `sinks` sums its internal searches; `pathOrNearest` uses one search. Without an observer there is no diagnostics object or counter updates. Validation, mask and predicate errors produce no callback; observer errors propagate.
 - Hashes are FNV-1a 64 of the canonical form; build and queries use no `Math.random`, `Date` or `performance`.
 
 ## Achievements
