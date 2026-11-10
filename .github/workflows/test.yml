@@ -27,20 +27,14 @@ jobs:
       - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .nvmrc
-      - id: npm-cache
-        uses: actions/cache@v6.1.0
+      - uses: docker/setup-docker-action@v5.7.0
         with:
-          path: ${{ runner.temp }}/game-kit-npm-cache
-          key: game-kit-npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-      - name: Load the cached npm cache into its Docker volume
-        if: steps.npm-cache.outputs.cache-hit == 'true'
-        run: node scripts/npm-cache.ts load "$RUNNER_TEMP/game-kit-npm-cache"
-      # The gate packs the committed revision and checks that tarball; the same files are uploaded.
-      - name: Verify source and the packed release in isolated containers
-        run: node scripts/check.ts .claude/release-output
-      - name: Copy the npm cache volume out for saving
-        if: steps.npm-cache.outputs.cache-hit != 'true'
-        run: node scripts/npm-cache.ts save "$RUNNER_TEMP/game-kit-npm-cache"
+          version: v29.9.3
+      # Make caches installed dependencies in Docker layers; npm volumes serve legacy CLI jobs.
+      - name: Verify source and the private package in isolated containers
+        run: make check
+      - name: Build and prove the clean release artifact
+        run: make build
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: game-kit-${{ github.sha }}

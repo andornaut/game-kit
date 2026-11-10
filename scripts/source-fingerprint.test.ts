@@ -47,8 +47,7 @@ function checkWithFakes(name: string, listing: string) {
   });
   const result = spawnSync(process.execPath, [join(root, "scripts/check.ts")], {
     encoding: "utf8",
-    // The fake Docker runs nothing heavy, so the result must not depend on host load.
-    env: { ...process.env, GAME_KIT_LOAD: "0", PATH: `${bin}:${process.env.PATH}` },
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
   });
   return { result, root: realpathSync(root) };
 }

@@ -196,19 +196,25 @@ Fixtures for game unit tests. They import no test framework and load no Phaser a
 ## Standalone verification
 
 ```bash
-npm run verify
+make check
 ```
 
-`npm run verify` runs `node scripts/check.ts`, which CI also runs. The host needs Docker, Git and the Node version in `.nvmrc`, which runs the TypeScript tooling without a build step and names the container image. The gate starts only below one-minute load 24 and uses at most four CPUs and four Vitest workers. It installs dependencies offline from the npm cache and checks types, formatting, lint and tests in a container without network access. If the offline install fails, it populates the cache in a networked container and repeats the offline gate. It then packs the committed revision as `scripts/pack.ts` does and checks that tarball in another offline container: its file list, manifest and exports, native Node imports without peers, declarations under `NodeNext`, and a parent Vite configuration that loads the kit's plugins. Uncommitted changes reach the tarball checks only once committed. `node scripts/check.ts <directory>` keeps the checked tarball, `SOURCE_COMMIT` and `SHA256SUMS` in that directory. Source fingerprints must not change during the run, and credential-shaped paths are refused before their contents are read.
+`CHECK_TASKS := lint test build` declares the categories once. `make check-info` reports `{"version":1,"checks":["lint","test","build"]}` from that declaration. Native npm `check`, `verify`, `lint`, `test` and `build` scripts delegate to Make. `npm run format` uses explicit writable `make exec` to run the existing Prettier/ESLint fixes inside the container. The host needs Make, Git and Docker with build-resource support (Docker 29.9.3, BuildKit 0.31 or newer and Dockerfile frontend 1.25). The Node version in `.nvmrc` selects the check image. Dependencies install while building that image; each check category runs offline against an isolated source snapshot without Git mounts or a Docker socket.
 
-Every container runs as uid and gid 19001, which owns nothing on the host, with the group of each mounted checkout added for reads, `HOME=/tmp`, an open-file limit of 256 (`--ulimit nofile=256`, so a build that opens too many files fails with `EMFILE`), a read-only root file system and only read-only host mounts. Scratch and outputs live in a per-run volume; results are copied out with `docker cp`, so files in the checkout keep their host owner. The gate masks ignored `.claude/` state and `.worktrees/` role worktrees; ESLint ignores both. When the gate fails, it keeps the release artifacts and their consumer probe in `.claude/artifact-check.*` and prints the path; a passing gate deletes them. The npm cache is the named Docker volume `game-kit-npm-cache`; `GAME_KIT_NPM_CACHE` names another. `node scripts/npm-cache.ts load|save <directory>` streams a host directory into the volume through a container, or copies the volume out with `docker cp`; CI uses it to carry the cache between runs, keyed on the `package-lock.json` hash.
+| Command                                                 | Checks                                                                     |
+| ------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `make check`                                            | Every declared category, without exporting outputs                         |
+| `make lint`                                             | Combined and per-environment types, Prettier, ESLint and Markdown          |
+| `make test`                                             | Canonical unit and contract tests, at most four workers                    |
+| `make test TEST_ARGS='src/terrain/movementMap.test.ts'` | A focused test selection                                                   |
+| `make build`                                            | Compile, pack and prove the artifact, then export the clean release output |
+| `make exec COMMAND='node --version'`                    | An explicit operator command through the shared launcher                   |
 
-| Container command            | Purpose                                               |
-| ---------------------------- | ----------------------------------------------------- |
-| `npm run check`              | Check combined and per-environment types concurrently |
-| `npm run lint`               | Check formatting, ESLint boundaries and Markdown      |
-| `npm test -- --maxWorkers=4` | Run canonical unit and contract tests                 |
-| `npm run format`             | Format a writable checkout                            |
+Checks use uid/gid 19001, a read-only root filesystem, source snapshots and bounded writable scratch, at most four CPUs and an open-file limit of 256. Project commands invoke tools directly inside the container, so npm aliases cannot recurse into another launcher. `COMMAND` and `TEST_ARGS` remain literal through Make expansion. The shared launcher fingerprints source before and after verification and rejects changed-tree results.
+
+A check build may include working edits. Its private tarball and adjacent `SOURCE_CHECK.json` record the base revision, exact snapshot hash, dirty state and `private-check-build` scope. Its `SOURCE_COMMIT` says `UNCOMMITTED` when working edits are present; the revision in the snapshot metadata names the base commit. These check-only outputs stay inside the container. Only an explicit `make build` exports `.claude/release-output`, and exported releases require a clean snapshot. `SOURCE_DATE_EPOCH` is the commit timestamp, supplied by the shared launcher at runtime.
+
+`node scripts/check.ts <directory>` retains the retained legacy committed-artifact gate: types, full lint and tests, followed by a committed tarball and its native Node, declaration and Vite proof. It uses direct project tools inside its containers. Its legacy npm cache volume is `game-kit-npm-cache`; `GAME_KIT_NPM_CACHE` names another, and `node scripts/npm-cache.ts load|save <directory>` transfers its contents. Host paths remain read-only and outputs leave with `docker cp`. The gate rejects changing source fingerprints and refuses credential-shaped paths before reading their bytes.
 
 WORKAROUND: Parent-scoped development overrides pin [KaTeX](https://github.com/advisories/GHSA-238p-pmpm-9mq7) `0.18.2`, [minimatch](https://github.com/advisories/GHSA-g3hv-75wg-m249) `11.0.3` and [re2js](https://github.com/advisories/GHSA-gg6h-894w-4m9c) `2.8.7`. ESLint loads cycle detection and its resolver through exported plugin subpaths because the full plugin imports an unused rule requiring minimatch's removed `makeRe` API. Keep cycle detection enabled. Remove each override when its parent supports the patched version; restore the full plugin import when it supports minimatch 11.
 
@@ -216,7 +222,7 @@ WORKAROUND: Parent-scoped development overrides pin [KaTeX](https://github.com/a
 
 [GitHub releases](https://github.com/andornaut/game-kit/releases) distribute `game-kit-<version>.tgz`, `SOURCE_COMMIT` and `SHA256SUMS`; there is no npm registry publication.
 
-`node scripts/pack.ts <output-directory>` builds the committed revision in an offline container from the npm cache volume. It compiles JavaScript and declarations with `tsconfig.release.json` and packages the manifest, `SOURCE_COMMIT`, README and licence, without TypeScript source, tests, scripts or development commands. It is the only release builder: the gate checks its tarball, and CI runs `node scripts/check.ts .claude/release-output` and uploads the files it checked. `SOURCE_DATE_EPOCH` is the commit time, so a rebuild of the same commit yields the same `SHA256SUMS`.
+`node scripts/pack.ts <output-directory>` builds the committed revision in an offline container from the npm cache volume. It compiles JavaScript and declarations with `tsconfig.release.json` and packages the manifest, `SOURCE_COMMIT`, README and licence, without TypeScript source, tests, scripts or development commands. Both isolated build paths use the same Node package builder: the gate checks its tarball, and CI runs `make check` followed by `make build`, uploading only the clean artifact it checked. `SOURCE_DATE_EPOCH` is the commit time, so a rebuild of the same commit yields the same `SHA256SUMS`.
 
 ```bash
 GAME_KIT_ARCHIE_CACHE=<Archie-npm-cache> GAME_KIT_CHIBI_CACHE=<Chibi-npm-cache> \

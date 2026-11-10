@@ -15,7 +15,6 @@ import {
   NPM_CACHE_MOUNT,
   npmCacheVolume,
   readOnlyMount,
-  requireLoad,
   runContainer,
   ScriptError,
 } from "./runtime.ts";
@@ -68,15 +67,13 @@ export function check(env: NodeJS.ProcessEnv, root: string, releaseDirectory?: s
       `  touch ${EVIDENCE}/${CACHE_MISS}`,
       "  exit 1",
       "fi",
-      "npm run check",
-      "npm run lint",
-      "npm test -- --maxWorkers=4",
+      "node scripts/container-check.ts lint",
+      "node scripts/container-check.ts test",
     ].join("\n"),
   ];
   const runGate = () => runContainer({ copyOut: { from: EVIDENCE, to: evidence } }, gate);
   let failure: unknown;
   try {
-    requireLoad();
     console.log("Checking types, lint and tests offline in a fresh container.");
     try {
       runGate();
@@ -86,19 +83,16 @@ export function check(env: NodeJS.ProcessEnv, root: string, releaseDirectory?: s
         throw error;
       }
       rmSync(marker);
-      requireLoad();
       console.log("The npm cache is incomplete; populating it in a container.");
       runContainer({}, [
         ...options,
         ...[image, "npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
       ]);
-      requireLoad();
       console.log("Checking types, lint and tests offline in a fresh container.");
       runGate();
     }
     // The cache is complete once the gate has installed from it offline.
     const tarball = pack(env, root, releaseDirectory ?? join(evidence, "release"));
-    requireLoad();
     console.log("Checking the packed tarball offline in a fresh container.");
     runContainer({ copyOut: { from: EVIDENCE, to: evidence } }, [
       ...options,

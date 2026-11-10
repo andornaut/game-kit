@@ -10,7 +10,6 @@ import {
   nodeImage,
   NPM_CACHE_MOUNT,
   npmCacheVolume,
-  requireLoad,
   runContainer,
   ScriptError,
 } from "./runtime.ts";
@@ -34,7 +33,6 @@ export function npmCache(env: NodeJS.ProcessEnv, root: string, args: string[]): 
   }
   const cache = npmCacheVolume(env);
   const image = nodeImage(root);
-  requireLoad();
   if (action === "load") {
     // The host directory reaches the container on stdin and extracts as the container user. Its
     // entries are archived rather than ".", whose metadata belongs to the volume.

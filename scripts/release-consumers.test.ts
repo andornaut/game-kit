@@ -93,8 +93,6 @@ function fixture(name: string) {
           ...cacheEnv,
           CAPTURE: capture,
           FORBIDDEN_CACHE: forbiddenCache,
-          // The fake Docker runs nothing heavy, so the result must not depend on host load.
-          GAME_KIT_LOAD: "0",
           PATH: `${root}/bin:${process.env.PATH}`,
         },
       },

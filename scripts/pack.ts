@@ -11,7 +11,6 @@ import {
   nodeImage,
   NPM_CACHE_MOUNT,
   npmCacheVolume,
-  requireLoad,
   runContainer,
   ScriptError,
 } from "./runtime.ts";
@@ -36,7 +35,6 @@ export function committedVersion(root: string, revision: string): string {
  */
 export function pack(env: NodeJS.ProcessEnv, root: string, destination: string): string {
   const cache = npmCacheVolume(env);
-  requireLoad();
   const image = nodeImage(root);
   const revision = git(root, "rev-parse", "HEAD");
   const version = committedVersion(root, revision);
@@ -58,14 +56,7 @@ export function pack(env: NodeJS.ProcessEnv, root: string, destination: string):
       `cp -a ${NPM_CACHE_MOUNT}/. /tmp/npm-cache`,
       "cd /tmp/package",
       "npm ci --offline --ignore-scripts --no-audit --no-fund",
-      "node scripts/release-build.ts release",
-      `printf '%s\\n' "$SOURCE_COMMIT" > release/SOURCE_COMMIT`,
-      "cd release",
-      `npm pack --offline --ignore-scripts --json --pack-destination ${OUTPUT} > ${OUTPUT}/pack.json`,
-      `mv "${OUTPUT}/andornaut-game-kit-$VERSION.tgz" "${OUTPUT}/game-kit-$VERSION.tgz"`,
-      `cp SOURCE_COMMIT ${OUTPUT}/SOURCE_COMMIT`,
-      `cd ${OUTPUT}`,
-      `sha256sum "game-kit-$VERSION.tgz" > SHA256SUMS`,
+      `node scripts/package-source.ts ${OUTPUT}`,
     ].join("\n"),
   ]);
   console.log(`Release artifacts: ${output}`);

@@ -6,26 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { expect, it } from "vitest";
 
-import { containerOptions, hostLoad, nodeImage, npmCacheVolume, requireLoad } from "./runtime.ts";
-
-it.each([
-  { env: { GAME_KIT_LOAD: "0" }, load: 0 },
-  { env: { GAME_KIT_LOAD: "busy" }, load: Number.NaN },
-])("reads the supplied load $env.GAME_KIT_LOAD", ({ env, load }) => {
-  expect(hostLoad(env)).toBe(load);
-});
-
-it.each([
-  { allowed: true, load: 1.23 },
-  { allowed: false, load: 24 },
-  { allowed: false, load: Number.NaN },
-])("uses one fail-closed load policy for $load", ({ allowed, load }) => {
-  if (allowed) {
-    expect(() => requireLoad(load)).not.toThrow();
-  } else {
-    expect(() => requireLoad(load)).toThrow(/below 24/);
-  }
-});
+import { containerOptions, nodeImage, npmCacheVolume } from "./runtime.ts";
 
 it.each(["24.21.0", "v24.21.0"])("uses root Node version %s for every container job", (version) => {
   const root = mkdtempSync(join(tmpdir(), "kit-image-"));

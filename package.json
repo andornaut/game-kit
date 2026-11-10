@@ -7,12 +7,13 @@
     "node": ">=24.21.0"
   },
   "scripts": {
-    "check": "node scripts/typecheck.ts",
-    "format": "prettier --write . && eslint --fix .",
-    "lint": "prettier --check . && eslint --max-warnings 0 . && markdownlint-cli2",
-    "test": "vitest run",
-    "verify": "node scripts/check.ts",
-    "prepare": "husky"
+    "check": "make check",
+    "format": "make exec COMMAND='node scripts/container-check.ts format'",
+    "lint": "make lint",
+    "test": "make test",
+    "verify": "make check",
+    "prepare": "husky",
+    "build": "make build"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -21,7 +21,6 @@ import {
   main,
   nodeImage,
   readOnlyMount,
-  requireLoad,
   runContainer,
   ScriptError,
 } from "./runtime.ts";
@@ -107,7 +106,6 @@ export function checkReleaseConsumers(env: NodeJS.ProcessEnv, kit: string, args:
   );
   let failure: unknown;
   try {
-    requireLoad();
     const log = openSync(join(output, "container.log"), "w");
     try {
       runContainer({ copyOut: { from: SCRATCH, to: output }, output: log }, [

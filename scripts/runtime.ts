@@ -1,13 +1,11 @@
 // Shared host policy for the containers that verify, package and prove the kit.
 import { execFileSync, spawnSync, type SpawnSyncOptions } from "node:child_process";
 import { readFileSync, realpathSync, statSync } from "node:fs";
-import { loadavg } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** The dedicated container identity, which owns nothing on the host. */
 export const CONTAINER_UID = 19001;
-export const MAX_LOAD = 24;
 export const DEFAULT_NPM_CACHE_VOLUME = "game-kit-npm-cache";
 // Mounted where the image holds a sticky world-writable directory, which a new volume inherits.
 export const NPM_CACHE_MOUNT = "/var/tmp";
@@ -27,19 +25,6 @@ export function errorMessage(error: unknown): string {
 
 export function nodeImage(root: string): string {
   return `node:${readFileSync(join(root, ".nvmrc"), "utf8").trim().replace(/^v/, "")}`;
-}
-
-/** The one-minute load, or `GAME_KIT_LOAD` when a test supplies it. */
-export function hostLoad(env: NodeJS.ProcessEnv = process.env): number {
-  return env.GAME_KIT_LOAD === undefined ? (loadavg()[0] ?? Number.NaN) : Number(env.GAME_KIT_LOAD);
-}
-
-export function requireLoad(load: number = hostLoad()): void {
-  if (!(Number.isFinite(load) && load < MAX_LOAD)) {
-    throw new ScriptError(
-      `One-minute load must be available and below ${MAX_LOAD} before starting a container.`,
-    );
-  }
 }
 
 export function npmCacheVolume(env: NodeJS.ProcessEnv): string {
