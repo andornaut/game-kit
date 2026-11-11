@@ -3,8 +3,8 @@
 import {
   type InstallState,
   installState,
-  type MenuInstallBrowser,
-  menuInstallBrowser,
+  type InstallStepsKind,
+  installStepsKind,
   runsAsApp,
 } from "../installState.ts";
 
@@ -30,15 +30,15 @@ export interface InstallHost extends EventTarget {
   };
 }
 
-// accepted or dismissed: the browser's prompt showed and the player chose. menuSteps: the page
-// shows the steps for menuBrowser's own menu. unavailable: nothing to install with.
-export type InstallOutcome = "accepted" | "dismissed" | "menuSteps" | "unavailable";
+// accepted or dismissed: the browser's prompt showed and the player chose. steps: no prompt to
+// show, or it failed to show, so the page shows the steps for stepsKind.
+export type InstallOutcome = "accepted" | "dismissed" | "steps";
 
 export interface InstallFlow {
+  // Shows the held prompt, or returns steps when none is held.
   install(): Promise<InstallOutcome>;
-  // The browser that installs only from its own menu, whose steps menuSteps shows, or undefined
-  // for any other. Fixed for the page's life.
-  readonly menuBrowser: MenuInstallBrowser | undefined;
+  // The browser whose install steps the page shows on steps. Fixed for the page's life.
+  readonly stepsKind: InstallStepsKind;
   // Calls listener on each change of state until the returned function is called.
   onChange(listener: (state: InstallState) => void): () => void;
   state(): InstallState;
@@ -62,15 +62,15 @@ async function choose(event: InstallPromptEvent): Promise<InstallOutcome> {
     await event.prompt();
     return (await event.userChoice).outcome;
   } catch {
-    return "unavailable";
+    return "steps";
   }
 }
 
 // Starts listening at once: beforeinstallprompt can fire before the page has drawn anything, so
 // the page calls this as it loads. The held prompt shows once; after the player's choice the
-// browser offers a new one on a later visit, so the offer hides until then.
+// browser offers a new one on a later visit, so until then the offer shows the steps.
 export function watchInstall(host: InstallHost): InstallFlow {
-  const menuBrowser = menuInstallBrowser(host.navigator.userAgent, host.navigator.maxTouchPoints);
+  const stepsKind = installStepsKind(host.navigator.userAgent, host.navigator.maxTouchPoints);
   const display = host.matchMedia(INSTALLED_DISPLAY_QUERY);
   const listeners = new Set<(state: InstallState) => void>();
   let held: InstallPromptEvent | undefined;
@@ -82,7 +82,6 @@ export function watchInstall(host: InstallHost): InstallFlow {
       displayModeInstalled: display.matches,
       hasPrompt: held !== undefined,
       iosStandalone: host.navigator.standalone === true,
-      menuBrowser,
     });
   let last = state();
   const update = () => {
@@ -110,9 +109,9 @@ export function watchInstall(host: InstallHost): InstallFlow {
     async install() {
       const event = held;
       if (event === undefined) {
-        return state() === "menuSteps" ? "menuSteps" : "unavailable";
+        return "steps";
       }
-      // A prompt shows once, so a second tap while it shows has nothing to install with.
+      // A prompt shows once, so a second tap while it shows gets the steps.
       held = undefined;
       const outcome = await choose(event);
       if (outcome === "accepted") {
@@ -121,11 +120,11 @@ export function watchInstall(host: InstallHost): InstallFlow {
       update();
       return outcome;
     },
-    menuBrowser,
     onChange(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
     state,
+    stepsKind,
   };
 }

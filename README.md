@@ -28,6 +28,15 @@ The kit's own tests define each module's contract. A release is also proven agai
 
 `testing/phaser/sceneStub` covers the scene members both games' tests use as of 0.19.0 and is otherwise frozen: a test that needs more extends the stub through its overrides.
 
+## Migration to 0.21.0
+
+The install offer shows in every browser until the game is installed: the browser's install prompt where it holds one, otherwise that browser's own install steps. Each game changes:
+
+- `web/pwa/installState`: `MenuInstallBrowser` and `menuInstallBrowser` are replaced by `InstallStepsKind` and `installStepsKind(userAgent, maxTouchPoints)`, and `InstallFacts` drops `menuBrowser`. `InstallState` is `installed`, `prompt` or `steps`; `unsupported` and `menuSteps` are removed, and `offersInstall` is true in every state but `installed`.
+- `web/pwa/dom/installFlow`: `InstallFlow.menuBrowser` is renamed `stepsKind` and is always set. `install()` returns `accepted`, `dismissed` or `steps`; `menuSteps` and `unavailable` are removed, and `steps` (no prompt held, or it failed to show) means show the steps for `stepsKind`.
+- `web/pwa/dom/installButton`: each steps dialog section is marked `data-steps="<kind>"` instead of `data-browser`.
+- Supply steps for all eight kinds, typed `Record<InstallStepsKind, ...>` so none is missed: `chromiumAndroid`, `chromiumDesktop`, `firefoxAndroid`, `firefoxDesktop`, `ios`, `other`, `safariMac` and `samsungInternet`. A dialog without a kind's section shows its `other` section.
+
 ## Migration to 0.19.0
 
 - `testing/phaser/sceneStub`: an override member that is an object literal now merges into the stub's member one level deep instead of replacing it, so `{ scene: { get } }` keeps the other `scene` spies. A class instance, function, array or emitter still replaces the member. To replace a whole member with a literal, assign it after construction: `Object.assign(stub, { scene: { get } })`. The literal is copied, not shared: a test that changes a value later, such as advancing `time.now`, changes the stub's member (`const { time } = stub`), not its own literal.
@@ -89,6 +98,7 @@ Each compilation rejects the other environments' ambient globals, and ESLint rej
 ## Integration contracts
 
 - **Input:** callers supply event coordinates, timestamps, equality, hold thresholds, drag/fling tuning and reduced-motion policy. Clients perform returned actions and apply modal gates to their input routes.
+- **Install offer:** `web/pwa/dom/installFlow`'s `watchInstall(window)` holds the browser's install prompt and reports `installed`, `prompt` or `steps`; `offersInstall` is true unless installed. `install()` calls the prompt before any await, so the tap still counts as the gesture, and returns `accepted`, `dismissed` or `steps`. On `steps` the game shows its words for `stepsKind`, one of the `InstallStepsKind` values `installStepsKind(userAgent, maxTouchPoints)` chooses: `chromiumAndroid`, `chromiumDesktop`, `firefoxAndroid`, `firefoxDesktop`, `ios`, `other`, `safariMac` or `samsungInternet`. `other` covers unlisted browsers, Opera and WebViews. `wireInstallButton(flow, button, steps)` hides the button only once installed and opens the `steps` dialog on its `[data-steps="<kind>"]` section, titled by its `h2`, or its `other` section where the dialog has none for the kind; the dialog's first button closes it. The game supplies every string and the markup.
 - **Motion:** games validate finite coordinates, starts and nonnegative durations. Zero duration changes instantly at its start; infinite query positions select endpoints. Games retain clocks and randomness. `motion` re-exports the `Point` type from `rect`.
 - **Pixel fonts:** `PixelFontContext` supplies glyph bits, widths, height, spacing and space width. The kit returns geometry and advances; clients own glyph definitions and normalization. Phaser registration takes explicit font options and throws an `Error` naming the key when that texture key is invalid or already in use without a cached font.
 - **Progress:** `undefined` means an unknown total, drawn as a static centred segment; finite progress is clamped to zero through one. `createProgressState` replaces the previous operation on `begin`; stale handles cannot update or finish its replacement. Clients own visibility, labels and timing and clear Phaser graphics.
