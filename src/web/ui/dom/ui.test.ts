@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { BUTTON_GAP, SMALL_BUTTON_GAP } from "../../../ui/spacing.ts";
+import { BUTTON_GAP, SMALL_BUTTON_GAP, STACK_BUTTON_GAP } from "../../../ui/spacing.ts";
 import { REFUSAL_ATTRIBUTES, REFUSAL_SHAKE, REFUSAL_SHAKE_MS } from "./refusalCue.ts";
 import { UI_UNIT, units, VIEW_PROPERTIES } from "./viewUnits.ts";
 
@@ -24,6 +24,7 @@ describe("ui.css", () => {
   it.each<[string, number]>([
     ["--ui-button-gap", BUTTON_GAP],
     ["--ui-small-button-gap", SMALL_BUTTON_GAP],
+    ["--ui-stack-button-gap", STACK_BUTTON_GAP],
   ])("sets %s on the layer to %s base px", (name, gap) => {
     const layer = /\.ui-layer\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
     expect(new RegExp(`${name}:\\s*([^;]+);`).exec(layer)?.[1]).toBe(units(gap));
