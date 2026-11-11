@@ -52,6 +52,7 @@
     "src/view/fitCheck.ts",
     "src/view/modalDim.ts",
     "src/view/pagePoint.ts",
+    "src/view/renderScale.ts",
     "src/view/settleFit.ts",
     "src/web/build/buildLabel.ts",
     "src/web/build/buildVersion.ts",

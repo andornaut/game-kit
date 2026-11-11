@@ -1,8 +1,9 @@
-import type { Game, Input } from "phaser";
+import { type Game, type Input, Scale } from "phaser";
 
 import type { Rect } from "../../../rect.ts";
 import { needsRefit } from "../../../view/fitCheck.ts";
 import { pageToGame } from "../../../view/pagePoint.ts";
+import { renderScale } from "../../../view/renderScale.ts";
 import { settleFit } from "../../../view/settleFit.ts";
 import type { FrameTurnWatch } from "../dom/watchFrameTurn.ts";
 
@@ -41,12 +42,22 @@ function visibleArea(): Rect {
 // (settleFit). While the page is visible, a check every FIT_CHECK_MS rechecks the turn and does
 // the same for a fit gone stale with no signal at all (needsRefit). The returned disposer and
 // game destruction release this installation; the page retains its CSS property ownership.
+//
+// With deviceResolution, the canvas's backing is in device pixels. With r = renderScale(max,
+// devicePixelRatio), installation and each refit set Scale.NONE, resize the game to
+// round(parent CSS size x r) and zoom it by 1 / r, so the canvas keeps the parent's CSS size while
+// gameSize, pointers and cameras are in device pixels. Above max the browser upscales the canvas
+// by devicePixelRatio / r, with image-rendering: pixelated. Scale.refresh does not resize in NONE
+// mode, so a devicePixelRatio change (browser zoom, a move to another screen) refits through a
+// matchMedia resolution listener, re-armed at each change.
 export function followFrameTurn(
   watch: Pick<FrameTurnWatch, "onChange" | "recheck" | "turn">,
   gameSize: Pick<Rect, "height" | "width">,
   parent: HTMLElement,
   game: Game,
+  options: { readonly deviceResolution?: { readonly max: number } } = {},
 ): () => void {
+  const { deviceResolution } = options;
   let disposed = false;
   const scale = game.scale;
   const originalBounds = scale.getParentBounds;
@@ -102,13 +113,30 @@ export function followFrameTurn(
       root.setProperty(PAGE_HEIGHT_PROPERTY, value);
     }
   };
+  const fitDevice = (max: number) => {
+    const r = renderScale(max, window.devicePixelRatio);
+    const { height, width } = scale.parentSize;
+    if (!(width > 0 && height > 0)) {
+      return;
+    }
+    game.canvas.style.imageRendering = "pixelated";
+    scale.scaleMode = Scale.ScaleModes.NONE;
+    scale.resize(Math.round(width * r), Math.round(height * r));
+    // After resize: setZoom rewrites the canvas's CSS size from the new game size, which resize
+    // leaves stale at zoom 1, and refreshes the bounds.
+    scale.setZoom(1 / r);
+  };
   const refit = () => {
     if (disposed) {
       return;
     }
     publish();
     scale.getParentBounds();
-    scale.refresh();
+    if (deviceResolution) {
+      fitDevice(deviceResolution.max);
+    } else {
+      scale.refresh();
+    }
   };
   const measure = () => {
     const { height, width } = visibleArea();
@@ -130,6 +158,22 @@ export function followFrameTurn(
     settle();
   };
   const stopWatching = watch.onChange(settle);
+  let density: MediaQueryList | undefined;
+  const onDensity = () => {
+    if (disposed) {
+      return;
+    }
+    watchDensity();
+    onSignal();
+  };
+  const watchDensity = () => {
+    density?.removeEventListener("change", onDensity);
+    density = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    density.addEventListener("change", onDensity);
+  };
+  if (deviceResolution) {
+    watchDensity();
+  }
   const observer = new ResizeObserver(refit);
   observer.observe(parent);
   const signals = ["resize", "orientationchange", "pageshow", "focus"] as const;
@@ -180,6 +224,7 @@ export function followFrameTurn(
     stopSettling();
     stopWatching();
     observer.disconnect();
+    density?.removeEventListener("change", onDensity);
     if (timer !== undefined) {
       clearInterval(timer);
       timer = undefined;
@@ -205,5 +250,8 @@ export function followFrameTurn(
   game.events.once("destroy", dispose);
   followVisibility();
   publish();
+  if (deviceResolution) {
+    refit();
+  }
   return dispose;
 }
