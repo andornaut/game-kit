@@ -66,20 +66,54 @@ export function installUrls(
   return [...urls, ...chosen];
 }
 
-// How an install stores its URLs: hashed URLs an earlier version's cache holds are copied from
-// it, since a hashed name never changes content, and the rest are fetched. Unhashed URLs, such as
-// the page, are always fetched fresh.
+// How an install stores its URLs. copy: hashed URLs an earlier version's cache holds, stored as
+// they are, since a hashed name never changes content. verify: every other URL an earlier cache
+// holds that has a content hash in contentHashes (PrecacheManifest's), with that hash, stored from
+// the earlier cache only where the earlier copy's bytes have that hash. fetch: the rest, such as a
+// new or renamed file, or an unhashed URL with no recorded hash.
+export interface InstallPlan {
+  readonly copy: string[];
+  readonly fetch: string[];
+  readonly verify: [url: string, contentHash: string][];
+}
+
 export function installPlan(
   policy: CachePolicy,
+  contentHashes: Readonly<Record<string, string>>,
   previouslyCached: ReadonlySet<string>,
   urls: readonly string[],
-): { copy: string[]; fetch: string[] } {
-  const copy: string[] = [];
-  const fetch: string[] = [];
+): InstallPlan {
+  const plan: InstallPlan = { copy: [], fetch: [], verify: [] };
   for (const url of urls) {
-    (isHashedAssetUrl(policy, url) && previouslyCached.has(url) ? copy : fetch).push(url);
+    const contentHash = contentHashes[url];
+    if (!previouslyCached.has(url)) {
+      plan.fetch.push(url);
+    } else if (isHashedAssetUrl(policy, url)) {
+      plan.copy.push(url);
+    } else if (contentHash === undefined) {
+      plan.fetch.push(url);
+    } else {
+      plan.verify.push([url, contentHash]);
+    }
   }
-  return { copy, fetch };
+  return plan;
+}
+
+const BASE64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+// The content hash the precache records for a file, from the SHA-256 digest of its bytes: the
+// digest's first 48 bits in URL-safe base64, eight characters, as web/build/vite/contentHash
+// gives from the bytes. The service worker computes it with crypto.subtle, which has no base64.
+export function digestContentHash(sha256: Uint8Array): string {
+  let text = "";
+  for (let byte = 0; byte < 6; byte += 3) {
+    const bits =
+      ((sha256[byte] ?? 0) << 16) | ((sha256[byte + 1] ?? 0) << 8) | (sha256[byte + 2] ?? 0);
+    for (let shift = 18; shift >= 0; shift -= 6) {
+      text += BASE64URL[(bits >> shift) & 63] ?? "";
+    }
+  }
+  return text;
 }
 
 // The URLs the service worker answers from its cache: the precache list, and every sound file of

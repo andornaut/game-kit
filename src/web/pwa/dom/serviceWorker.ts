@@ -8,6 +8,7 @@ import {
   cacheKeyFor,
   cacheNameFor,
   type CachePolicy,
+  digestContentHash,
   type FetchStrategy,
   installPlan,
   installUrls,
@@ -49,6 +50,60 @@ async function fetchAndStore(cache: Cache, key: string, request: Request): Promi
   return response;
 }
 
+// How many earlier copies an install reads at once. A copy checked by its content hash is read
+// whole, so the bound caps the bytes held in memory.
+const REUSE_CONCURRENCY = 16;
+
+// Runs task on each item, at most limit at a time, and returns the results in item order.
+async function mapBounded<T, R>(
+  limit: number,
+  task: (item: T) => Promise<R>,
+  items: readonly T[],
+): Promise<R[]> {
+  const results: R[] = [];
+  let next = 0;
+  const lane = async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      // Each lane takes the next item once its last one is done.
+      // eslint-disable-next-line no-await-in-loop
+      results[index] = await task(items[index] as T);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
+  return results;
+}
+
+// The content hash of a stored response's bytes (cachePolicy's digestContentHash), read from a
+// clone so the response can still be stored.
+async function responseContentHash(response: Response): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", await response.clone().arrayBuffer());
+  return digestContentHash(new Uint8Array(digest));
+}
+
+// The first earlier copy of url that is still stored and, where contentHash is given, whose bytes
+// have it. A copy can be gone by now: another worker's activate deletes the caches it replaces.
+async function earlierCopy(
+  holders: readonly Cache[],
+  url: string,
+  contentHash: string | undefined,
+): Promise<Response | undefined> {
+  for (const old of holders) {
+    // Earlier caches are tried in turn, stopping at the first copy that qualifies.
+    // eslint-disable-next-line no-await-in-loop
+    const response = await old.match(url);
+    if (response === undefined) {
+      continue;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    if (contentHash === undefined || (await responseContentHash(response)) === contentHash) {
+      return response;
+    }
+  }
+  return undefined;
+}
+
 // Precaches manifest on install, deletes the policy's other caches on activate and answers
 // same-origin GETs by strategyFor: cache-first for hashed build output and sound files,
 // network-first for the page and every other precached file, since an unhashed file can change
@@ -62,13 +117,15 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
   const cacheName = cacheNameFor(policy, manifest.version);
   const cachedUrls = cachedUrlsOf(manifest);
 
-  // Hashed files an earlier version stored are copied from its cache rather than fetched again, so
-  // a deploy downloads only what changed (installPlan). The earlier caches stay until activate.
+  // An earlier version's copy of each unchanged file is reused rather than fetched again, so a
+  // deploy downloads only what changed (installPlan): a hashed file by its name, any other file
+  // only where its bytes in the earlier cache have the content hash this manifest records. The
+  // hash is taken from the stored bytes, not from a record, because network-first replaces an
+  // earlier cache's copy with whatever the network serves. The earlier caches stay until activate.
   const precache = async () => {
     const soundFormat = new URL(worker.location.href).searchParams.get(SOUND_FORMAT_PARAM);
     const urls = installUrls(manifest, soundFormat);
     const cache = await caches.open(cacheName);
-    // Each URL an earlier cache holds, with the cache that holds it.
     const earlier = await Promise.all(
       staleCacheNames(policy, cacheName, await caches.keys()).map((name) => caches.open(name)),
     );
@@ -77,20 +134,26 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
         (await old.keys()).map((request) => [new URL(request.url).pathname, old] as const),
       ),
     );
-    const holders = new Map(listed.flat());
-    const plan = installPlan(policy, new Set(holders.keys()), urls);
-    // A copy that is gone by now (another tab's worker cleared the cache) is fetched instead.
-    const uncopied = await Promise.all(
-      plan.copy.map(async (url) => {
-        const response = await holders.get(url)?.match(url);
+    // Each URL an earlier cache holds, with every cache that holds it.
+    const holders = new Map<string, Cache[]>();
+    for (const [url, old] of listed.flat()) {
+      holders.set(url, [...(holders.get(url) ?? []), old]);
+    }
+    const plan = installPlan(policy, manifest.contentHashes, new Set(holders.keys()), urls);
+    const reusable = [...plan.copy.map((url) => [url, undefined] as const), ...plan.verify];
+    const unreused = await mapBounded(
+      REUSE_CONCURRENCY,
+      async ([url, contentHash]) => {
+        const response = await earlierCopy(holders.get(url) ?? [], url, contentHash);
         if (response === undefined) {
           return [url];
         }
         await cache.put(url, response);
         return [];
-      }),
+      },
+      reusable,
     );
-    const fetched = [...plan.fetch, ...uncopied.flat()];
+    const fetched = [...plan.fetch, ...unreused.flat()];
     await cache.addAll(fetched.map((url) => new Request(url, precacheFetchOptions(policy, url))));
   };
 

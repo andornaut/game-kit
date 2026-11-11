@@ -3,8 +3,11 @@ import { type CachePolicy, isHashedAssetUrl } from "./cachePolicy.ts";
 // The service worker's precache: every URL the game needs to boot offline, each sound file by
 // format (the worker stores the one format the page plays, named on its URL by
 // serviceWorkerUrl), and a version that changes whenever any of their contents change, so a
-// deploy installs a new worker.
+// deploy installs a new worker. contentHashes maps each listed URL, sounds included, that is not
+// hashed build output (cachePolicy's isHashedAssetUrl) to its content's web/build/vite/contentHash,
+// for an install to reuse an earlier version's unchanged copy (cachePolicy's installPlan).
 export interface PrecacheManifest {
+  contentHashes: Record<string, string>;
   sounds: Record<string, string[]>;
   urls: string[];
   version: string;

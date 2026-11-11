@@ -2,9 +2,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { build } from "vite";
+import { build, type Plugin } from "vite";
 import { describe, expect, it } from "vitest";
 
+import { contentHash } from "../../build/vite/contentHash.ts";
 import type { CachePolicy } from "../cachePolicy.ts";
 import type { PrecacheManifest } from "../precacheList.ts";
 import { precachePlugin, type PrecachePluginOptions } from "./precachePlugin.ts";
@@ -39,6 +40,8 @@ function site(icon: string, placeholder = true): string {
 }
 
 interface Build {
+  // Files a plugin before the precache writes into the build output, by file name.
+  readonly emitted?: Readonly<Record<string, string>>;
   readonly hashedFiles?: PrecachePluginOptions["hashedFiles"];
   // A public file to delete from the site before building.
   readonly missing?: string;
@@ -49,8 +52,20 @@ interface Build {
   readonly root?: string;
 }
 
+function emitPlugin(files: Readonly<Record<string, string>>): Plugin {
+  return {
+    generateBundle() {
+      for (const [fileName, source] of Object.entries(files)) {
+        this.emitFile({ fileName, source, type: "asset" });
+      }
+    },
+    name: "emit",
+  };
+}
+
 // Builds the site in memory and returns the precache manifest written into sw.js.
 async function precache({
+  emitted = {},
   hashedFiles,
   missing,
   placeholder,
@@ -69,6 +84,7 @@ async function precache({
     configFile: false,
     logLevel: "silent",
     plugins: [
+      emitPlugin(emitted),
       precachePlugin({
         ...(hashedFiles === undefined ? {} : { hashedFiles }),
         pageHtmlFile: "index.html",
@@ -104,6 +120,25 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     expect(manifest.version).toMatch(/^[0-9a-f]{16}$/);
   });
 
+  it("records the content hash of every precached file outside the hashed build output", async () => {
+    const hash = (text: string) => contentHash(new TextEncoder().encode(text));
+    const manifest = await precache({
+      emitted: { "art/a.ogg": "ogg", "art/sprite.png": "sprite", "assets/b-12345678.ogg": "b" },
+      hashedFiles: () => ({
+        sounds: { ogg: ["/art/a.ogg", "/assets/b-12345678.ogg"] },
+        urls: ["/art/sprite.png"],
+      }),
+    });
+    expect(manifest.contentHashes).toEqual({
+      "/": expect.stringMatching(/^[\w-]{8}$/),
+      "/art/a.ogg": hash("ogg"),
+      "/art/sprite.png": hash("sprite"),
+      "/favicon.png": hash("favicon"),
+      "/icon.png": hash("icon"),
+      "/manifest.webmanifest": hash(JSON.stringify({ icons: [{ src: "/icon.png" }] })),
+    });
+  });
+
   it.each<[string, string, boolean]>([
     ["the same files", "icon", true],
     ["a changed public file", "redrawn", false],
@@ -114,6 +149,10 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     const second = await precache({ root });
     expect({ ...second, version: first.version === second.version }).toEqual({
       ...first,
+      contentHashes: {
+        ...first.contentHashes,
+        "/icon.png": contentHash(new TextEncoder().encode(icon)),
+      },
       version: same,
     });
   });

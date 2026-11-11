@@ -5,6 +5,7 @@ import {
   cacheKeyFor,
   cacheNameFor,
   type CachePolicy,
+  type InstallPlan,
   installPlan,
   installUrls,
   precacheFetchOptions,
@@ -19,6 +20,7 @@ const POLICY: CachePolicy = {
 };
 
 const cached = cachedUrlsOf({
+  contentHashes: {},
   sounds: { m4a: ["/art/a.m4a"], ogg: ["/art/a.ogg"] },
   urls: ["/play/", "/art/manifest.json", "/assets/play-abc.js"],
   version: "v1",
@@ -65,6 +67,7 @@ describe("cacheKeyFor", () => {
 
 describe("the sound files", () => {
   const manifest: PrecacheManifest = {
+    contentHashes: {},
     sounds: { m4a: ["/art/a.m4a"], ogg: ["/art/a.ogg"] },
     urls: ["/play/", "/art/sprite.png"],
     version: "v1",
@@ -93,20 +96,36 @@ describe("staleCacheNames", () => {
 
 describe("installPlan", () => {
   const urls = ["/play/", "/nav.js", "/art/sprite.png", "/assets/play-new.js", "/assets/art-a.png"];
+  const contentHashes = { "/art/sprite.png": "sprite01", "/play/": "page0001" };
 
-  it.each<[string, string[], string[]]>([
-    ["fetches everything on a first install", [], []],
-    ["copies hashed files an earlier cache holds", ["/assets/art-a.png"], ["/assets/art-a.png"]],
+  it.each<[string, string[], Partial<InstallPlan>]>([
+    ["fetches everything on a first install", [], {}],
     [
-      "fetches unhashed files fresh even when an earlier cache holds them",
-      ["/play/", "/nav.js", "/art/sprite.png", "/assets/art-a.png"],
+      "copies hashed files an earlier cache holds",
       ["/assets/art-a.png"],
+      { copy: ["/assets/art-a.png"] },
     ],
-    ["fetches a hashed file no earlier cache holds", ["/assets/play-old.js"], []],
-  ])("%s", (_case, previous, copy) => {
-    expect(installPlan(POLICY, new Set(previous), urls)).toEqual({
+    [
+      "verifies unhashed files an earlier cache holds against their recorded content hash",
+      ["/play/", "/art/sprite.png", "/assets/art-a.png"],
+      {
+        copy: ["/assets/art-a.png"],
+        verify: [
+          ["/play/", "page0001"],
+          ["/art/sprite.png", "sprite01"],
+        ],
+      },
+    ],
+    ["fetches an unhashed file with no recorded content hash", ["/nav.js"], {}],
+    ["fetches a hashed file no earlier cache holds", ["/assets/play-old.js"], {}],
+  ])("%s", (_case, previous, expected) => {
+    const copy = expected.copy ?? [];
+    const verify = expected.verify ?? [];
+    const reused = new Set([...copy, ...verify.map(([url]) => url)]);
+    expect(installPlan(POLICY, contentHashes, new Set(previous), urls)).toEqual({
       copy,
-      fetch: urls.filter((url) => !copy.includes(url)),
+      fetch: urls.filter((url) => !reused.has(url)),
+      verify,
     });
   });
 });

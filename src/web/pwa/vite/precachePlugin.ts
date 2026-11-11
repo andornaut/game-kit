@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 
 import type { Plugin } from "vite";
 
-import { cacheKeyFor, type CachePolicy } from "../cachePolicy.ts";
+import { contentHash } from "../../build/vite/contentHash.ts";
+import { cacheKeyFor, type CachePolicy, isHashedAssetUrl } from "../cachePolicy.ts";
 import {
   bundleDependencies,
   type BundleFile,
@@ -138,19 +139,34 @@ export function precachePlugin({
           }
         }
 
+        // Each listed file outside the hashed build output, sounds included, by its content: the
+        // version changes with any of them, and an install reuses an earlier version's copy of
+        // one only where its content is unchanged. A hashed file's name stands for its content.
+        const listed = new Map([
+          ...contents,
+          ...soundUrls.map((url) => [url, bundleBytes(url) ?? new Uint8Array()] as const),
+        ]);
         const contentHashes = new Map(
-          [...contents].map(([url, bytes]) => [url, sha256Hex(bytes)] as const),
+          [...listed]
+            .filter(([url]) => !isHashedAssetUrl(policy, url))
+            .map(([url, bytes]) => [url, contentHash(bytes)] as const),
         );
-        // A sound's hashed name stands for its content, as every hashed file's does.
-        const soundHashes = soundUrls.map((url) => [url, ""] as const);
         const fingerprint = sha256Hex(
-          encoder.encode(precacheFingerprint(policy, new Map([...contentHashes, ...soundHashes]))),
+          encoder.encode(
+            precacheFingerprint(
+              policy,
+              new Map([...listed.keys()].map((url) => [url, contentHashes.get(url) ?? ""])),
+            ),
+          ),
         );
         const manifest: PrecacheManifest = {
+          contentHashes: Object.fromEntries(
+            [...contentHashes.keys()].sort().map((url) => [url, contentHashes.get(url) ?? ""]),
+          ),
           sounds: Object.fromEntries(
             Object.entries(hashed.sounds).map(([format, urls]) => [format, [...urls]]),
           ),
-          urls: [...contentHashes.keys()].sort(),
+          urls: [...contents.keys()].sort(),
           version: fingerprint.slice(0, 16),
         };
 
