@@ -1,11 +1,12 @@
 import { type FocusKeyAction, focusKeyAction, stepFocus } from "../../../ui/focusKeys.ts";
 
 // One modal layer shared by every card a game opens over its UI root. The top modal alone takes
-// the keyboard: Tab and the arrows step the focus through its controls, wrapping and trapped in
-// it; Enter and Space click the focused control once per press; Escape and P close a closeable
-// card (ui/focusKeys). It marks the card aria-modal, makes every other layer of the root inert,
-// focuses the card's default action on open and restores the focus on close. It does not use
-// <dialog>.showModal() or popover: the top layer renders outside a turned page frame.
+// the keyboard: Tab and the arrows step the focus through its controls, then its live elements',
+// wrapping and trapped in them; Enter and Space click the focused control once per press; Escape
+// and P close a closeable card (ui/focusKeys). It marks the card aria-modal, makes the rest of the
+// root inert apart from the card's layer and live elements, focuses the card's default action on
+// open and restores the focus on close. It does not use <dialog>.showModal() or popover: the top
+// layer renders outside a turned page frame.
 
 export interface ModalOptions {
   // Closes the card on Escape, P or back: the game's own close, which then calls the close
@@ -13,6 +14,11 @@ export interface ModalOptions {
   readonly close?: () => void;
   // The control focused on open, or undefined for the card itself.
   readonly focus?: HTMLElement;
+  // Elements under root, outside the card's layer, that stay live while the card is on top. They
+  // take presses, and the card's keys reach them: Tab and the arrows step on from the card's
+  // controls through each one's, in this order, and Enter and Space click the one focused. Inert
+  // goes on the siblings along the path from root to each, so one may sit inside another layer.
+  readonly live?: readonly HTMLElement[];
   // Where the focus goes on close when the element focused before open is gone, hidden or inert.
   readonly restore?: () => HTMLElement | null | undefined;
 }
@@ -43,12 +49,30 @@ const FOCUSABLE = [
   "[tabindex]",
 ].join(", ");
 
+const reachable = (element: HTMLElement) =>
+  element.tabIndex >= 0 && element.closest("[hidden], [inert]") === null;
+
 // The controls Tab reaches in dialog, in document order: focusable, not tabindex -1 and not in a
 // hidden or inert subtree.
 export function focusTargets(dialog: HTMLElement): HTMLElement[] {
-  return [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-    (element) => element.tabIndex >= 0 && element.closest("[hidden], [inert]") === null,
-  );
+  return [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(reachable);
+}
+
+// The controls the card's keys step through: the card's, then each live element's, the element
+// itself first where it is one.
+function modalTargets(modal: OpenModal): HTMLElement[] {
+  return [
+    ...focusTargets(modal.dialog),
+    ...(modal.options.live ?? []).flatMap((element) => [
+      ...(element.matches(FOCUSABLE) && reachable(element) ? [element] : []),
+      ...focusTargets(element),
+    ]),
+  ];
+}
+
+// Whether node is in the card or in one of its live elements.
+function within(modal: OpenModal, node: Node | null): boolean {
+  return [modal.dialog, ...(modal.options.live ?? [])].some((element) => element.contains(node));
 }
 
 function usable(element: Element | null): element is HTMLElement {
@@ -60,6 +84,46 @@ function usable(element: Element | null): element is HTMLElement {
   );
 }
 
+// The elements to make inert under root while the card in layer is on top with live elements:
+// root's other children, and along the path from root to each live element, its ancestors'
+// other children.
+function inertTargets(
+  root: HTMLElement,
+  layer: Element | undefined,
+  live: readonly Element[],
+): Set<Element> {
+  const kept = new Set<Element>();
+  const paths = new Set<Element>();
+  for (const element of live) {
+    if (element !== root && root.contains(element)) {
+      kept.add(element);
+      let parent = element.parentElement;
+      while (parent !== null && parent !== root) {
+        paths.add(parent);
+        parent = parent.parentElement;
+      }
+    }
+  }
+  if (layer !== undefined) {
+    kept.add(layer);
+  }
+  const targets = new Set<Element>();
+  const visit = (parent: Element) => {
+    for (const child of parent.children) {
+      if (kept.has(child)) {
+        continue;
+      }
+      if (paths.has(child)) {
+        visit(child);
+      } else {
+        targets.add(child);
+      }
+    }
+  };
+  visit(root);
+  return targets;
+}
+
 // The modal layer over root, whose element children are the game's UI layers.
 export function createModalLayer(root: HTMLElement): ModalLayer {
   const document = root.ownerDocument;
@@ -68,17 +132,24 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
   const top = () => stack.at(-1);
   const layerOf = (dialog: HTMLElement) =>
     [...root.children].find((child) => child.contains(dialog));
+  // Marks what the top card needs inert and clears the marks it set that the card no longer
+  // needs, never touching an element the game made inert.
   const applyInert = () => {
     const modal = top();
-    const live = modal === undefined ? undefined : layerOf(modal.dialog);
-    for (const child of root.children) {
-      if (modal !== undefined && child !== live) {
-        if (!child.hasAttribute("inert")) {
-          child.setAttribute("inert", "");
-          inerted.add(child);
-        }
-      } else if (inerted.delete(child)) {
-        child.removeAttribute("inert");
+    const targets =
+      modal === undefined
+        ? new Set<Element>()
+        : inertTargets(root, layerOf(modal.dialog), modal.options.live ?? []);
+    for (const element of inerted) {
+      if (!targets.has(element)) {
+        element.removeAttribute("inert");
+        inerted.delete(element);
+      }
+    }
+    for (const element of targets) {
+      if (!element.hasAttribute("inert")) {
+        element.setAttribute("inert", "");
+        inerted.add(element);
       }
     }
   };
@@ -92,7 +163,7 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
     }
     if (action === "press") {
       const control =
-        active instanceof HTMLElement && active !== modal.dialog && modal.dialog.contains(active);
+        active instanceof HTMLElement && active !== modal.dialog && within(modal, active);
       if (control) {
         active.click();
       }
@@ -102,7 +173,7 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
       modal.options.close?.();
       return modal.options.close !== undefined;
     }
-    const targets = focusTargets(modal.dialog);
+    const targets = modalTargets(modal);
     stepFocus(
       targets,
       targets.find((target) => target === active),
@@ -120,14 +191,15 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
   };
   // A Space press activates a button on its keyup, which keydown's click already did.
   const onKeyUp = (event: KeyboardEvent) => {
-    if (event.key === " " && top()?.dialog.contains(document.activeElement)) {
+    const modal = top();
+    if (event.key === " " && modal !== undefined && within(modal, document.activeElement)) {
       event.preventDefault();
       event.stopPropagation();
     }
   };
   const onFocusIn = (event: FocusEvent) => {
     const modal = top();
-    if (modal !== undefined && !modal.dialog.contains(event.target as Node | null)) {
+    if (modal !== undefined && !within(modal, event.target as Node | null)) {
       focusOpen(modal);
     }
   };
@@ -170,7 +242,7 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
         }
         const below = top();
         const { opener } = modal;
-        if (usable(opener) && (below === undefined || below.dialog.contains(opener))) {
+        if (usable(opener) && (below === undefined || within(below, opener))) {
           opener.focus();
           return;
         }

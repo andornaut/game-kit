@@ -151,3 +151,74 @@ describe("createModalLayer", () => {
     expect(parts.hud.inert).toBe(true);
   });
 });
+
+describe("createModalLayer with live elements", () => {
+  // The HUD layer also holds a pause button and a skill row of two buttons, which stays live
+  // under the card.
+  let pause: HTMLButtonElement;
+  let row: HTMLDivElement;
+  let skills: HTMLButtonElement[];
+
+  beforeEach(() => {
+    pause = document.createElement("button");
+    row = document.createElement("div");
+    skills = [document.createElement("button"), document.createElement("button")];
+    row.append(...skills);
+    parts.hud.append(pause, row);
+  });
+
+  it("makes the siblings along the path to a live element inert, and clears them on close", () => {
+    const close = layer.open({ live: [row] }, parts.dialog);
+    const marks = () => [parts.hud, row, parts.opener, pause, parts.cards].map((el) => el.inert);
+    expect(marks()).toEqual([false, false, true, true, false]);
+    close();
+    expect(marks()).toEqual([false, false, false, false, false]);
+  });
+
+  it("steps the focus from the card's controls through the live ones and clicks there", () => {
+    const click = vi.fn();
+    skills[1]!.addEventListener("click", click);
+    layer.open({ focus: parts.first, live: [row] }, parts.dialog);
+    const focused = ["Tab", "Tab", "Tab", "Tab"].map((name) => {
+      key(name);
+      return document.activeElement;
+    });
+    expect(focused).toEqual([parts.last, skills[0], skills[1], parts.first]);
+    key("ArrowLeft");
+    key("Enter");
+    expect(click).toHaveBeenCalledOnce();
+  });
+
+  it("lets the focus rest on a live element", () => {
+    layer.open({ live: [row] }, parts.dialog);
+    skills[0]!.focus();
+    expect(document.activeElement).toBe(skills[0]);
+  });
+
+  it("takes a live element that is itself a control into the focus order", () => {
+    layer.open({ focus: parts.last, live: [skills[1]!] }, parts.dialog);
+    key("Tab");
+    expect([document.activeElement, skills[0]!.inert]).toEqual([skills[1], true]);
+  });
+
+  it("makes a live element inert under a card opened over its own", () => {
+    const top = document.createElement("div");
+    const sheet = document.createElement("section");
+    top.append(sheet);
+    parts.root.append(top);
+    layer.open({ live: [row] }, parts.dialog);
+    skills[0]!.focus();
+    const close = layer.open({}, sheet);
+    const marks = () => [parts.hud, row, pause, parts.cards].map((el) => el.inert);
+    expect(marks()).toEqual([true, false, false, true]);
+    close();
+    expect(marks()).toEqual([false, false, true, false]);
+    expect(document.activeElement).toBe(skills[0]);
+  });
+
+  it("leaves an element the game made inert inert", () => {
+    pause.inert = true;
+    layer.open({ live: [row] }, parts.dialog)();
+    expect(pause.inert).toBe(true);
+  });
+});

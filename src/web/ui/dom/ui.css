@@ -34,16 +34,24 @@
   image-rendering: pixelated;
 }
 
-/* The refusal cue (refusalCue). It overrides the control's own colour while it plays, as an
-   inline style would. */
-[data-ui-refusal-red] {
+/* The refusal cue (refusalCue). It overrides the colour of the control and of each label in it
+   that the game marks data-ui-refusal-label while it plays, as an inline style would. */
+[data-ui-refusal-red],
+[data-ui-refusal-red] [data-ui-refusal-label] {
   color: var(--ui-refusal-colour) !important;
 }
 
+/* The alternate shake holds each side; the yoyo shake glides out and back, one stroke each. */
 [data-ui-refusal-shake="left"] {
   translate: calc(var(--ui-unit) * var(--ui-refusal-shake) * -1px) 0;
 }
 
-[data-ui-refusal-shake="right"] {
+[data-ui-refusal-shake="right"],
+[data-ui-refusal-shake="out"] {
   translate: calc(var(--ui-unit) * var(--ui-refusal-shake) * 1px) 0;
+}
+
+[data-ui-refusal-shake="out"],
+[data-ui-refusal-shake="back"] {
+  transition: translate calc(var(--ui-refusal-shake-ms) * 1ms) linear;
 }

@@ -39,6 +39,29 @@ describe("refuse", () => {
     expect(element.style.getPropertyValue("--ui-refusal-shake")).toBe("");
   });
 
+  it("glides out and back each shakeMs in the yoyo shape, flashing each stepMs", () => {
+    const element = document.createElement("button");
+    refuse({ ...CUE, shakeMs: 40, shakeShape: "yoyo" }, false, element);
+    expect(element.style.getPropertyValue("--ui-refusal-shake-ms")).toBe("40");
+    const states = [state(element)];
+    for (let stroke = 1; stroke <= 8; stroke++) {
+      vi.advanceTimersByTime(40);
+      states.push(state(element));
+    }
+    expect(states).toEqual([
+      [true, "out"],
+      [true, "back"],
+      [false, "out"],
+      [false, "back"],
+      [true, "out"],
+      [true, "back"],
+      [false, "out"],
+      [false, "back"],
+      [false, null],
+    ]);
+    expect(element.style.getPropertyValue("--ui-refusal-shake-ms")).toBe("");
+  });
+
   it("holds red without moving under reduced motion", () => {
     const element = document.createElement("button");
     refuse(CUE, true, element);

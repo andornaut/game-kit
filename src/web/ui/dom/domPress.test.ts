@@ -145,6 +145,14 @@ describe("listenOutsideTaps", () => {
     expect(onTap).not.toHaveBeenCalled();
   });
 
+  it("ignores a press on an element over the backdrop, such as a live HUD control", () => {
+    const control = document.createElement("button");
+    backdrop.append(control);
+    pointer("pointerdown", control);
+    pointer("pointerup", control);
+    expect(onTap).not.toHaveBeenCalled();
+  });
+
   it("ignores a tap that crosses a modal-stack change", () => {
     pointer("pointerdown", backdrop);
     gate.open().close();
