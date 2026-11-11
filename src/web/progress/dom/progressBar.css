@@ -1,0 +1,29 @@
+/* The progress bar (progressBar.ts) and the same markup written before any script runs: a
+   .progress-bar with its data-state, each fill band a .progress-bar-band clip holding one
+   coloured segment, which fills the band. While pending the band spans the track and its segment,
+   --progress-bar-segment of the track wide, travels from beyond the left edge to beyond the right
+   once every --progress-bar-cycle, clipped as it enters and leaves. Reduced motion does not
+   change it. Once complete the full bar hides after --progress-bar-full. */
+.progress-bar[data-state="pending"] .progress-bar-band > * {
+  width: calc(var(--progress-bar-segment, 0.25) * 100%);
+  animation: progress-bar-travel var(--progress-bar-cycle, 1500ms) linear infinite;
+}
+
+.progress-bar[data-state="complete"] {
+  animation: progress-bar-complete var(--progress-bar-full, 250ms) step-end forwards;
+}
+
+@keyframes progress-bar-travel {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(calc(100% / var(--progress-bar-segment, 0.25)));
+  }
+}
+
+@keyframes progress-bar-complete {
+  to {
+    visibility: hidden;
+  }
+}

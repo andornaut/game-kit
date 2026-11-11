@@ -138,6 +138,7 @@
     "./web/headers/vite/securityHeadersPlugin": "./src/web/headers/vite/securityHeadersPlugin.ts",
     "./web/input/dom/pagePresses": "./src/web/input/dom/pagePresses.ts",
     "./web/progress/dom/progressBar": "./src/web/progress/dom/progressBar.ts",
+    "./web/progress/dom/progressBar.css": "./src/web/progress/dom/progressBar.css",
     "./web/pwa/appWindow": "./src/web/pwa/appWindow.ts",
     "./web/pwa/backNavigation": "./src/web/pwa/backNavigation.ts",
     "./web/pwa/cachePolicy": "./src/web/pwa/cachePolicy.ts",
