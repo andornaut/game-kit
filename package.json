@@ -106,6 +106,7 @@
     "./text/textFit": "./src/text/textFit.ts",
     "./ui/focusKeys": "./src/ui/focusKeys.ts",
     "./ui/hitAreas": "./src/ui/hitAreas.ts",
+    "./ui/spacing": "./src/ui/spacing.ts",
     "./units": "./src/units.ts",
     "./view/fitCheck": "./src/view/fitCheck.ts",
     "./view/modalDim": "./src/view/modalDim.ts",
