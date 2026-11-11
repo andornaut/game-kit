@@ -40,19 +40,7 @@ const files = execFileSync("tar", ["-tzf", artifact], { encoding: "utf8" })
   .filter((path) => path !== "");
 writeFileSync(join(scratch, "artifact-files.txt"), `${files.join("\n")}\n`);
 execFileSync("tar", ["-xzf", artifact, "--strip-components=1", "-C", installed]);
-const privateDirty = process.env.CHECK_SOURCE_DIRTY === "true" && process.env.CHECK_EXPORT !== "1";
-assert.equal(
-  readFileSync(join(installed, "SOURCE_COMMIT"), "utf8"),
-  privateDirty ? "UNCOMMITTED\n" : `${sourceCommit}\n`,
-);
-if (privateDirty) {
-  assert.deepEqual(JSON.parse(readFileSync(join(installed, "SOURCE_CHECK.json"), "utf8")), {
-    dirty: true,
-    revision: sourceCommit,
-    scope: "private-check-build",
-    sha256: process.env.CHECK_SOURCE_SHA256,
-  });
-}
+assert.equal(readFileSync(join(installed, "SOURCE_COMMIT"), "utf8"), `${sourceCommit}\n`);
 const source = JSON.parse(readFileSync("package.json", "utf8")) as Manifest;
 const manifest = JSON.parse(readFileSync(join(installed, "package.json"), "utf8")) as Manifest;
 assert.equal(manifest.version, source.version);
