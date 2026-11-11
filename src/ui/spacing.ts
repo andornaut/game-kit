@@ -6,11 +6,11 @@
 // leaves 8 base px clear between two rings.
 export const BUTTON_GAP = 16;
 
-// Between small buttons side by side, whose faces are smaller than a standard button's, such as
-// discs in larger press targets and compact text buttons: more room against pressing the wrong
-// one.
+// Between small buttons in any direction, stacks included, whose faces are smaller than a
+// standard button's, such as discs in larger press targets and compact text buttons: more room
+// against pressing the wrong one.
 export const SMALL_BUTTON_GAP = 24;
 
-// Between buttons stacked vertically, of any size. Focus rings reaching 4 base px outside each
+// Between standard buttons stacked vertically. Focus rings reaching 4 base px outside each
 // button just meet.
 export const STACK_BUTTON_GAP = 8;

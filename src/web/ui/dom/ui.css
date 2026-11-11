@@ -6,10 +6,10 @@
 /* The layer over the whole canvas, which full-area backdrops fill. It takes no presses itself: a
    game turns pointer-events back on for its controls and backdrops. --ui-button-gap,
    --ui-small-button-gap and --ui-stack-button-gap are the gaps between neighbouring button faces:
-   standard and small buttons side by side, and stacked buttons (ui/spacing BUTTON_GAP,
-   SMALL_BUTTON_GAP and STACK_BUTTON_GAP base px). They are defined
-   on the layer, where --ui-unit is set, so they resolve there and descendants inherit the resulting
-   CSS lengths; outside the layer they are undefined. */
+   standard buttons side by side, small buttons in any direction and standard buttons stacked
+   (ui/spacing BUTTON_GAP, SMALL_BUTTON_GAP and STACK_BUTTON_GAP base px). They are defined on the
+   layer, where --ui-unit is set, so they resolve there and descendants inherit the resulting CSS
+   lengths; outside the layer they are undefined. */
 .ui-layer {
   --ui-unit: 1;
   --ui-button-gap: calc(var(--ui-unit) * 16px);
