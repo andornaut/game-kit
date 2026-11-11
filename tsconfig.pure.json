@@ -48,6 +48,8 @@
     "src/text/overflow.ts",
     "src/text/pixelFont.ts",
     "src/text/textFit.ts",
+    "src/ui/focusKeys.ts",
+    "src/ui/hitAreas.ts",
     "src/units.ts",
     "src/view/fitCheck.ts",
     "src/view/modalDim.ts",

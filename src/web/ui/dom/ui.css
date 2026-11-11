@@ -1,0 +1,49 @@
+/* The DOM UI over the game's canvas (web/ui/dom/*). The game imports this stylesheet (a script
+   cannot add a <style> under a CSP without 'unsafe-inline') and sets every colour and layout value
+   as a custom property. Lengths are base pixels times --ui-unit, which viewUnits keeps current on
+   the layer. */
+
+/* The layer over the whole canvas, which full-area backdrops fill. It takes no presses itself: a
+   game turns pointer-events back on for its controls and backdrops. */
+.ui-layer {
+  --ui-unit: 1;
+  position: absolute;
+  inset: 0;
+  contain: strict;
+  pointer-events: none;
+}
+
+/* The play view's box in the layer, from the viewUnits bridge; the whole layer until it measures.
+   Everything in it is placed by its distances from the view's edges. */
+.ui-view {
+  position: absolute;
+  top: var(--ui-view-top, 0px);
+  left: var(--ui-view-left, 0px);
+  width: var(--ui-view-width, 100%);
+  height: var(--ui-view-height, 100%);
+}
+
+/* A nine-slice frame from a sheet frame (sheetFrames). The game points --ui-frame-image and
+   --ui-frame-slice at a frame's --<name>-image and --<name>-slice, and --ui-frame-width at the
+   whole-pixel edges (viewUnits slice()). */
+.ui-frame {
+  border-style: solid;
+  border-width: var(--ui-frame-width, 0px);
+  border-image-source: var(--ui-frame-image, none);
+  border-image-slice: var(--ui-frame-slice, 0) fill;
+  image-rendering: pixelated;
+}
+
+/* The refusal cue (refusalCue). It overrides the control's own colour while it plays, as an
+   inline style would. */
+[data-ui-refusal-red] {
+  color: var(--ui-refusal-colour) !important;
+}
+
+[data-ui-refusal-shake="left"] {
+  translate: calc(var(--ui-unit) * var(--ui-refusal-shake) * -1px) 0;
+}
+
+[data-ui-refusal-shake="right"] {
+  translate: calc(var(--ui-unit) * var(--ui-refusal-shake) * 1px) 0;
+}

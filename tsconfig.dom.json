@@ -21,6 +21,13 @@
     "src/web/pwa/dom/wakeLock.ts",
     "src/web/save/dom/localSaveStorage.ts",
     "src/web/save/dom/pageSessionStore.ts",
+    "src/web/ui/dom/domPress.ts",
+    "src/web/ui/dom/layoutProperties.ts",
+    "src/web/ui/dom/modalLayer.ts",
+    "src/web/ui/dom/refusalCue.ts",
+    "src/web/ui/dom/sheetFrames.ts",
+    "src/web/ui/dom/vectorChrome.ts",
+    "src/web/ui/dom/viewUnits.ts",
     "src/web/view/dom/watchFrameTurn.ts"
   ]
 }
