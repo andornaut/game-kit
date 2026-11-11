@@ -7,13 +7,13 @@
     "node": ">=24.21.0"
   },
   "scripts": {
-    "check": "make check",
-    "format": "make exec COMMAND='node scripts/container-check.ts format'",
-    "lint": "make lint",
-    "test": "make test",
-    "verify": "make check",
+    "check": "npm run lint && npm test && npm run build",
+    "format": "prettier --write . && eslint --fix .",
+    "lint": "shellcheck -x -P SCRIPTDIR tests/container/stock tests/container/check-stock tests/container/node && markdownlint-cli2 && node scripts/typecheck.ts && prettier --check . && eslint --max-warnings 0 .",
+    "test": "vitest run --maxWorkers=4",
+    "verify": "npm run check",
     "prepare": "husky",
-    "build": "make build"
+    "build": "node scripts/package-source.ts .claude/release-output && node scripts/release-artifact.ts .claude/release-output/game-kit-$npm_package_version.tgz"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

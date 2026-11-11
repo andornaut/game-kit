@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+if [ "$#" -ne 0 ]; then exit 2; fi
+npm ci --ignore-scripts --no-audit --no-fund --maxsockets=1 >&2
+PATH=$PWD/node_modules/.bin:$PATH
+markdownlint-cli2
+node scripts/typecheck.ts
+prettier --check .
+eslint --max-warnings 0 .
+npm test
+exec npm run build

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+checkout=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
+# shellcheck source=tests/container/stock
+source "${checkout}/tests/container/stock"
+: "${NODE_IMAGE:?}" "${SHELLCHECK_IMAGE:?}"
+source_commit=$(git -C "${checkout}" rev-parse HEAD)
+source_date_epoch=$(git -C "${checkout}" show -s --format=%ct HEAD)
+stock_begin "${checkout}"
+node_image=
+shellcheck_image=
+stock_image shellcheck_image "${SHELLCHECK_IMAGE}"
+stock_readonly "${shellcheck_image}" /bin/shellcheck -x -P SCRIPTDIR \
+    tests/container/stock tests/container/check-stock tests/container/node
+stock_image node_image "${NODE_IMAGE}"
+STOCK_NETWORK=bridge stock_run "${node_image}" -- \
+    env SOURCE_COMMIT="${source_commit}" SOURCE_DATE_EPOCH="${source_date_epoch}" sh tests/container/node
+stock_finish

@@ -1,22 +1,12 @@
 .DEFAULT_GOAL := check
 
-CHECK_TASKS := lint test build
-BUILD_OUTPUTS := .claude/release-output
-TEST_OUTPUTS :=
-CHECK_ADMISSION ?=
-CONTAINER_BUILD_ARGS = NODE_VERSION=$(patsubst v%,%,$(shell cat .nvmrc))
+NODE_IMAGE := node:$(patsubst v%,%,$(shell cat .nvmrc))
+SHELLCHECK_IMAGE := koalaman/shellcheck:v0.11.0
 
-override COMMAND := $(value COMMAND)
-override TEST_ARGS := $(value TEST_ARGS)
+export NODE_IMAGE SHELLCHECK_IMAGE
+export CHECK_TIMEOUT_SECONDS CHECK_MEMORY CHECK_SCRATCH_SIZE CHECK_WORK_SIZE CHECK_TMP_SIZE
 
-export CHECK_TASKS BUILD_OUTPUTS TEST_OUTPUTS CONTAINER_BUILD_ARGS TEST_ARGS COMMAND
-export CHECK_TIMEOUT_SECONDS CHECK_MEMORY CHECK_SCRATCH_SIZE CHECK_WORK_SIZE CHECK_TMP_SIZE CHECK_NETWORK_LINT CONTAINER_IMAGE
-export CHECK_ADMISSION
+.PHONY: check
 
-.PHONY: check check-info lint test build exec
-
-check lint test build exec:
-	@./tests/container/run $@
-
-check-info:
-	@./tests/container/run info
+check:
+	@./tests/container/check-stock
