@@ -75,7 +75,7 @@ export interface UpdateReports {
   // Called with a required update's state on each change, only after requireNewer(). The game
   // shows its travelling loading bar for "updating" and its one "connect to update" message for
   // "unavailable".
-  readonly onRequireNewer?: (state: RequiredUpdateState) => void;
+  readonly onRequireNewer: (state: RequiredUpdateState) => void;
   // Called with whether the game offers the update, on each change of offerShown: a newer version
   // fully installed and checked waits behind the one controlling the page, the home screen is in
   // front and no update is required. Never on a page no version controls.
@@ -176,7 +176,7 @@ export function createUpdateFlow(
   const report = (next: RequiredUpdateState) => {
     if (requiredState !== next) {
       requiredState = next;
-      reports.onRequireNewer?.(next);
+      reports.onRequireNewer(next);
     }
   };
   const requestRegistration = () => {
