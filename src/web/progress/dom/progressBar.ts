@@ -1,5 +1,6 @@
 import {
   checkProgressMotion,
+  indeterminateTravel,
   progressBarLayout,
   type ProgressBarStyle,
   type ProgressMotion,
@@ -16,26 +17,53 @@ export const PROGRESS_BAR_PROPERTIES = {
   cycle: "--progress-bar-cycle",
   full: "--progress-bar-full",
   segment: "--progress-bar-segment",
+  segmentWidth: "--progress-bar-segment-width",
+  steps: "--progress-bar-steps",
 } as const;
 
 // pending: unknown total, the segment travels; determinate: a measured share; complete: full,
 // then hidden after the full hold; idle: hidden.
 export type ProgressBarState = "complete" | "determinate" | "idle" | "pending";
 
-// The indeterminate motion and how long a finished measured bar stays full. Without it the
-// stylesheet's defaults apply.
+// The indeterminate motion and how long a finished measured bar stays full. With it the
+// segment steps a whole pixel at a time; without it the stylesheet's defaults apply and the
+// segment travels continuously.
 export interface DomProgressTiming extends ProgressMotion {
   readonly fullMs: number;
 }
 
 const cssColour = (colour: number) => `#${colour.toString(16).padStart(6, "0")}`;
 
+// The custom properties that land a pending bar's travelling segment on whole pixels of its
+// frame's units, as indeterminateSegment does: the segment's width in px and the number of
+// one-pixel steps it takes each cycle. progressBar.css reads them together. Empty for a track
+// narrower than one pixel. Static CSS for markup written before any script runs sets the same
+// values on the .progress-bar. Throws as checkProgressMotion does.
+export function progressBarPixelProperties(
+  style: ProgressBarStyle,
+  motion: ProgressMotion,
+  frame: Rect,
+): Readonly<Record<string, string>> {
+  const { length, steps } = indeterminateTravel(
+    motion,
+    progressBarLayout(style, frame, 1).track.width,
+  );
+  if (steps === 0) {
+    return {};
+  }
+  return {
+    [PROGRESS_BAR_PROPERTIES.segmentWidth]: `${length}px`,
+    [PROGRESS_BAR_PROPERTIES.steps]: String(steps),
+  };
+}
+
 // A progress bar whose indeterminate segment and full hold run from progressBar.css alone, so the
 // same markup animates before any script runs; script writes geometry as CSSOM properties, the
-// timing as custom properties and the state as attributes, never style text, and drives no
-// frames. update shows a value; report follows a progress state, hiding the bar while idle. The
-// caller owns the coordinate space, scaling and accessible label. This adapter imports no
-// renderer and can mount before the game's Phaser module is loaded.
+// timing and its whole-pixel travel (progressBarPixelProperties) as custom properties and the
+// state as attributes, never style text, and drives no frames. update shows a value; report
+// follows a progress state, hiding the bar while idle. The caller owns the coordinate space,
+// scaling and accessible label. This adapter imports no renderer and can mount before the game's
+// Phaser module is loaded.
 export function createDomProgressBar(
   parent: HTMLElement,
   style: ProgressBarStyle,
@@ -72,6 +100,9 @@ export function createDomProgressBar(
     element.style.setProperty(PROGRESS_BAR_PROPERTIES.cycle, `${timing.cycleMs}ms`);
     element.style.setProperty(PROGRESS_BAR_PROPERTIES.full, `${timing.fullMs}ms`);
     element.style.setProperty(PROGRESS_BAR_PROPERTIES.segment, String(timing.segment));
+    for (const [name, value] of Object.entries(progressBarPixelProperties(style, timing, frame))) {
+      element.style.setProperty(name, value);
+    }
   }
   const track = document.createElement("div");
   track.style.position = "absolute";

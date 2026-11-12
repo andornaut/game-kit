@@ -84,25 +84,42 @@ export function checkProgressMotion(motion: ProgressMotion): void {
   }
 }
 
+// The travelling segment's geometry within a track of whole pixels: its length in whole pixels,
+// at least one and at most the track, and the number of whole-pixel positions its leading edge
+// takes each cycle, one per pixel from the track's left edge to one pixel short of a segment
+// past the right. Both are zero for a track narrower than one pixel. Throws as
+// checkProgressMotion does.
+export function indeterminateTravel(
+  motion: ProgressMotion,
+  width: number,
+): { readonly length: number; readonly steps: number } {
+  checkProgressMotion(motion);
+  const track = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0;
+  if (track === 0) {
+    return { length: 0, steps: 0 };
+  }
+  const length = Math.min(track, Math.max(1, Math.round(motion.segment * track)));
+  return { length, steps: track + length };
+}
+
 // The visible part of the travelling segment within a track of whole pixels, x from the
-// track's left edge. Its leading edge sweeps from the left edge to one segment past the right
-// edge each cycle, so the segment is clipped while it enters and leaves. progressBar.css draws
-// the same motion. Throws as checkProgressMotion does.
+// track's left edge. Its leading edge steps one pixel at a time through indeterminateTravel's
+// positions, each held for an equal share of the cycle, so the segment is clipped while it
+// enters and leaves. progressBar.css draws the same motion. Throws as checkProgressMotion does.
 export function indeterminateSegment(
   motion: ProgressMotion,
   width: number,
   elapsedMs: number,
 ): { readonly width: number; readonly x: number } {
-  checkProgressMotion(motion);
-  const { cycleMs, segment } = motion;
-  const track = Math.max(0, Math.floor(width));
-  if (track === 0) {
+  const { length, steps } = indeterminateTravel(motion, width);
+  if (steps === 0) {
     return { width: 0, x: 0 };
   }
-  const length = Math.min(track, Math.max(1, Math.round(segment * track)));
+  const { cycleMs } = motion;
+  const track = steps - length;
   const time = Number.isFinite(elapsedMs) ? elapsedMs : 0;
   const phase = (((time % cycleMs) + cycleMs) % cycleMs) / cycleMs;
-  const lead = Math.floor(phase * (track + length));
+  const lead = Math.floor(phase * steps);
   const x = Math.max(0, lead - length);
   return { width: Math.min(track, lead) - x, x };
 }

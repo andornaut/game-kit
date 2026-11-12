@@ -1,24 +1,32 @@
 /* The progress bar (progressBar.ts) and the same markup written before any script runs: a
    .progress-bar with its data-state, each fill band a .progress-bar-band clip holding one
-   coloured segment, which fills the band. While pending the band spans the track and its segment,
-   --progress-bar-segment of the track wide, travels from beyond the left edge to beyond the right
-   once every --progress-bar-cycle, clipped as it enters and leaves. Reduced motion does not
-   change it. Once complete the full bar hides after --progress-bar-full. */
+   coloured segment, which fills the band. While pending the band spans the track and its segment
+   travels from beyond the left edge to beyond the right once every --progress-bar-cycle, clipped
+   as it enters and leaves. With --progress-bar-segment-width (px) and --progress-bar-steps both
+   set, the segment is that wide and steps one pixel at a time, as indeterminateSegment does;
+   otherwise it is --progress-bar-segment of the track wide and travels continuously. Reduced
+   motion does not change it. Once complete the full bar hides after --progress-bar-full. */
 .progress-bar[data-state="pending"] .progress-bar-band > * {
-  width: calc(var(--progress-bar-segment, 0.25) * 100%);
-  animation: progress-bar-travel var(--progress-bar-cycle, 1500ms) linear infinite;
+  --progress-bar-step-timing: steps(var(--progress-bar-steps), end);
+  --progress-bar-step-end: calc(var(--progress-bar-steps) * 1px - 100%);
+  width: var(--progress-bar-segment-width, calc(var(--progress-bar-segment, 0.25) * 100%));
+  animation: progress-bar-travel var(--progress-bar-cycle, 1500ms)
+    var(--progress-bar-step-timing, linear) infinite;
 }
 
 .progress-bar[data-state="complete"] {
   animation: progress-bar-complete var(--progress-bar-full, 250ms) step-end forwards;
 }
 
+/* Without --progress-bar-steps the step properties are invalid, so their fallbacks apply. */
 @keyframes progress-bar-travel {
   from {
     transform: translateX(-100%);
   }
   to {
-    transform: translateX(calc(100% / var(--progress-bar-segment, 0.25)));
+    transform: translateX(
+      var(--progress-bar-step-end, calc(100% / var(--progress-bar-segment, 0.25)))
+    );
   }
 }
 

@@ -3,12 +3,14 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { indeterminateSegment } from "../../../progress.ts";
 import { createProgressState } from "../../../progressState.ts";
 import {
   createDomProgressBar,
   PROGRESS_BAR_BAND_CLASS,
   PROGRESS_BAR_CLASS,
   PROGRESS_BAR_PROPERTIES,
+  progressBarPixelProperties,
 } from "./progressBar.ts";
 
 class Style {
@@ -83,12 +85,14 @@ describe("createDomProgressBar", () => {
     expect(element.removed).toBe(true);
   });
 
-  it("writes the caller's timing as custom properties", () => {
+  it("writes the caller's timing and its whole-pixel travel as custom properties", () => {
     const { element } = mount({ cycleMs: 1200, fullMs: 300, segment: 0.3 });
     expect([...element.style.custom]).toEqual([
       [PROGRESS_BAR_PROPERTIES.cycle, "1200ms"],
       [PROGRESS_BAR_PROPERTIES.full, "300ms"],
       [PROGRESS_BAR_PROPERTIES.segment, "0.3"],
+      [PROGRESS_BAR_PROPERTIES.segmentWidth, "30px"],
+      [PROGRESS_BAR_PROPERTIES.steps, "130"],
     ]);
   });
 
@@ -130,6 +134,39 @@ describe("createDomProgressBar", () => {
   });
 });
 
+describe("progressBarPixelProperties", () => {
+  const motion = { cycleMs: 1500, segment: 0.25 };
+
+  it("rounds the segment within the track to whole pixels", () => {
+    const wide = { height: 4, width: 360, x: 0, y: 0 };
+    expect(progressBarPixelProperties(style, motion, wide)).toEqual({
+      [PROGRESS_BAR_PROPERTIES.segmentWidth]: "90px",
+      [PROGRESS_BAR_PROPERTIES.steps]: "448",
+    });
+  });
+
+  it("is empty for a track narrower than one pixel", () => {
+    expect(progressBarPixelProperties(style, motion, { height: 2, width: 2, x: 0, y: 0 })).toEqual(
+      {},
+    );
+  });
+
+  // The stylesheet translates the segment from -width by one pixel per step, steps(n, end),
+  // and the band clips it to the track.
+  it("steps the segment through indeterminateSegment's spans", () => {
+    const track = 100;
+    const properties = progressBarPixelProperties(style, motion, frame);
+    const length = Number.parseInt(properties[PROGRESS_BAR_PROPERTIES.segmentWidth]!, 10);
+    const steps = Number(properties[PROGRESS_BAR_PROPERTIES.steps]);
+    for (let elapsedMs = 0; elapsedMs < motion.cycleMs; elapsedMs += 7) {
+      const left = -length + Math.floor((elapsedMs / motion.cycleMs) * steps);
+      const x = Math.max(0, left);
+      const span = { width: Math.min(track, left + length) - x, x };
+      expect(span).toEqual(indeterminateSegment(motion, track, elapsedMs));
+    }
+  });
+});
+
 // progressBar.css reads the names the adapter writes, and animates without script.
 describe("progressBar.css", () => {
   const css = readFileSync(join(import.meta.dirname, "progressBar.css"), "utf8")
@@ -137,7 +174,13 @@ describe("progressBar.css", () => {
     .replace(/\s+/g, " ");
 
   it.each(Object.values(PROGRESS_BAR_PROPERTIES))("reads %s", (name) => {
-    expect(css).toContain(`var(${name},`);
+    expect(css).toMatch(new RegExp(`var\\(${name}[,)]`));
+  });
+
+  it("steps the travel a pixel at a time only with the pixel properties", () => {
+    expect(css).toContain(`steps(var(${PROGRESS_BAR_PROPERTIES.steps}), end)`);
+    expect(css).toContain("var(--progress-bar-step-timing, linear)");
+    expect(css).toContain(`var(${PROGRESS_BAR_PROPERTIES.segmentWidth}, calc(`);
   });
 
   it("travels the pending segment and hides a complete bar", () => {
@@ -145,7 +188,6 @@ describe("progressBar.css", () => {
       `.${PROGRESS_BAR_CLASS}[data-state="pending"] .${PROGRESS_BAR_BAND_CLASS} > *`,
     );
     expect(css).toContain(`.${PROGRESS_BAR_CLASS}[data-state="complete"]`);
-    expect(css).toContain("linear infinite");
     expect(css).toContain("@keyframes progress-bar-travel");
     expect(css).toContain("visibility: hidden");
   });

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   indeterminateSegment,
+  indeterminateTravel,
   progressBarLayout,
   type ProgressBarStyle,
   progressDisplayLayout,
@@ -35,6 +36,37 @@ describe("progressBarLayout", () => {
     const layout = progressBarLayout(style, { height: 1, width: 1, x: 0, y: 0 }, 1);
     expect(layout.track).toEqual({ height: 0, width: 0, x: 0.5, y: 0.5 });
     expect(layout.fills.every(({ height, width }) => width === 0 && height === 0)).toBe(true);
+  });
+});
+
+describe("indeterminateTravel", () => {
+  it.each([
+    [100, 0.25, { length: 25, steps: 125 }],
+    [358, 0.25, { length: 90, steps: 448 }],
+    [100.9, 0.001, { length: 1, steps: 101 }],
+    [100, 1, { length: 100, steps: 200 }],
+    [0.5, 0.25, { length: 0, steps: 0 }],
+    [NaN, 0.25, { length: 0, steps: 0 }],
+  ])("rounds a %s px track's %s segment to whole pixels", (width, segment, travel) => {
+    expect(indeterminateTravel({ cycleMs: 1000, segment }, width)).toEqual(travel);
+  });
+
+  it("gives indeterminateSegment one leading-edge pixel per step, each an equal share", () => {
+    const { length, steps } = indeterminateTravel(motion, 100);
+    const leads = Array.from({ length: steps }, (_, step) => {
+      const { width, x } = indeterminateSegment(motion, 100, ((step + 0.5) * 1000) / steps);
+      return { lead: x + width, start: x };
+    });
+    expect(leads.map(({ start }) => start)).toEqual(
+      Array.from({ length: steps }, (_, step) => Math.max(0, step - length)),
+    );
+    expect(leads.map(({ lead }) => lead)).toEqual(
+      Array.from({ length: steps }, (_, step) => Math.min(100, step)),
+    );
+  });
+
+  it("rejects bad motion", () => {
+    expect(() => indeterminateTravel({ cycleMs: 1000, segment: 0 }, 100)).toThrow(RangeError);
   });
 });
 
