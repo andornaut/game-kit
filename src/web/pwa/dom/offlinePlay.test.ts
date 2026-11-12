@@ -235,36 +235,17 @@ describe("startOfflinePlay", () => {
     expect(container.registered).toHaveLength(1);
   });
 
-  it("keeps arrival and resume checks after dismissal, and never shows a version that waits later", async () => {
-    const { clock, page, play, registration, shown, visibilitySource } = openPage(true, "none");
+  it("hides a version that waits after a dismissal until the next arrival home", async () => {
+    const { play, registration, shown } = openPage(true, "none");
     await settle();
-    expect(registration?.updates).toBe(1);
-    play.flow.setOfferVisible(true);
-    expect(registration?.updates).toBe(1);
-    page.eventTarget.dispatchEvent(new Event("pointerdown"));
+    play.flow.arriveHome();
+    showHome(play, true);
     play.flow.dismissOffer();
-    play.registrationReady();
-    expect(registration?.updates).toBe(1);
-    play.flow.setOfferVisible(false);
-    play.flow.setOfferVisible(true);
-    expect(registration?.updates).toBe(2);
-    clock.now = RESUME_CHECK_MS - 1;
-    visibilitySource.setVisibility("hidden");
-    visibilitySource.setVisibility("visible");
-    expect(registration?.updates).toBe(2);
-    clock.now = RESUME_CHECK_MS;
-    visibilitySource.setVisibility("hidden");
-    visibilitySource.setVisibility("visible");
-    expect(registration?.updates).toBe(3);
-    if (registration === undefined) {
-      throw new Error("Missing test registration");
-    }
-    registration.waiting = new FakeWorker();
-    registration.dispatchEvent(new Event("updatefound"));
+    const worker = foundInstall(registration);
+    endInstall(registration, worker, "installed");
     expect(shown).toEqual([]);
-    play.flow.setOfferVisible(false);
-    play.flow.setOfferVisible(true);
-    expect({ shown, updates: registration.updates }).toEqual({ shown: [], updates: 4 });
+    play.flow.arriveHome();
+    expect(shown).toEqual([true]);
   });
 
   it("reports a first visit's precache from its registration request until its install ends", async () => {
@@ -394,6 +375,7 @@ describe("startOfflinePlay", () => {
     expect(Object.keys(play).sort()).toEqual(["flow", "registrationReady"]);
     expect(Object.keys(play.flow).sort()).toEqual([
       "accept",
+      "arriveHome",
       "dismissOffer",
       "noteInteraction",
       "noteOnline",
@@ -453,21 +435,103 @@ describe("startOfflinePlay", () => {
     expect(clock.reloads).toBe(1);
   });
 
-  it("hides the offer on dismiss for the rest of the page session, across returns home", async () => {
-    const { clock, page, play, registration, shown } = openPage(true, "waiting");
+  // A controlled page with a version waiting, arrived home and shown the offer, then dismissed.
+  async function dismissedHome(offline = false) {
+    const opened = openPage(true, "waiting", undefined, { offline });
     await settle();
-    showHome(play, true);
-    play.flow.dismissOffer();
+    opened.play.flow.arriveHome();
+    showHome(opened.play, true);
+    opened.play.flow.dismissOffer();
+    await settle();
+    const updates = requireRegistration(opened.registration).updates;
+    return { ...opened, checks: () => requireRegistration(opened.registration).updates - updates };
+  }
+
+  it("keeps the offer hidden after closing a card on the home screen, without checking", async () => {
+    const { checks, page, play, shown } = await dismissedHome();
+    play.flow.setOfferVisible(false);
     page.eventTarget.dispatchEvent(new Event("pointerdown"));
+    play.flow.noteInteraction();
+    play.flow.setOfferVisible(true);
+    expect({ checks: checks(), shown }).toEqual({ checks: 0, shown: [true, false] });
+  });
+
+  it.each<[string, (play: OfflinePlay) => void]>([
+    [
+      "arriving before the offer is eligible",
+      (play) => {
+        play.flow.arriveHome();
+        showHome(play, true);
+      },
+    ],
+    [
+      "arriving after the offer is eligible",
+      (play) => {
+        showHome(play, true);
+        play.flow.arriveHome();
+      },
+    ],
+  ])("shows the offer again on a return to the title from play, %s", async (_, arrive) => {
+    const { checks, clock, play, registration, shown } = await dismissedHome();
     showHome(play, false);
-    showHome(play, true);
-    showHome(play, false);
-    showHome(play, true);
-    expect(shown).toEqual([true, false]);
+    arrive(play);
+    expect({ checks: checks(), shown }).toEqual({ checks: 1, shown: [true, false, true] });
     expect({ messages: registration?.waiting?.messages, reloads: clock.reloads }).toEqual({
       messages: [],
       reloads: 0,
     });
+  });
+
+  it("shows the offer again on an offline return to the title, without checking", async () => {
+    const { checks, play, shown } = await dismissedHome(true);
+    showHome(play, false);
+    play.flow.arriveHome();
+    showHome(play, true);
+    expect({ checks: checks(), shown }).toEqual({ checks: 0, shown: [true, false, true] });
+  });
+
+  // A minimized installed app stays alive, so a resume on the home screen counts as an arrival.
+  it.each<[string, number, number]>([
+    ["a minute after the last check, checking once", RESUME_CHECK_MS, 1],
+    ["within a minute of the last check, without checking", RESUME_CHECK_MS - 1, 0],
+  ])("shows the offer again on a resume on the home screen %s", async (_, now, expected) => {
+    const { checks, clock, shown, visibilitySource } = await dismissedHome();
+    clock.now = now;
+    visibilitySource.setVisibility("hidden");
+    visibilitySource.setVisibility("visible");
+    expect({ checks: checks(), shown }).toEqual({ checks: expected, shown: [true, false, true] });
+  });
+
+  it("keeps a dismissal through a resume while the offer is not eligible", async () => {
+    const { checks, clock, play, shown, visibilitySource } = await dismissedHome();
+    showHome(play, false);
+    clock.now = RESUME_CHECK_MS;
+    visibilitySource.setVisibility("hidden");
+    visibilitySource.setVisibility("visible");
+    showHome(play, true);
+    expect({ checks: checks(), shown }).toEqual({ checks: 0, shown: [true, false] });
+  });
+
+  // The game arrives home on its first launch, before or after watch's first check starts.
+  it.each<[string, boolean]>([
+    ["before the registration is watched", false],
+    ["while the first check is under way", true],
+  ])("checks once on first launch when arriving %s", async (_, afterWatch) => {
+    const { play, registration } = openPage(true, "none");
+    const found = requireRegistration(registration);
+    found.update = () => {
+      found.updates += 1;
+      return new Promise(() => {
+        // The check never settles, so it stays under way.
+      });
+    };
+    if (afterWatch) {
+      await settle();
+    }
+    play.flow.arriveHome();
+    showHome(play, true);
+    await settle();
+    expect(found.updates).toBe(1);
   });
 
   // A page no version controls loaded from the network, and the next launch runs the newest
@@ -699,6 +763,7 @@ describe("requireNewer", () => {
     expect(shown).toEqual([true]);
     play.flow.requireNewer();
     showHome(play, false);
+    play.flow.arriveHome();
     showHome(play, true);
     play.flow.accept();
     expect({ messages: worker.messages, required, shown }).toEqual({

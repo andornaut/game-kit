@@ -10,8 +10,9 @@ import {
 } from "./updateReady.ts";
 import { type VisibilitySource, watchVisibility } from "./visibility.ts";
 
-// Input that counts as the player interacting, after which each arrival home checks for a newer
-// version.
+// Deprecated: input no longer starts update checks, and nothing listens for these; arrival checks
+// run on UpdateFlow's arriveHome.
+// CLEANUP (added 2026-11-12): remove once every consuming game has dropped its imports.
 export const INTERACTION_EVENTS = ["keydown", "pointerdown"] as const;
 
 export type OfflineActivity = "idle" | "precaching" | "updating";
@@ -44,8 +45,8 @@ export interface OfflinePage extends UpdatePage {
 }
 
 export interface OfflinePlay {
-  // The update flow: accept() is the update offer's button, noteInteraction() counts play that
-  // started without input, and requireNewer() updates by itself for a save a newer version wrote.
+  // The update flow: arriveHome() marks each arrival home, accept() is the update offer's button,
+  // and requireNewer() updates by itself for a save a newer version wrote.
   readonly flow: UpdateFlow;
   // Registers the service worker on a first install, once the client has prepared its first
   // playable frame. A controlled page registers at start, and later calls do nothing.
@@ -79,11 +80,11 @@ function browserSession(): SessionLike | undefined {
 
 // Offline play and updates, on the kit's update flow. The game shows its first screen at once:
 // nothing here waits or reloads on its own. A controlled page runs the version on disk and
-// registers at once, so the update checks run in the background; the player's keys and presses
-// count as interacting, and the page coming back into view checks for a newer version (an
-// installed app resumed without relaunching). A first visit runs from the network and registers
-// when ready, precaching in the background. A failed registration leaves the game running online.
-// The window's online event retries a required update.
+// registers at once, so the update checks run in the background on each arrival home and when the
+// page comes back into view on it (an installed app resumed without relaunching). A first visit
+// runs from the network and registers when ready, precaching in the background. A failed
+// registration leaves the game running online. The window's online event retries a required
+// update.
 export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage): OfflinePlay {
   const { container, eventTarget } = page;
   const firstVisit = container.controller === null;
@@ -154,12 +155,6 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
     return pending;
   };
   const flow = createUpdateFlow(page, register, options);
-  for (const type of INTERACTION_EVENTS) {
-    eventTarget.addEventListener(type, () => flow.noteInteraction(), {
-      capture: true,
-      passive: true,
-    });
-  }
   eventTarget.addEventListener("online", () => flow.noteOnline());
   watchVisibility(eventTarget, page.visibilitySource, (visible) => flow.setVisible(visible));
   const registrationReady = () => {

@@ -11,7 +11,8 @@ export const SKIP_WAITING_MESSAGE = "skip-waiting";
 export type SkipWaitingMessage = typeof SKIP_WAITING_MESSAGE;
 
 export interface OfferState {
-  // The player dismissed the offer for the page session (UpdateFlow's dismissOffer).
+  // The player dismissed the offer since the last arrival or resume on the home screen
+  // (UpdateFlow's dismissOffer).
   dismissed: boolean;
   // The update offer may show: the game's home screen is in front, never mid-game or in a menu
   // over it.
@@ -28,7 +29,8 @@ export interface OfferState {
 }
 
 // Whether the game shows the update offer: a version waits, the home screen is in front, the
-// player has not dismissed it this page session, no switch is under way and no update is required.
+// player has not dismissed it since arriving there, no switch is under way and no update is
+// required.
 // Neither input nor time changes this: only a required update switches without the offer.
 export function offerShown({
   dismissed,

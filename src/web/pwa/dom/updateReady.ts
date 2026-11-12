@@ -87,11 +87,18 @@ export interface UpdateFlow {
   // active one. Does nothing while a switch is reloading. A save a newer version wrote uses
   // requireNewer instead.
   accept(): void;
-  // Hides the offer for the rest of the page session, for this and any later waiting version,
-  // without consuming or activating its waiting worker. Arrival and resume checks continue.
+  // An arrival at the home screen: the first launch and each return to it from play, never a
+  // menu or card over it closing. Clears a dismissal and checks for a newer version unless
+  // offline, nothing is watched yet or a check is under way; watch's first check serves an
+  // arrival that came before it. Call it with setOfferVisible(true), in either order; it never
+  // changes offer eligibility.
+  arriveHome(): void;
+  // Hides the offer, for this and any later waiting version, until the next arrival home
+  // (arriveHome) or the page coming back into view on the home screen (setVisible), without
+  // consuming or activating its waiting worker.
   dismissOffer(): void;
-  // A key, touch or click, or play started without input. Each arrival home after it checks for
-  // a newer version.
+  // Deprecated no-op: arriveHome now starts the arrival check, so input no longer matters.
+  // CLEANUP (added 2026-11-12): remove once every consuming game has dropped its calls.
   noteInteraction(): void;
   // The device reconnected (the window's online event). A required update retries.
   noteOnline(): void;
@@ -101,12 +108,13 @@ export interface UpdateFlow {
   // verified. A page no version controls registers, waits for its install to activate and reloads
   // once to become controlled. Idempotent; it lasts for the page.
   requireNewer(): void;
-  // Offer eligibility: whether the home screen, the only place the offer shows, is in front. Each
-  // arrival after input checks for a newer version. Independent of registration; it never clears
-  // a dismissal.
+  // Offer eligibility only: whether the home screen, the only place the offer shows, is in front
+  // with no menu or card over it. Independent of registration; it never checks and never clears a
+  // dismissal.
   setOfferVisible(visible: boolean): void;
-  // Whether the page is in view. Coming back into view on the home screen checks for a newer
-  // version, at most once per RESUME_CHECK_MS; a required update retries on every return.
+  // Whether the page is in view. Coming back into view while the offer is eligible is a resume on
+  // the home screen: it clears a dismissal every time, and checks for a newer version at most
+  // once per RESUME_CHECK_MS. A required update retries on every return.
   setVisible(visible: boolean): void;
   // Follows the registration's waiting version, checking for a newer one first on a controlled
   // page unless offline or one already waits.
@@ -154,7 +162,6 @@ export function createUpdateFlow(
     waiting: false,
   };
   let checks = 0;
-  let interacted = false;
   let lastCheck: number | undefined;
   let registering = 0;
   let requiredState: RequiredUpdateState | undefined;
@@ -242,6 +249,12 @@ export function createUpdateFlow(
       advance(false);
     });
   };
+  // A check for an arrival or resume home, unless offline, nothing is watched or one is under way.
+  const arrivalCheck = () => {
+    if (checks === 0 && watched !== undefined && page.online()) {
+      check(watched).catch(() => undefined);
+    }
+  };
   // Follows the version installing now, whether its updatefound came before watch (the browser's
   // own check on navigation) or after, until it waits; a listener added twice runs once.
   function read(): void {
@@ -266,9 +279,13 @@ export function createUpdateFlow(
         activateWaitingWorker(container, () => page.reload(), waitingWorker);
       }
     },
+    arriveHome() {
+      update({ dismissed: false });
+      arrivalCheck();
+    },
     dismissOffer: () => update({ dismissed: true }),
     noteInteraction() {
-      interacted = true;
+      // Deprecated no-op; see UpdateFlow.
     },
     noteOnline: () => advance(true),
     requireNewer() {
@@ -277,13 +294,7 @@ export function createUpdateFlow(
         advance(true);
       }
     },
-    setOfferVisible(offerVisible) {
-      const arrived = offerVisible && !state.offerVisible && interacted;
-      update({ offerVisible });
-      if (arrived && page.online() && watched !== undefined) {
-        check(watched).catch(() => undefined);
-      }
-    },
+    setOfferVisible: (offerVisible) => update({ offerVisible }),
     setVisible(visible) {
       const due = resumeCheckDue({
         lastCheck,
@@ -292,8 +303,13 @@ export function createUpdateFlow(
         online: page.online(),
         visible,
       });
-      if (due && watched !== undefined) {
-        check(watched).catch(() => undefined);
+      // A resume on the home screen is an arrival: the dismissal clears even when the check is
+      // throttled, so a version found by an earlier check shows again.
+      if (visible && state.offerVisible) {
+        update({ dismissed: false });
+      }
+      if (due) {
+        arrivalCheck();
       }
       if (visible) {
         advance(true);
