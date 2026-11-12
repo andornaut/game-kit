@@ -128,31 +128,60 @@ function showHome(play: OfflinePlay, offerVisible: boolean): void {
   }
 }
 
+function requireRegistration(registration: FakeRegistration | undefined): FakeRegistration {
+  if (registration === undefined) {
+    throw new Error("Missing test registration");
+  }
+  return registration;
+}
+
+// The registration's worker from the start, set installing.
+function startInstall(registration: FakeRegistration | undefined): FakeWorker {
+  const worker = requireRegistration(registration).installing;
+  if (worker === null) {
+    throw new Error("Missing test installer");
+  }
+  worker.state = "installing";
+  return worker;
+}
+
+// A new worker found installing on the registration.
+function foundInstall(registration: FakeRegistration | undefined): FakeWorker {
+  const found = requireRegistration(registration);
+  const worker = new FakeWorker();
+  worker.state = "installing";
+  found.installing = worker;
+  found.dispatchEvent(new Event("updatefound"));
+  return worker;
+}
+
+// The installing worker leaving the "installing" state for state.
+function endInstall(
+  registration: FakeRegistration | undefined,
+  worker: FakeWorker,
+  state: string,
+): void {
+  requireRegistration(registration).installing = null;
+  worker.state = state;
+  worker.dispatchEvent(new Event("statechange"));
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe("startOfflinePlay", () => {
   it("defers first registration until client readiness after its prepared frame independently of offers", async () => {
-    const activities: OfflineActivity[] = [];
-    const { container, play } = openPage(
-      false,
-      "none",
-      (activity) => activities.push(activity),
-      "manual",
-    );
+    const { container, play } = openPage(false, "none", undefined, "manual");
     await expect(play.bootable).resolves.toBeUndefined();
     play.flow.setOfferVisible(true);
     play.flow.setOfferVisible(false);
     play.flow.beginOfferVisit();
     play.flow.setOfferVisible(true);
     expect(container.registered).toEqual([]);
-    expect(activities).toEqual(["idle"]);
     play.registrationReady();
     expect(container.registered).toEqual([[OPTIONS.serviceWorkerUrl, { scope: "/" }]]);
-    expect(activities).toEqual(["idle", "registering"]);
     await settle();
-    expect(activities).toEqual(["idle", "registering", "idle"]);
     play.registrationReady();
     play.flow.setOfferVisible(false);
     play.flow.setOfferVisible(true);
@@ -160,13 +189,7 @@ describe("startOfflinePlay", () => {
   });
 
   it("registers controlled manual pages immediately without activation before interaction", async () => {
-    const activities: OfflineActivity[] = [];
-    const { container, play, registration, shown } = openPage(
-      true,
-      "waiting",
-      (activity) => activities.push(activity),
-      "manual",
-    );
+    const { container, play, registration, shown } = openPage(true, "waiting", undefined, "manual");
     expect(container.registered).toHaveLength(1);
     play.registrationReady();
     expect(container.registered).toHaveLength(1);
@@ -175,7 +198,6 @@ describe("startOfflinePlay", () => {
     play.flow.setOfferVisible(true);
     expect(shown).toEqual([true]);
     expect(registration?.waiting?.messages).toEqual([]);
-    expect(activities).toEqual(["idle", "registering", "idle"]);
     play.flow.accept();
     expect(registration?.waiting?.messages).toEqual([SKIP_WAITING_MESSAGE]);
   });
@@ -216,65 +238,111 @@ describe("startOfflinePlay", () => {
     expect(shown).toEqual([true]);
   });
 
-  it("observes first registration and an in-flight install only after home without holding play", async () => {
+  it("reports a first visit's precache from its registration request until its install ends", async () => {
     const activities: OfflineActivity[] = [];
     const { play, registration } = openPage(false, "installing", (activity) =>
       activities.push(activity),
     );
-    if (registration?.installing === null || registration?.installing === undefined) {
-      throw new Error("Missing test installer");
-    }
-    const worker = registration.installing;
-    worker.state = "installing";
+    const worker = startInstall(registration);
     await expect(play.bootable).resolves.toBeUndefined();
     expect(activities).toEqual(["idle"]);
-    showHome(play, true);
-    expect(activities).toEqual(["idle", "registering"]);
+    play.registrationReady();
+    expect(activities).toEqual(["idle", "precaching"]);
     await settle();
-    expect(activities.at(-1)).toBe("installing");
-    worker.state = "installed";
-    worker.dispatchEvent(new Event("statechange"));
-    expect(activities.at(-1)).toBe("idle");
+    expect(activities).toEqual(["idle", "precaching"]);
+    endInstall(registration, worker, "installed");
+    expect(activities).toEqual(["idle", "precaching", "idle"]);
   });
 
-  it("observes a later install and clears activity when that worker becomes redundant", async () => {
-    const activities: OfflineActivity[] = [];
-    const { play, registration } = openPage(false, "none", (activity) => activities.push(activity));
-    showHome(play, true);
-    await settle();
-    if (registration === undefined) {
-      throw new Error("Missing test registration");
-    }
-    const worker = new FakeWorker();
-    worker.state = "installing";
-    registration.installing = worker;
-    registration.dispatchEvent(new Event("updatefound"));
-    registration.dispatchEvent(new Event("updatefound"));
-    expect(activities).toEqual(["idle", "registering", "idle", "installing"]);
-    worker.state = "redundant";
-    worker.dispatchEvent(new Event("statechange"));
-    expect(activities.at(-1)).toBe("idle");
-  });
-
-  it("boots after a failed registration, and isolates observer errors from registration and boot", async () => {
+  it("ends a first visit's precache when registration fails, and still boots", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const activities: OfflineActivity[] = [];
-    const failed = openPage(false, "fails", (activity) => activities.push(activity));
-    showHome(failed.play, true);
-    await expect(failed.play.bootable).resolves.toBeUndefined();
+    const { play } = openPage(false, "fails", (activity) => activities.push(activity));
+    play.registrationReady();
+    expect(activities).toEqual(["idle", "precaching"]);
     await settle();
-    expect(activities).toEqual(["idle", "registering", "idle"]);
+    expect(activities).toEqual(["idle", "precaching", "idle"]);
     expect(warn).toHaveBeenCalledTimes(1);
+    await expect(play.bootable).resolves.toBeUndefined();
+  });
+
+  // A hard reload has no controller while a worker is already installed and waiting or active.
+  it.each<Deployed>(["none", "waiting"])(
+    "ends a first visit's precache when registration resolves with %s and no worker installing",
+    async (deployed) => {
+      const activities: OfflineActivity[] = [];
+      const { play } = openPage(false, deployed, (activity) => activities.push(activity));
+      play.registrationReady();
+      expect(activities).toEqual(["idle", "precaching"]);
+      await settle();
+      expect(activities).toEqual(["idle", "precaching", "idle"]);
+    },
+  );
+
+  it.each<[string, Deployed]>([
+    ["after its precache install", "installing"],
+    ["after a precache that found no worker installing", "none"],
+  ])("reports a first visit's later install as updating %s", async (_, deployed) => {
+    const activities: OfflineActivity[] = [];
+    const { play, registration } = openPage(false, deployed, (activity) =>
+      activities.push(activity),
+    );
+    const own = registration?.installing ?? null;
+    if (own !== null) {
+      own.state = "installing";
+    }
+    play.registrationReady();
+    await settle();
+    if (own !== null) {
+      endInstall(registration, own, "installed");
+    }
+    expect(activities).toEqual(["idle", "precaching", "idle"]);
+    const later = foundInstall(registration);
+    expect(activities).toEqual(["idle", "precaching", "idle", "updating"]);
+    endInstall(registration, later, "redundant");
+    expect(activities).toEqual(["idle", "precaching", "idle", "updating", "idle"]);
+  });
+
+  it("reports a controlled page's installs as updating and its registration alone as idle", async () => {
+    const activities: OfflineActivity[] = [];
+    const { container, registration } = openPage(true, "installing", (activity) =>
+      activities.push(activity),
+    );
+    const worker = startInstall(registration);
+    expect(container.registered).toHaveLength(1);
+    expect(activities).toEqual(["idle"]);
+    await settle();
+    expect(activities).toEqual(["idle", "updating"]);
+    endInstall(registration, worker, "installed");
+    expect(activities).toEqual(["idle", "updating", "idle"]);
+    foundInstall(registration);
+    expect(activities).toEqual(["idle", "updating", "idle", "updating"]);
+  });
+
+  it("keeps a controlled page idle when its registration finds no worker installing", async () => {
+    const activities: OfflineActivity[] = [];
+    const { container } = openPage(true, "none", (activity) => activities.push(activity));
+    expect(container.registered).toHaveLength(1);
+    await settle();
+    expect(activities).toEqual(["idle"]);
+  });
+
+  it("isolates a throwing activity callback from registration and boot", async () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const observed = openPage(false, "none", () => {
+    const activities: OfflineActivity[] = [];
+    const { container, play } = openPage(false, "none", (activity) => {
+      activities.push(activity);
       throw new Error("observer");
     });
-    showHome(observed.play, true);
+    play.registrationReady();
     await settle();
-    expect(observed.container.registered).toHaveLength(1);
-    await expect(observed.play.bootable).resolves.toBeUndefined();
-    expect(errors).toHaveBeenCalled();
+    expect(activities).toEqual(["idle", "precaching", "idle"]);
+    expect(errors).toHaveBeenCalledTimes(3);
+    expect(errors).toHaveBeenCalledWith("Offline activity callback failed.", expect.any(Error));
+    expect(container.registered).toHaveLength(1);
+    await expect(play.bootable).resolves.toBeUndefined();
   });
+
   // Each step is true for the home screen in front, false for it hidden.
   it.each<[string, boolean, boolean[], number]>([
     ["registers a controlled page at once", true, [], 1],

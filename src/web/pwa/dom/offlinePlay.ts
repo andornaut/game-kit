@@ -11,15 +11,20 @@ import { type VisibilitySource, watchVisibility } from "./visibility.ts";
 // Input that counts as the player interacting, after which the page never reloads on its own.
 export const INTERACTION_EVENTS = ["keydown", "pointerdown"] as const;
 
-export type OfflineActivity = "idle" | "installing" | "registering";
+export type OfflineActivity = "idle" | "precaching" | "updating";
 
 export interface OfflinePlayOptions extends UpdateFlowOptions {
   // How long a fresh load holds the first screen and the save for a newer version to be checked
   // for and installed, so it reloads into that version before the first screen draws.
   readonly bootWaitMs: number;
-  // Registration requests and observed worker installation, with no byte or percentage claim.
-  // Reports idle immediately and when registration fails or installation finishes. This never
-  // changes when registration, update checks or play are allowed.
+  // What the service worker is doing, with no byte or percentage claim. "precaching" is the
+  // first-visit precache: only on a page whose container had no controller at start, from the
+  // registration request until the first installation ends (its worker leaves the "installing"
+  // state), registration fails, or registration resolves with no worker installing, at most once
+  // per page. A game shows its loading bar for exactly this value. "updating" is every other
+  // worker installation, and shows no loading bar. "idle" is everything else and is reported at
+  // start; a controlled page's registration request alone leaves it idle. Each change is reported
+  // once. This never changes when registration, update checks or play are allowed.
   readonly onOfflineActivity?: (activity: OfflineActivity) => void;
   // Called with whether the game offers the update, on each change (createUpdateFlow's show).
   readonly onUpdateShown: (shown: boolean) => void;
@@ -78,6 +83,9 @@ export function browserOfflinePage(): OfflinePage | undefined {
 // registers when ready. A failed registration leaves the game running online.
 export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage): OfflinePlay {
   const { container, eventTarget } = page;
+  const firstVisit = container.controller === null;
+  // True from a first visit's registration request until its precache ends.
+  let precaching = false;
   let activity: OfflineActivity | undefined;
   const reportActivity = (next: OfflineActivity) => {
     if (activity === next) {
@@ -99,7 +107,14 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
         watched.add(worker);
         worker.addEventListener("statechange", read);
       }
-      reportActivity(worker?.state === "installing" ? "installing" : "idle");
+      const installing = worker !== null && worker.state === "installing";
+      // A registration installs one worker at a time, so the precache ends when none is installing.
+      precaching &&= installing;
+      if (installing) {
+        reportActivity(precaching ? "precaching" : "updating");
+      } else {
+        reportActivity("idle");
+      }
     };
     registration.addEventListener("updatefound", read);
     read();
@@ -124,7 +139,10 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
   let registered = false;
   const register = () => {
     registered = true;
-    reportActivity("registering");
+    if (firstVisit) {
+      precaching = true;
+      reportActivity("precaching");
+    }
     void container
       .register(options.serviceWorkerUrl, { scope: "/" })
       .then(watchInstallation)
