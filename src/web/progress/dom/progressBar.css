@@ -4,8 +4,9 @@
    travels from beyond the left edge to beyond the right once every --progress-bar-cycle, clipped
    as it enters and leaves. With --progress-bar-segment-width (px) and --progress-bar-steps both
    set, the segment is that wide and steps one pixel at a time, as indeterminateSegment does;
-   otherwise it is --progress-bar-segment of the track wide and travels continuously. Reduced
-   motion does not change it. Once complete the full bar hides after --progress-bar-full. */
+   otherwise it is --progress-bar-segment of the track wide and travels continuously. Once
+   complete the full bar stays opaque for --progress-bar-full, then fades linearly to transparent
+   over --progress-bar-fade (default 0ms) and is hidden. Reduced motion changes neither. */
 .progress-bar[data-state="pending"] .progress-bar-band > * {
   --progress-bar-step-timing: steps(var(--progress-bar-steps), end);
   --progress-bar-step-end: calc(var(--progress-bar-steps) * 1px - 100%);
@@ -15,7 +16,10 @@
 }
 
 .progress-bar[data-state="complete"] {
-  animation: progress-bar-complete var(--progress-bar-full, 250ms) step-end forwards;
+  animation:
+    progress-bar-complete calc(var(--progress-bar-full, 250ms) + var(--progress-bar-fade, 0ms))
+      step-end forwards,
+    progress-bar-fade var(--progress-bar-fade, 0ms) linear var(--progress-bar-full, 250ms) forwards;
 }
 
 /* Without --progress-bar-steps the step properties are invalid, so their fallbacks apply. */
@@ -33,5 +37,11 @@
 @keyframes progress-bar-complete {
   to {
     visibility: hidden;
+  }
+}
+
+@keyframes progress-bar-fade {
+  to {
+    opacity: 0;
   }
 }

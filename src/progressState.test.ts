@@ -100,4 +100,49 @@ describe("createProgressDisplay", () => {
   it.each([-1, NaN, Infinity])("rejects a full hold of %s", (fullMs) => {
     expect(() => createProgressDisplay(fullMs)).toThrow(RangeError);
   });
+
+  it("fades a finished measured bar linearly after its full hold, then hides it", () => {
+    const display = createProgressDisplay(250, 150);
+    display.report({ active: true, value: 0.6 });
+    display.report({ active: false, value: undefined });
+    expect(display.at(1000)).toEqual({ kind: "measured", value: 1 });
+    expect(display.at(1249)).toEqual({ kind: "measured", value: 1 });
+    expect(display.at(1250)).toEqual({ kind: "measured", opacity: 1, value: 1 });
+    expect(display.at(1325)).toEqual({ kind: "measured", opacity: 0.5, value: 1 });
+    const last = display.at(1399);
+    expect(last.kind === "measured" && last.opacity).toBeCloseTo(1 / 150);
+    expect(display.at(1400)).toEqual({ kind: "hidden" });
+    expect(display.at(1500)).toEqual({ kind: "hidden" });
+  });
+
+  it("starts the fade at once with no hold, after one full frame", () => {
+    const display = createProgressDisplay(0, 100);
+    display.report({ active: true, value: 0.9 });
+    display.report({ active: false, value: undefined });
+    expect(display.at(5)).toEqual({ kind: "measured", value: 1 });
+    expect(display.at(55)).toEqual({ kind: "measured", opacity: 0.5, value: 1 });
+    expect(display.at(105)).toEqual({ kind: "hidden" });
+  });
+
+  it("ends a fade when new work is reported", () => {
+    const display = createProgressDisplay(100, 100);
+    display.report({ active: true, value: 0.5 });
+    display.report({ active: false, value: undefined });
+    display.at(0);
+    expect(display.at(150)).toEqual({ kind: "measured", opacity: 0.5, value: 1 });
+    display.report({ active: true, value: 0.2 });
+    expect(display.at(160)).toEqual({ kind: "measured", value: 0.2 });
+  });
+
+  it("hides unknown work at once on finish, with no fade", () => {
+    const display = createProgressDisplay(100, 100);
+    display.report({ active: true, value: undefined });
+    display.at(0);
+    display.report({ active: false, value: undefined });
+    expect(display.at(10)).toEqual({ kind: "hidden" });
+  });
+
+  it.each([-1, NaN, Infinity])("rejects a fade of %s", (fadeMs) => {
+    expect(() => createProgressDisplay(100, fadeMs)).toThrow(RangeError);
+  });
 });

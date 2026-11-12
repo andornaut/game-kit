@@ -1,4 +1,5 @@
 import {
+  checkProgressBarStyle,
   checkProgressMotion,
   indeterminateTravel,
   progressBarLayout,
@@ -15,24 +16,30 @@ export const PROGRESS_BAR_CLASS = "progress-bar";
 export const PROGRESS_BAR_BAND_CLASS = "progress-bar-band";
 export const PROGRESS_BAR_PROPERTIES = {
   cycle: "--progress-bar-cycle",
+  fade: "--progress-bar-fade",
   full: "--progress-bar-full",
   segment: "--progress-bar-segment",
   segmentWidth: "--progress-bar-segment-width",
   steps: "--progress-bar-steps",
 } as const;
 
-// pending: unknown total, the segment travels; determinate: a measured share; complete: full,
-// then hidden after the full hold; idle: hidden.
+// pending: unknown total, the segment travels; determinate: a measured share; complete: full
+// for the full hold, then fading out over the fade, then hidden; idle: hidden.
 export type ProgressBarState = "complete" | "determinate" | "idle" | "pending";
 
-// The indeterminate motion and how long a finished measured bar stays full. With it the
-// segment steps a whole pixel at a time; without it the stylesheet's defaults apply and the
-// segment travels continuously.
+// The indeterminate motion, how long a finished measured bar stays full and how long it then
+// takes to fade out, default 0. With it the segment steps a whole pixel at a time; without it
+// the stylesheet's defaults apply and the segment travels continuously.
 export interface DomProgressTiming extends ProgressMotion {
+  readonly fadeMs?: number;
   readonly fullMs: number;
 }
 
-const cssColour = (colour: number) => `#${colour.toString(16).padStart(6, "0")}`;
+// Opaque colours stay #rrggbb; translucent ones are rgba().
+const cssColour = (colour: number, alpha = 1) =>
+  alpha === 1
+    ? `#${colour.toString(16).padStart(6, "0")}`
+    : `rgba(${(colour >> 16) & 0xff}, ${(colour >> 8) & 0xff}, ${colour & 0xff}, ${alpha})`;
 
 // The custom properties that land a pending bar's travelling segment on whole pixels of its
 // frame's units, as indeterminateSegment does: the segment's width in px and the number of
@@ -57,13 +64,14 @@ export function progressBarPixelProperties(
   };
 }
 
-// A progress bar whose indeterminate segment and full hold run from progressBar.css alone, so the
-// same markup animates before any script runs; script writes geometry as CSSOM properties, the
-// timing and its whole-pixel travel (progressBarPixelProperties) as custom properties and the
-// state as attributes, never style text, and drives no frames. update shows a value; report
-// follows a progress state, hiding the bar while idle. The caller owns the coordinate space,
-// scaling and accessible label. This adapter imports no renderer and can mount before the game's
-// Phaser module is loaded.
+// A progress bar whose indeterminate segment, full hold and fade run from progressBar.css alone,
+// so the same markup animates before any script runs; script writes geometry and colours as
+// CSSOM properties, the timing and its whole-pixel travel (progressBarPixelProperties) as custom
+// properties and the state as attributes, never style text, and drives no frames. update shows a
+// value; report follows a progress state, hiding the bar while idle. The caller owns the
+// coordinate space, scaling and accessible label. This adapter imports no renderer and can mount
+// before the game's Phaser module is loaded. Throws as checkProgressBarStyle and
+// checkProgressMotion do, and on a negative or nonfinite fullMs or fadeMs.
 export function createDomProgressBar(
   parent: HTMLElement,
   style: ProgressBarStyle,
@@ -75,10 +83,15 @@ export function createDomProgressBar(
   report(snapshot: ProgressSnapshot): void;
   update(value: ProgressValue): void;
 } {
+  checkProgressBarStyle(style);
+  const fadeMs = timing?.fadeMs ?? 0;
   if (timing !== undefined) {
     checkProgressMotion(timing);
     if (!(Number.isFinite(timing.fullMs) && timing.fullMs >= 0)) {
       throw new RangeError(`Full hold must be nonnegative and finite: ${timing.fullMs}`);
+    }
+    if (!(Number.isFinite(fadeMs) && fadeMs >= 0)) {
+      throw new RangeError(`Fade must be nonnegative and finite: ${fadeMs}`);
     }
   }
   const document = parent.ownerDocument;
@@ -88,7 +101,7 @@ export function createDomProgressBar(
   element.setAttribute("aria-valuemin", "0");
   element.setAttribute("aria-valuemax", "1");
   Object.assign(element.style, {
-    backgroundColor: cssColour(style.frame),
+    backgroundColor: cssColour(style.frame, style.frameAlpha),
     height: `${frame.height}px`,
     left: `${frame.x}px`,
     pointerEvents: "none",
@@ -99,6 +112,7 @@ export function createDomProgressBar(
   if (timing !== undefined) {
     element.style.setProperty(PROGRESS_BAR_PROPERTIES.cycle, `${timing.cycleMs}ms`);
     element.style.setProperty(PROGRESS_BAR_PROPERTIES.full, `${timing.fullMs}ms`);
+    element.style.setProperty(PROGRESS_BAR_PROPERTIES.fade, `${fadeMs}ms`);
     element.style.setProperty(PROGRESS_BAR_PROPERTIES.segment, String(timing.segment));
     for (const [name, value] of Object.entries(progressBarPixelProperties(style, timing, frame))) {
       element.style.setProperty(name, value);
@@ -106,7 +120,7 @@ export function createDomProgressBar(
   }
   const track = document.createElement("div");
   track.style.position = "absolute";
-  track.style.backgroundColor = cssColour(style.track);
+  track.style.backgroundColor = cssColour(style.track, style.trackAlpha);
   element.append(track);
   const bands = style.fills.map((colour) => {
     const band = document.createElement("div");

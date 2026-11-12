@@ -5,16 +5,23 @@ import type { Rect } from "./rect.ts";
 // Undefined means work whose total is unknown, rather than a measured percentage.
 export type ProgressValue = number | undefined;
 
+// Colours are 0xrrggbb. frameAlpha and trackAlpha are the frame's and track's opacity in [0, 1],
+// default 1; zero draws nothing. Fills are always opaque.
 export interface ProgressBarStyle {
   readonly border: number;
   readonly fills: readonly number[];
   readonly frame: number;
+  readonly frameAlpha?: number;
   readonly track: number;
+  readonly trackAlpha?: number;
 }
 
+// opacity, when present, multiplies every part's alpha: a loading bar fading out after its
+// full hold. Absent means opaque.
 export interface ProgressBarLayout {
   readonly fills: readonly Rect[];
   readonly frame: Rect;
+  readonly opacity?: number;
   readonly track: Rect;
   readonly value: ProgressValue;
 }
@@ -28,11 +35,24 @@ export interface ProgressMotion {
 }
 
 // What a loading bar shows at one moment: nothing, a measured share, or work of unknown total
-// elapsedMs after the segment began travelling.
+// elapsedMs after the segment began travelling. A measured display's opacity, when present, is
+// in [0, 1] and multiplies the whole bar, as while a finished bar fades out; absent means opaque.
 export type ProgressDisplay =
   | { readonly kind: "hidden" }
   | { readonly kind: "indeterminate"; readonly elapsedMs: number }
-  | { readonly kind: "measured"; readonly value: number };
+  | { readonly kind: "measured"; readonly opacity?: number; readonly value: number };
+
+// Throws a RangeError on a frameAlpha or trackAlpha that is nonfinite or outside [0, 1].
+export function checkProgressBarStyle(style: ProgressBarStyle): void {
+  for (const [name, alpha] of [
+    ["Frame", style.frameAlpha],
+    ["Track", style.trackAlpha],
+  ] as const) {
+    if (alpha !== undefined && !(Number.isFinite(alpha) && alpha >= 0 && alpha <= 1)) {
+      throw new RangeError(`${name} alpha must be in [0, 1]: ${alpha}`);
+    }
+  }
+}
 
 const trackOf = (style: ProgressBarStyle, frame: Rect): Rect => {
   const border = Math.max(0, Math.min(style.border, frame.width / 2, frame.height / 2));
@@ -124,7 +144,8 @@ export function indeterminateSegment(
   return { width: Math.min(track, lead) - x, x };
 }
 
-// The layout a loading bar draws for display, or undefined while hidden. Reduced motion does
+// The layout a loading bar draws for display, or undefined while hidden. A measured display's
+// opacity carries into the layout, clamped to [0, 1], nonfinite as opaque. Reduced motion does
 // not change the indeterminate segment.
 export function progressDisplayLayout(
   style: ProgressBarStyle,
@@ -135,8 +156,14 @@ export function progressDisplayLayout(
   switch (display.kind) {
     case "hidden":
       return undefined;
-    case "measured":
-      return progressBarLayout(style, frame, display.value);
+    case "measured": {
+      const layout = progressBarLayout(style, frame, display.value);
+      const { opacity } = display;
+      if (opacity === undefined) {
+        return layout;
+      }
+      return { ...layout, opacity: Number.isFinite(opacity) ? clamp01(opacity) : 1 };
+    }
     case "indeterminate": {
       const track = trackOf(style, frame);
       const span = indeterminateSegment(motion, track.width, display.elapsedMs);

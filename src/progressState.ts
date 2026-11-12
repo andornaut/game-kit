@@ -67,17 +67,24 @@ type Shown =
   | { readonly kind: "measured"; readonly value: number };
 
 // Turns reported snapshots into what a loading bar shows at each drawn moment. Idle shows
-// nothing. Measured work that finishes shows full for fullMs and then nothing; unknown work
-// that finishes shows nothing at once. Time is read only from the caller's at(nowMs): the first
-// call after a finish or after unknown work begins starts that hold or that segment's travel, so
-// the first drawn frame shows full or the segment entering. Throws a RangeError on a negative or
-// nonfinite fullMs.
-export function createProgressDisplay(fullMs: number): {
+// nothing. Measured work that finishes shows full for fullMs, then fades out over fadeMs, its
+// opacity falling linearly from one towards zero, and then shows nothing; unknown work that
+// finishes shows nothing at once. Only the fade carries an opacity. Time is read only from the
+// caller's at(nowMs): the first call after a finish or after unknown work begins starts that
+// hold or that segment's travel, so the first drawn frame shows full or the segment entering.
+// Throws a RangeError on a negative or nonfinite fullMs or fadeMs.
+export function createProgressDisplay(
+  fullMs: number,
+  fadeMs = 0,
+): {
   at(nowMs: number): ProgressDisplay;
   report(snapshot: ProgressSnapshot): void;
 } {
   if (!(Number.isFinite(fullMs) && fullMs >= 0)) {
     throw new RangeError(`Full hold must be nonnegative and finite: ${fullMs}`);
+  }
+  if (!(Number.isFinite(fadeMs) && fadeMs >= 0)) {
+    throw new RangeError(`Fade must be nonnegative and finite: ${fadeMs}`);
   }
   let shown: Shown = { kind: "hidden" };
   return {
@@ -93,11 +100,18 @@ export function createProgressDisplay(fullMs: number): {
           return { elapsedMs: nowMs - since, kind: "indeterminate" };
         }
         case "full": {
-          if (shown.since !== undefined && nowMs - shown.since >= fullMs) {
+          if (shown.since === undefined) {
+            shown = { kind: "full", since: nowMs };
+            return { kind: "measured", value: 1 };
+          }
+          const heldMs = nowMs - shown.since;
+          if (heldMs >= fullMs + fadeMs) {
             shown = { kind: "hidden" };
             return { kind: "hidden" };
           }
-          shown = { kind: "full", since: shown.since ?? nowMs };
+          if (heldMs >= fullMs) {
+            return { kind: "measured", opacity: 1 - (heldMs - fullMs) / fadeMs, value: 1 };
+          }
           return { kind: "measured", value: 1 };
         }
         default:

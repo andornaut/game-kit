@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { indeterminateSegment } from "../../../progress.ts";
+import { indeterminateSegment, type ProgressBarStyle } from "../../../progress.ts";
 import { createProgressState } from "../../../progressState.ts";
 import {
   createDomProgressBar,
@@ -46,12 +46,16 @@ class Element {
 
 const style = { border: 1, fills: [0xffff00, 0xffaa00], frame: 0, track: 0x333333 };
 const frame = { height: 4, width: 102, x: 10, y: 20 };
-const mount = (timing?: Parameters<typeof createDomProgressBar>[3]) => {
+const mount = (
+  timing?: Parameters<typeof createDomProgressBar>[3],
+  barStyle: ProgressBarStyle = style,
+) => {
   const parent = new Element();
-  const bar = createDomProgressBar(parent as unknown as HTMLElement, style, frame, timing);
+  const bar = createDomProgressBar(parent as unknown as HTMLElement, barStyle, frame, timing);
   const element = parent.children[0]!;
   const band = element.children[1]!;
-  return { band, bar, element };
+  const track = element.children[0]!;
+  return { band, bar, element, track };
 };
 
 describe("createDomProgressBar", () => {
@@ -86,22 +90,54 @@ describe("createDomProgressBar", () => {
   });
 
   it("writes the caller's timing and its whole-pixel travel as custom properties", () => {
-    const { element } = mount({ cycleMs: 1200, fullMs: 300, segment: 0.3 });
+    const { element } = mount({ cycleMs: 1200, fadeMs: 150, fullMs: 300, segment: 0.3 });
     expect([...element.style.custom]).toEqual([
       [PROGRESS_BAR_PROPERTIES.cycle, "1200ms"],
       [PROGRESS_BAR_PROPERTIES.full, "300ms"],
+      [PROGRESS_BAR_PROPERTIES.fade, "150ms"],
       [PROGRESS_BAR_PROPERTIES.segment, "0.3"],
       [PROGRESS_BAR_PROPERTIES.segmentWidth, "30px"],
       [PROGRESS_BAR_PROPERTIES.steps, "130"],
     ]);
   });
 
+  it("writes a zero fade when timing has none", () => {
+    const { element } = mount({ cycleMs: 1200, fullMs: 300, segment: 0.3 });
+    expect(element.style.custom.get(PROGRESS_BAR_PROPERTIES.fade)).toBe("0ms");
+  });
+
   it.each([
     { cycleMs: 0, fullMs: 0, segment: 0.25 },
     { cycleMs: 1000, fullMs: 0, segment: 2 },
     { cycleMs: 1000, fullMs: -1, segment: 0.25 },
+    { cycleMs: 1000, fadeMs: -1, fullMs: 0, segment: 0.25 },
+    { cycleMs: 1000, fadeMs: NaN, fullMs: 0, segment: 0.25 },
   ])("rejects timing %o", (timing) => {
     expect(() => mount(timing)).toThrow(RangeError);
+  });
+
+  it("paints an opaque frame and track as hex colours", () => {
+    const { element, track } = mount();
+    expect(element.style.backgroundColor).toBe("#000000");
+    expect(track.style.backgroundColor).toBe("#333333");
+  });
+
+  it("paints the frame and track at their alphas and keeps the fills opaque", () => {
+    const { band, element, track } = mount(undefined, {
+      border: 1,
+      fills: [0xead4aa],
+      frame: 0x123456,
+      frameAlpha: 0,
+      track: 0x181425,
+      trackAlpha: 0.6,
+    });
+    expect(element.style.backgroundColor).toBe("rgba(18, 52, 86, 0)");
+    expect(track.style.backgroundColor).toBe("rgba(24, 20, 37, 0.6)");
+    expect(band.children[0]?.style.backgroundColor).toBe("#ead4aa");
+  });
+
+  it.each([{ frameAlpha: -0.5 }, { trackAlpha: 1.5 }])("rejects alphas %o", (alphas) => {
+    expect(() => mount(undefined, { ...style, ...alphas })).toThrow(RangeError);
   });
 
   it("follows a progress state: hidden while idle, full on a measured finish", () => {
@@ -190,6 +226,14 @@ describe("progressBar.css", () => {
     expect(css).toContain(`.${PROGRESS_BAR_CLASS}[data-state="complete"]`);
     expect(css).toContain("@keyframes progress-bar-travel");
     expect(css).toContain("visibility: hidden");
+  });
+
+  it("holds a complete bar opaque for the full hold, fades it over the fade, then hides it", () => {
+    const full = `var(${PROGRESS_BAR_PROPERTIES.full}, 250ms)`;
+    const fade = `var(${PROGRESS_BAR_PROPERTIES.fade}, 0ms)`;
+    expect(css).toContain(`progress-bar-complete calc(${full} + ${fade}) step-end forwards`);
+    expect(css).toContain(`progress-bar-fade ${fade} linear ${full} forwards`);
+    expect(css).toMatch(/@keyframes progress-bar-fade \{ to \{ opacity: 0; \} \}/);
   });
 
   it("does not change under reduced motion", () => {

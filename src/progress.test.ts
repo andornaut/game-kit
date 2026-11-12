@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  checkProgressBarStyle,
   indeterminateSegment,
   indeterminateTravel,
   progressBarLayout,
@@ -16,6 +17,26 @@ const style: ProgressBarStyle = {
 };
 const frame = { height: 4, width: 102, x: 10, y: 20 };
 const motion = { cycleMs: 1000, segment: 0.25 };
+
+describe("checkProgressBarStyle", () => {
+  it.each([{}, { frameAlpha: 0, trackAlpha: 1 }, { frameAlpha: 1, trackAlpha: 0.6 }])(
+    "accepts alphas %o",
+    (alphas) => {
+      expect(() => checkProgressBarStyle({ ...style, ...alphas })).not.toThrow();
+    },
+  );
+
+  it.each([
+    { frameAlpha: -0.01 },
+    { frameAlpha: 1.01 },
+    { frameAlpha: NaN },
+    { trackAlpha: -1 },
+    { trackAlpha: 2 },
+    { trackAlpha: Infinity },
+  ])("rejects alphas %o", (alphas) => {
+    expect(() => checkProgressBarStyle({ ...style, ...alphas })).toThrow(RangeError);
+  });
+});
 
 describe("progressBarLayout", () => {
   it.each([
@@ -108,6 +129,25 @@ describe("progressDisplayLayout", () => {
     expect(progressDisplayLayout(style, motion, frame, { kind: "measured", value: 0.5 })).toEqual(
       progressBarLayout(style, frame, 0.5),
     );
+  });
+
+  it("carries a measured display's opacity on the measured layout", () => {
+    expect(
+      progressDisplayLayout(style, motion, frame, { kind: "measured", opacity: 0.4, value: 1 }),
+    ).toEqual({ ...progressBarLayout(style, frame, 1), opacity: 0.4 });
+  });
+
+  it.each([
+    [2, 1],
+    [-1, 0],
+    [NaN, 1],
+  ])("clamps opacity %s to %s", (opacity, clamped) => {
+    const layout = progressDisplayLayout(style, motion, frame, {
+      kind: "measured",
+      opacity,
+      value: 1,
+    });
+    expect(layout?.opacity).toBe(clamped);
   });
 
   it("places every fill band on the travelling segment without a percentage", () => {
