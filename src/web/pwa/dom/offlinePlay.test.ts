@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { RESUME_CHECK_MS, SKIP_WAITING_MESSAGE } from "../updateReady.ts";
+import { type RequiredUpdateState, RESUME_CHECK_MS, SKIP_WAITING_MESSAGE } from "../updateReady.ts";
 import {
   INTERACTION_EVENTS,
   type OfflineActivity,
@@ -9,7 +9,12 @@ import {
   type RegisteringContainer,
   startOfflinePlay,
 } from "./offlinePlay.ts";
-import type { RegistrationLike, ServiceWorkerLike } from "./updateReady.ts";
+import {
+  CONTROL_RELOAD_KEY,
+  type RegistrationLike,
+  type ServiceWorkerLike,
+  type SessionLike,
+} from "./updateReady.ts";
 import type { VisibilitySource } from "./visibility.ts";
 
 class FakeDocument extends EventTarget implements VisibilitySource {
@@ -35,7 +40,12 @@ class FakeWorker extends EventTarget implements ServiceWorkerLike {
 // A deployed version: waiting behind the running one, still installing, or none newer.
 type Deployed = "installing" | "none" | "waiting";
 
+// What an update check finds: nothing newer, a newer version that starts installing, or no server.
+type Found = "fails" | "installs" | "none";
+
 class FakeRegistration extends EventTarget implements RegistrationLike {
+  active: FakeWorker | null = null;
+  found: Found = "none";
   installing: FakeWorker | null = null;
   updates = 0;
   waiting: FakeWorker | null = null;
@@ -51,7 +61,29 @@ class FakeRegistration extends EventTarget implements RegistrationLike {
 
   update(): Promise<unknown> {
     this.updates += 1;
+    if (this.found === "fails") {
+      return Promise.reject(new Error("offline"));
+    }
+    if (this.found === "installs") {
+      foundInstall(this);
+    }
     return Promise.resolve();
+  }
+}
+
+class FakeSession implements SessionLike {
+  readonly items = new Map<string, string>();
+
+  getItem(key: string): string | null {
+    return this.items.get(key) ?? null;
+  }
+
+  removeItem(key: string): void {
+    this.items.delete(key);
+  }
+
+  setItem(key: string, value: string): void {
+    this.items.set(key, value);
   }
 }
 
@@ -77,11 +109,12 @@ const settle = () =>
   });
 
 // A page a version controls (controlled) or a first visit, whose registration finds deployed, or
-// fails.
+// fails. It starts online unless offline, with the tab's session storage if given.
 function openPage(
   controlled: boolean,
   deployed: Deployed | "fails",
   onOfflineActivity?: (activity: OfflineActivity) => void,
+  { offline = false, session }: { offline?: boolean; session?: SessionLike | undefined } = {},
 ) {
   const registration = deployed === "fails" ? undefined : new FakeRegistration(deployed);
   const container = new FakeContainer(
@@ -90,28 +123,31 @@ function openPage(
       ? Promise.reject(new Error("no worker"))
       : Promise.resolve(registration),
   );
-  const clock = { now: 0, reloads: 0 };
+  const clock = { now: 0, online: !offline, reloads: 0 };
+  const required: RequiredUpdateState[] = [];
   const shown: boolean[] = [];
   const visibilitySource = new FakeDocument();
   const page: OfflinePage = {
     container,
     eventTarget: new EventTarget(),
     now: () => clock.now,
-    online: () => true,
+    online: () => clock.online,
     reload: () => {
       clock.reloads += 1;
     },
+    session,
     visibilitySource,
   };
   const play = startOfflinePlay(
     {
       ...OPTIONS,
       ...(onOfflineActivity === undefined ? {} : { onOfflineActivity }),
+      onRequireNewer: (state) => required.push(state),
       onUpdateShown: (visible) => shown.push(visible),
     },
     page,
   );
-  return { clock, container, page, play, registration, shown, visibilitySource };
+  return { clock, container, page, play, registration, required, shown, visibilitySource };
 }
 
 // The home screen coming to the front or leaving it, as a game reports it: it shows or hides the
@@ -163,6 +199,19 @@ function endInstall(
   }
   worker.state = state;
   worker.dispatchEvent(new Event("statechange"));
+}
+
+// The installing worker activating as the registration's first version, through "activating" to
+// "activated".
+function activateInstall(registration: FakeRegistration | undefined, worker: FakeWorker): void {
+  const found = requireRegistration(registration);
+  found.installing = null;
+  found.waiting = null;
+  found.active = worker;
+  for (const state of ["activating", "activated"]) {
+    worker.state = state;
+    worker.dispatchEvent(new Event("statechange"));
+  }
 }
 
 afterEach(() => {
@@ -348,6 +397,8 @@ describe("startOfflinePlay", () => {
       "beginOfferVisit",
       "dismissOffer",
       "noteInteraction",
+      "noteOnline",
+      "requireNewer",
       "setOfferVisible",
       "setVisible",
       "watch",
@@ -493,5 +544,272 @@ describe("startOfflinePlay", () => {
     opened.clock.now = RESUME_CHECK_MS;
     resume(opened);
     expect((opened.registration?.updates ?? 0) - before).toBe(checks);
+  });
+});
+
+describe("requireNewer", () => {
+  it("activates a waiting version at once, before or after registration, and reloads into it", async () => {
+    const { clock, container, play, registration, required, shown } = openPage(true, "waiting");
+    showHome(play, true);
+    play.flow.requireNewer();
+    expect(required).toEqual(["updating"]);
+    await settle();
+    expect(registration?.waiting?.messages).toEqual([SKIP_WAITING_MESSAGE]);
+    expect({ reloads: clock.reloads, shown }).toEqual({ reloads: 0, shown: [] });
+    container.dispatchEvent(new Event("controllerchange"));
+    container.dispatchEvent(new Event("controllerchange"));
+    expect({ reloads: clock.reloads, required }).toEqual({ reloads: 1, required: ["updating"] });
+  });
+
+  it("checks for a newer version, and activates it once it is installed and verified", async () => {
+    const { clock, container, play, registration, required, shown } = openPage(true, "none");
+    await settle();
+    showHome(play, true);
+    const found = requireRegistration(registration);
+    found.found = "installs";
+    play.flow.requireNewer();
+    expect({ required, updates: found.updates }).toEqual({ required: ["updating"], updates: 2 });
+    const worker = found.installing;
+    if (worker === null) {
+      throw new Error("Missing test installer");
+    }
+    await settle();
+    expect(worker.messages).toEqual([]);
+    endInstall(found, worker, "installed");
+    expect(worker.messages).toEqual([SKIP_WAITING_MESSAGE]);
+    container.dispatchEvent(new Event("controllerchange"));
+    expect({ reloads: clock.reloads, required, shown }).toEqual({
+      reloads: 1,
+      required: ["updating"],
+      shown: [],
+    });
+  });
+
+  it.each<[string, Found]>([
+    ["the server has nothing newer", "none"],
+    ["the check fails", "fails"],
+  ])("reports unavailable when %s", async (_, found) => {
+    const { clock, play, registration, required } = openPage(true, "none");
+    await settle();
+    requireRegistration(registration).found = found;
+    play.flow.requireNewer();
+    await settle();
+    expect({ reloads: clock.reloads, required }).toEqual({
+      reloads: 0,
+      required: ["updating", "unavailable"],
+    });
+  });
+
+  it("reports unavailable offline without checking, and retries once the device reconnects", async () => {
+    const { clock, container, page, play, registration, required } = openPage(
+      true,
+      "none",
+      undefined,
+      { offline: true },
+    );
+    await settle();
+    const found = requireRegistration(registration);
+    found.found = "installs";
+    play.flow.requireNewer();
+    expect({ required, updates: found.updates }).toEqual({ required: ["unavailable"], updates: 0 });
+    clock.online = true;
+    page.eventTarget.dispatchEvent(new Event("online"));
+    expect({ required, updates: found.updates }).toEqual({
+      required: ["unavailable", "updating"],
+      updates: 1,
+    });
+    const worker = found.installing;
+    if (worker === null) {
+      throw new Error("Missing test installer");
+    }
+    endInstall(found, worker, "installed");
+    container.dispatchEvent(new Event("controllerchange"));
+    expect(clock.reloads).toBe(1);
+  });
+
+  it("retries each time the page comes back into view", async () => {
+    const { play, registration, required, visibilitySource } = openPage(true, "none");
+    await settle();
+    const found = requireRegistration(registration);
+    play.flow.requireNewer();
+    await settle();
+    visibilitySource.setVisibility("hidden");
+    visibilitySource.setVisibility("visible");
+    await settle();
+    expect({ required, updates: found.updates }).toEqual({
+      required: ["updating", "unavailable", "updating", "unavailable"],
+      updates: 3,
+    });
+    found.found = "installs";
+    visibilitySource.setVisibility("hidden");
+    visibilitySource.setVisibility("visible");
+    const worker = found.installing;
+    if (worker === null) {
+      throw new Error("Missing test installer");
+    }
+    endInstall(found, worker, "installed");
+    expect(worker.messages).toEqual([SKIP_WAITING_MESSAGE]);
+  });
+
+  it("reports unavailable when the install fails, and leaves the retry to reconnection or view", async () => {
+    const { clock, play, registration, required } = openPage(true, "none");
+    await settle();
+    const found = requireRegistration(registration);
+    found.found = "installs";
+    play.flow.requireNewer();
+    const worker = found.installing;
+    if (worker === null) {
+      throw new Error("Missing test installer");
+    }
+    await settle();
+    endInstall(found, worker, "redundant");
+    await settle();
+    expect({ reloads: clock.reloads, required, updates: found.updates }).toEqual({
+      reloads: 0,
+      required: ["updating", "unavailable"],
+      updates: 2,
+    });
+  });
+
+  it("is idempotent", async () => {
+    const opened = openPage(true, "none");
+    await settle();
+    opened.play.flow.requireNewer();
+    opened.play.flow.requireNewer();
+    await settle();
+    opened.play.flow.requireNewer();
+    expect({ required: opened.required, updates: opened.registration?.updates }).toEqual({
+      required: ["updating", "unavailable"],
+      updates: 2,
+    });
+    const waiting = openPage(true, "waiting");
+    await settle();
+    waiting.play.flow.requireNewer();
+    waiting.play.flow.requireNewer();
+    expect(waiting.registration?.waiting?.messages).toEqual([SKIP_WAITING_MESSAGE]);
+  });
+
+  it("hides a shown offer and never shows it while required", async () => {
+    const { play, registration, required, shown } = openPage(true, "none", undefined, {
+      offline: true,
+    });
+    await settle();
+    showHome(play, true);
+    const worker = foundInstall(registration);
+    endInstall(registration, worker, "installed");
+    expect(shown).toEqual([true]);
+    play.flow.requireNewer();
+    play.flow.beginOfferVisit();
+    showHome(play, false);
+    showHome(play, true);
+    play.flow.accept();
+    expect({ messages: worker.messages, required, shown }).toEqual({
+      messages: [SKIP_WAITING_MESSAGE],
+      required: ["updating"],
+      shown: [true, false],
+    });
+  });
+
+  it("registers an uncontrolled page, waits for its install to activate and reloads once", async () => {
+    const session = new FakeSession();
+    const activities: OfflineActivity[] = [];
+    const { clock, container, play, registration, required, visibilitySource } = openPage(
+      false,
+      "installing",
+      (activity) => activities.push(activity),
+      { session },
+    );
+    const worker = startInstall(registration);
+    play.flow.requireNewer();
+    expect({ activities, registered: container.registered.length, required }).toEqual({
+      activities: ["idle", "precaching"],
+      registered: 1,
+      required: ["updating"],
+    });
+    await settle();
+    play.registrationReady();
+    endInstall(registration, worker, "installed");
+    expect(clock.reloads).toBe(0);
+    activateInstall(registration, worker);
+    expect({ key: session.getItem(CONTROL_RELOAD_KEY), reloads: clock.reloads }).toEqual({
+      key: "1",
+      reloads: 1,
+    });
+    worker.dispatchEvent(new Event("statechange"));
+    visibilitySource.setVisibility("hidden");
+    visibilitySource.setVisibility("visible");
+    await settle();
+    expect({ registered: container.registered.length, reloads: clock.reloads, required }).toEqual({
+      registered: 1,
+      reloads: 1,
+      required: ["updating"],
+    });
+  });
+
+  // The page after the guarded reload is still uncontrolled (a hard reload or a disabled worker),
+  // or the tab has no session storage.
+  it.each<[string, () => SessionLike | undefined]>([
+    [
+      "after its one reload",
+      () => {
+        const session = new FakeSession();
+        session.setItem(CONTROL_RELOAD_KEY, "1");
+        return session;
+      },
+    ],
+    ["without session storage", () => undefined],
+  ])("never reloads an uncontrolled page %s", async (_, makeSession) => {
+    const { clock, page, play, registration, required, visibilitySource } = openPage(
+      false,
+      "none",
+      undefined,
+      { session: makeSession() },
+    );
+    const active = new FakeWorker();
+    active.state = "activated";
+    requireRegistration(registration).active = active;
+    play.flow.requireNewer();
+    await settle();
+    page.eventTarget.dispatchEvent(new Event("online"));
+    visibilitySource.setVisibility("hidden");
+    visibilitySource.setVisibility("visible");
+    await settle();
+    expect({ reloads: clock.reloads, required }).toEqual({
+      reloads: 0,
+      required: ["updating", "unavailable"],
+    });
+  });
+
+  it("clears the reload guard once a version controls the page", () => {
+    const session = new FakeSession();
+    session.setItem(CONTROL_RELOAD_KEY, "1");
+    openPage(true, "none", undefined, { session });
+    expect(session.getItem(CONTROL_RELOAD_KEY)).toBeNull();
+  });
+
+  it("registers again on an uncontrolled page after its first install fails", async () => {
+    const session = new FakeSession();
+    const { clock, container, play, registration, required } = openPage(
+      false,
+      "installing",
+      undefined,
+      { session },
+    );
+    const worker = startInstall(registration);
+    play.flow.requireNewer();
+    await settle();
+    endInstall(registration, worker, "redundant");
+    expect(required).toEqual(["updating", "unavailable"]);
+    play.flow.noteOnline();
+    expect(container.registered).toHaveLength(2);
+    const retry = new FakeWorker();
+    retry.state = "installing";
+    requireRegistration(registration).installing = retry;
+    await settle();
+    activateInstall(registration, retry);
+    expect({ reloads: clock.reloads, required }).toEqual({
+      reloads: 1,
+      required: ["updating", "unavailable", "updating"],
+    });
   });
 });

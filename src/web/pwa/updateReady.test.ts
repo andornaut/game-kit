@@ -13,6 +13,7 @@ describe("offerShown", () => {
     dismissed: false,
     offerVisible: true,
     reloading: false,
+    required: false,
     waiting: true,
   };
 
@@ -22,6 +23,7 @@ describe("offerShown", () => {
     ["hides away from home", { offerVisible: false }, false],
     ["hides once dismissed", { dismissed: true }, false],
     ["hides while a switch reloads", { reloading: true }, false],
+    ["hides while an update is required", { required: true }, false],
   ])("%s", (_, change, shown) => {
     expect(offerShown({ ...SHOWN, ...change })).toBe(shown);
   });
