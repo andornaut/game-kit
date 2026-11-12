@@ -8,6 +8,7 @@
     "src/clock/phaser/capFrameRate.ts",
     "src/input/phaser/catchOutsideTaps.ts",
     "src/input/phaser/guardSceneInput.ts",
+    "src/load/phaser/watchLoader.ts",
     "src/progress/phaser/drawProgressBar.ts",
     "src/testing/phaser/sceneStub.ts",
     "src/text/phaser/phaserBitmapFont.ts",

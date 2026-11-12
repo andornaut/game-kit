@@ -1,4 +1,5 @@
 import { assertNever } from "./assertNever.ts";
+import type { Timer } from "./clock/timer.ts";
 import { clamp01 } from "./numbers.ts";
 import type { ProgressDisplay, ProgressValue } from "./progress.ts";
 
@@ -51,6 +52,116 @@ export function createProgressState(): {
           }
         },
       };
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      listener(snapshot);
+      return () => listeners.delete(listener);
+    },
+  };
+}
+
+// A stream of snapshots, such as createProgressState's: subscribe reports the current snapshot
+// at once, then each change, until the returned function is called.
+export interface ProgressSource {
+  subscribe(listener: (snapshot: ProgressSnapshot) => void): () => void;
+}
+
+// How long a finished measured bar stays full, then fades out, default 0: the bar's own timing.
+export interface ProgressHold {
+  readonly fadeMs?: number;
+  readonly fullMs: number;
+}
+
+const IDLE: ProgressSnapshot = { active: false, value: undefined };
+
+const sameSnapshot = (a: ProgressSnapshot, b: ProgressSnapshot) =>
+  a.active === b.active && a.value === b.value;
+
+const checkHold = (hold: ProgressHold) => {
+  const { fadeMs = 0, fullMs } = hold;
+  if (!(Number.isFinite(fullMs) && fullMs >= 0)) {
+    throw new RangeError(`Full hold must be nonnegative and finite: ${fullMs}`);
+  }
+  if (!(Number.isFinite(fadeMs) && fadeMs >= 0)) {
+    throw new RangeError(`Fade must be nonnegative and finite: ${fadeMs}`);
+  }
+  return fullMs + fadeMs;
+};
+
+// One loading bar's snapshots from two layers: foreground, the loads the player waits for, over
+// background, such as the first-visit precache or a forced update. The foreground shows whenever
+// it is active, and the background whenever it alone is. When the shown layer's measured work
+// finishes, the bar reports idle, so it holds full and fades, and nothing else shows until
+// hold's fullMs + fadeMs have passed on timer; a foreground operation that begins meanwhile cuts
+// the hold short and shows at once on the same bar. Work of unknown total that finishes hands
+// over at once. Subscription reports the current snapshot immediately. dispose stops following
+// the layers and cancels any hold. Throws a RangeError on a negative or nonfinite fullMs or
+// fadeMs.
+export function createLayeredProgress(
+  timer: Timer,
+  hold: ProgressHold,
+  layers: { readonly background: ProgressSource; readonly foreground: ProgressSource },
+): {
+  dispose(): void;
+  subscribe(listener: (snapshot: ProgressSnapshot) => void): () => void;
+} {
+  const holdMs = checkHold(hold);
+  const current = { background: IDLE, foreground: IDLE };
+  const listeners = new Set<(snapshot: ProgressSnapshot) => void>();
+  let snapshot = IDLE;
+  let shownLayer: keyof typeof current | undefined;
+  let holding: unknown;
+  let holdingNow = false;
+  const publish = (next: ProgressSnapshot, layer: keyof typeof current | undefined) => {
+    shownLayer = layer;
+    if (sameSnapshot(next, snapshot)) {
+      return;
+    }
+    snapshot = next;
+    for (const listener of [...listeners]) {
+      listener(snapshot);
+    }
+  };
+  const render = () => {
+    if (holdingNow) {
+      if (!current.foreground.active) {
+        return;
+      }
+      timer.clearTimeout(holding);
+      holdingNow = false;
+    }
+    if (shownLayer !== undefined && snapshot.value !== undefined && !current[shownLayer].active) {
+      publish(IDLE, undefined);
+      holdingNow = true;
+      holding = timer.setTimeout(() => {
+        holdingNow = false;
+        render();
+      }, holdMs);
+      return;
+    }
+    const layer = current.foreground.active
+      ? "foreground"
+      : current.background.active
+        ? "background"
+        : undefined;
+    publish(layer === undefined ? IDLE : current[layer], layer);
+  };
+  const stops = (["background", "foreground"] as const).map((layer) =>
+    layers[layer].subscribe((next) => {
+      current[layer] = next;
+      render();
+    }),
+  );
+  return {
+    dispose() {
+      for (const stop of stops) {
+        stop();
+      }
+      if (holdingNow) {
+        timer.clearTimeout(holding);
+        holdingNow = false;
+      }
     },
     subscribe(listener) {
       listeners.add(listener);

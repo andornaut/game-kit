@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import type { Timer } from "./clock/timer.ts";
 import {
+  createLayeredProgress,
   createProgressDisplay,
   createProgressState,
   type ProgressSnapshot,
@@ -144,5 +146,166 @@ describe("createProgressDisplay", () => {
 
   it.each([-1, NaN, Infinity])("rejects a fade of %s", (fadeMs) => {
     expect(() => createProgressDisplay(100, fadeMs)).toThrow(RangeError);
+  });
+});
+
+// A timer whose pending handlers run only when the test fires them.
+function fakeTimer() {
+  const pending = new Map<number, { handler: () => void; ms: number }>();
+  let next = 0;
+  const timer: Timer = {
+    clearTimeout: (handle) => pending.delete(handle as number),
+    setTimeout: (handler, ms) => {
+      next += 1;
+      pending.set(next, { handler, ms });
+      return next;
+    },
+  };
+  return {
+    fire() {
+      const entries = [...pending.entries()];
+      pending.clear();
+      for (const [, { handler }] of entries) {
+        handler();
+      }
+    },
+    pending: () => [...pending.values()].map(({ ms }) => ms),
+    timer,
+  };
+}
+
+describe("createLayeredProgress", () => {
+  const HOLD = { fadeMs: 400, fullMs: 600 };
+  const IDLE = { active: false, value: undefined };
+
+  function layered() {
+    const clock = fakeTimer();
+    const foreground = createProgressState();
+    const background = createProgressState();
+    const bar = createLayeredProgress(clock.timer, HOLD, { background, foreground });
+    const seen: ProgressSnapshot[] = [];
+    bar.subscribe((snapshot) => seen.push(snapshot));
+    return { background, bar, clock, foreground, seen };
+  }
+
+  it("shows nothing while both layers are idle", () => {
+    const { clock, seen } = layered();
+    expect(seen).toEqual([IDLE]);
+    expect(clock.pending()).toEqual([]);
+  });
+
+  it("fills a measured foreground load, then holds it full and fades before going idle", () => {
+    const { clock, foreground, seen } = layered();
+    const load = foreground.begin();
+    load.progress(0.5);
+    load.progress(1);
+    load.finish();
+    expect(seen).toEqual([
+      IDLE,
+      { active: true, value: undefined },
+      { active: true, value: 0.5 },
+      { active: true, value: 1 },
+      IDLE,
+    ]);
+    expect(clock.pending()).toEqual([1000]);
+    clock.fire();
+    expect(seen.at(-1)).toEqual(IDLE);
+  });
+
+  it("shows work of unknown total while it runs and hands over at once when it ends", () => {
+    const { background, clock, foreground, seen } = layered();
+    const precache = background.begin();
+    const load = foreground.begin();
+    load.finish();
+    expect(seen.slice(1)).toEqual([{ active: true, value: undefined }]);
+    expect(clock.pending()).toEqual([]);
+    precache.finish();
+    expect(seen.at(-1)).toEqual(IDLE);
+    expect(clock.pending()).toEqual([]);
+  });
+
+  it("shows the foreground over the background whenever the foreground is active", () => {
+    const { background, foreground, seen } = layered();
+    background.begin().progress(0.8);
+    expect(seen.at(-1)).toEqual({ active: true, value: 0.8 });
+    foreground.begin().progress(0.1);
+    expect(seen.at(-1)).toEqual({ active: true, value: 0.1 });
+  });
+
+  it("plays out a finished foreground's hold and fade before the background shows again", () => {
+    const { background, clock, foreground, seen } = layered();
+    background.begin();
+    const load = foreground.begin();
+    load.progress(0.5);
+    load.finish();
+    expect(seen.at(-1)).toEqual(IDLE);
+    expect(clock.pending()).toEqual([1000]);
+    clock.fire();
+    expect(seen.at(-1)).toEqual({ active: true, value: undefined });
+  });
+
+  it("holds while the background changes, and shows it once the hold ends", () => {
+    const { background, clock, foreground, seen } = layered();
+    const load = foreground.begin();
+    load.progress(1);
+    load.finish();
+    const update = background.begin();
+    update.progress(0.3);
+    expect(seen.at(-1)).toEqual(IDLE);
+    clock.fire();
+    expect(seen.at(-1)).toEqual({ active: true, value: 0.3 });
+  });
+
+  it("holds a finished measured background too", () => {
+    const { background, clock, seen } = layered();
+    const update = background.begin();
+    update.progress(0.9);
+    update.finish();
+    expect(seen.at(-1)).toEqual(IDLE);
+    expect(clock.pending()).toEqual([1000]);
+  });
+
+  it("cuts a hold short for a new foreground load, on the same bar", () => {
+    const { background, clock, foreground, seen } = layered();
+    background.begin();
+    const first = foreground.begin();
+    first.progress(1);
+    first.finish();
+    const second = foreground.begin();
+    expect(clock.pending()).toEqual([]);
+    second.progress(0.2);
+    expect(seen.slice(-3)).toEqual([
+      IDLE,
+      { active: true, value: undefined },
+      { active: true, value: 0.2 },
+    ]);
+  });
+
+  it("stops following the layers and cancels its hold on dispose", () => {
+    const { bar, clock, foreground, seen } = layered();
+    const load = foreground.begin();
+    load.progress(1);
+    load.finish();
+    bar.dispose();
+    expect(clock.pending()).toEqual([]);
+    foreground.begin();
+    expect(seen.at(-1)).toEqual(IDLE);
+  });
+
+  it("reports its current snapshot to a new subscriber", () => {
+    const { bar, foreground } = layered();
+    foreground.begin().progress(0.4);
+    const seen: ProgressSnapshot[] = [];
+    bar.subscribe((snapshot) => seen.push(snapshot));
+    expect(seen).toEqual([{ active: true, value: 0.4 }]);
+  });
+
+  it("rejects a negative or nonfinite hold or fade", () => {
+    const sources = { background: createProgressState(), foreground: createProgressState() };
+    const { timer } = fakeTimer();
+    expect(() => createLayeredProgress(timer, { fullMs: -1 }, sources)).toThrow(RangeError);
+    expect(() => createLayeredProgress(timer, { fadeMs: Number.NaN, fullMs: 0 }, sources)).toThrow(
+      RangeError,
+    );
   });
 });
