@@ -60,6 +60,11 @@ const PRECACHE_CONCURRENCY = 4;
 // The waits before a file's second and third fetch: each file gets one attempt plus one per wait.
 const PRECACHE_RETRY_DELAYS_MS = [1000, 3000] as const;
 
+// How long one fetch attempt may take, headers, body and write included, before it is aborted and
+// counts as failed, so a request that never answers cannot hold an install open. The same as the
+// Phaser loader's timeout (load/loaderConfig).
+const PRECACHE_TIMEOUT_MS = 30_000;
+
 // How many failed URLs the install's error names; the count covers the rest.
 const FAILED_URLS_LOGGED = 10;
 
@@ -126,7 +131,8 @@ interface PrecacheFailure {
 
 // Fetches url at low priority and stores it in cache, trying once plus once per retry delay. A
 // response that is not ok, bytes that lack url's content hash in contentHashes
-// (PrecacheManifest's) where it has one, or a write that fails, counts as a failed attempt.
+// (PrecacheManifest's) where it has one, a write that fails, or an attempt still unfinished after
+// PRECACHE_TIMEOUT_MS, counts as a failed attempt.
 // Returns the last error once every attempt has failed. A hashed build file has no recorded
 // hash: its name is its identity.
 async function fetchIntoCache(
@@ -142,10 +148,18 @@ async function fetchIntoCache(
       // eslint-disable-next-line no-await-in-loop
       await wait(PRECACHE_RETRY_DELAYS_MS[attempt - 1] as number);
     }
+    const abort = new AbortController();
+    const timer = setTimeout(() => {
+      abort.abort(new Error(`No answer within ${PRECACHE_TIMEOUT_MS} ms for ${url}`));
+    }, PRECACHE_TIMEOUT_MS);
     try {
       // eslint-disable-next-line no-await-in-loop
       const response = await fetch(
-        new Request(url, { ...precacheFetchOptions(policy, url), priority: "low" }),
+        new Request(url, {
+          ...precacheFetchOptions(policy, url),
+          priority: "low",
+          signal: abort.signal,
+        }),
       );
       if (!response.ok) {
         throw new Error(`HTTP ${response.status} for ${url}`);
@@ -163,6 +177,8 @@ async function fetchIntoCache(
       return undefined;
     } catch (caught) {
       error = caught;
+    } finally {
+      clearTimeout(timer);
     }
   }
   return { error, url };

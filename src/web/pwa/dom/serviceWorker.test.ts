@@ -52,9 +52,11 @@ class PrioritizedRequest extends Request {
 }
 
 // Serves files to the worker's fetch. A path in failures throws a network error for that many
-// fetches, or for every fetch; a path in statuses answers with that status instead of its file.
+// fetches, or for every fetch; a path in statuses answers with that status instead of its file; a
+// path in stalls never answers that many fetches until the request is aborted.
 class FakeServer {
   readonly failures = new Map<string, number | "always">();
+  readonly stalls = new Map<string, number>();
   readonly fetched: string[] = [];
   inFlight = 0;
   maxInFlight = 0;
@@ -71,6 +73,13 @@ class FakeServer {
     this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
     try {
       await Promise.resolve();
+      const stalls = this.stalls.get(path) ?? 0;
+      if (stalls > 0) {
+        this.stalls.set(path, stalls - 1);
+        await new Promise((_, reject) => {
+          request.signal.addEventListener("abort", () => reject(request.signal.reason as Error));
+        });
+      }
       const failures = this.failures.get(path) ?? 0;
       if (failures === "always" || failures > 0) {
         if (failures !== "always") {
@@ -353,6 +362,33 @@ describe("runServiceWorker's install", () => {
     await done;
     expect(server.fetched).toEqual(["/play/", "/play/", "/play/"]);
     expect(await storage.named.get(NEW)?.texts()).toEqual({ "/play/": "page v2" });
+  });
+
+  it("aborts an attempt that has not answered after 30 s and retries it", async () => {
+    vi.useFakeTimers();
+    const server = new FakeServer(FILES);
+    server.stalls.set("/play/", 1);
+    const { install, storage } = startWorker(server, {}, { ...MANIFEST, urls: ["/play/"] });
+    const done = install();
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(server.fetched).toEqual(["/play/"]);
+    await vi.advanceTimersByTimeAsync(1 + 1000);
+    await done;
+    expect(server.fetched).toEqual(["/play/", "/play/"]);
+    expect(await storage.named.get(NEW)?.texts()).toEqual({ "/play/": "page v2" });
+  });
+
+  it("rejects the install when a file never answers, so its bar ends", async () => {
+    vi.useFakeTimers();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const server = new FakeServer(FILES);
+    server.stalls.set("/play/", 3);
+    const { install } = startWorker(server, {}, { ...MANIFEST, urls: ["/play/"] });
+    const done = expect(install()).rejects.toThrow("Precache failed for 1 of 1 files: /play/");
+    await vi.advanceTimersByTimeAsync(3 * 30_000 + 1000 + 3000);
+    await done;
+    expect(server.fetched).toEqual(["/play/", "/play/", "/play/"]);
+    expect(String(error.mock.calls[0]?.[1])).toContain("No answer within 30000 ms for");
   });
 
   it("stores every other file, logs the failed one and rejects when a file always fails", async () => {
