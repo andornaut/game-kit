@@ -14,18 +14,9 @@ const hashOf = (text: string) => createHash("sha256").update(text).digest("base6
 const pathOf = (key: Request | string) =>
   new URL(key instanceof Request ? key.url : key, ORIGIN).pathname;
 
-// A cache that holds text bodies by path. addAll fetches each request from the server.
+// A cache that holds text bodies by path.
 class FakeCache {
   readonly bodies = new Map<string, Response>();
-
-  constructor(private readonly server: FakeServer) {}
-
-  addAll(requests: readonly Request[]): Promise<void> {
-    for (const request of requests) {
-      this.bodies.set(pathOf(request), this.server.fetch(pathOf(request)));
-    }
-    return Promise.resolve();
-  }
 
   keys(): Promise<Request[]> {
     return Promise.resolve([...this.bodies.keys()].map((path) => new Request(`${ORIGIN}${path}`)));
@@ -50,21 +41,52 @@ class FakeCache {
   }
 }
 
+// The Request the worker builds, keeping the priority it asks for, which Node's Request drops.
+class PrioritizedRequest extends Request {
+  readonly priorityHint: RequestPriority | undefined;
+
+  constructor(input: string, init?: RequestInit) {
+    super(new URL(input, ORIGIN), init);
+    this.priorityHint = init?.priority;
+  }
+}
+
+// Serves files to the worker's fetch. A path in failures throws a network error for that many
+// fetches, or for every fetch; a path in statuses answers with that status instead of its file.
 class FakeServer {
+  readonly failures = new Map<string, number | "always">();
   readonly fetched: string[] = [];
+  inFlight = 0;
+  maxInFlight = 0;
+  readonly priorities: (RequestPriority | undefined)[] = [];
+  readonly statuses = new Map<string, number>();
 
   constructor(readonly files: Readonly<Record<string, string>>) {}
 
-  fetch(path: string): Response {
+  async fetch(request: Request): Promise<Response> {
+    const path = pathOf(request);
     this.fetched.push(path);
-    return new Response(this.files[path] ?? "", { status: 200 });
+    this.priorities.push((request as PrioritizedRequest).priorityHint);
+    this.inFlight += 1;
+    this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
+    try {
+      await Promise.resolve();
+      const failures = this.failures.get(path) ?? 0;
+      if (failures === "always" || failures > 0) {
+        if (failures !== "always") {
+          this.failures.set(path, failures - 1);
+        }
+        throw new TypeError(`Failed to fetch ${path}`);
+      }
+      return new Response(this.files[path] ?? "", { status: this.statuses.get(path) ?? 200 });
+    } finally {
+      this.inFlight -= 1;
+    }
   }
 }
 
 class FakeCaches {
   readonly named = new Map<string, FakeCache>();
-
-  constructor(private readonly server: FakeServer) {}
 
   delete(name: string): Promise<boolean> {
     return Promise.resolve(this.named.delete(name));
@@ -75,14 +97,14 @@ class FakeCaches {
   }
 
   open(name: string): Promise<FakeCache> {
-    const cache = this.named.get(name) ?? new FakeCache(this.server);
+    const cache = this.named.get(name) ?? new FakeCache();
     this.named.set(name, cache);
     return Promise.resolve(cache);
   }
 
-  // Seeds a cache an earlier version left.
+  // Seeds a cache an earlier version, or an earlier attempt, left.
   seed(name: string, files: Readonly<Record<string, string>>): void {
-    const cache = new FakeCache(this.server);
+    const cache = new FakeCache();
     for (const [path, text] of Object.entries(files)) {
       cache.bodies.set(path, new Response(text, { status: 200 }));
     }
@@ -92,18 +114,20 @@ class FakeCaches {
 
 type Listener = (event: { waitUntil(promise: Promise<unknown>): void }) => void;
 
-// Runs the worker for manifest over server and earlier caches, and returns its lifecycle steps.
+// Runs the worker for manifest over server and seeded caches in storage, and returns its
+// lifecycle steps.
 function startWorker(
   server: FakeServer,
-  earlier: Readonly<Record<string, Readonly<Record<string, string>>>>,
+  seeded: Readonly<Record<string, Readonly<Record<string, string>>>>,
   manifest: PrecacheManifest,
+  storage = new FakeCaches(),
 ) {
-  const storage = new FakeCaches(server);
-  for (const [name, files] of Object.entries(earlier)) {
+  for (const [name, files] of Object.entries(seeded)) {
     storage.seed(name, files);
   }
   const listeners = new Map<string, Listener>();
   vi.stubGlobal("caches", storage);
+  vi.stubGlobal("fetch", (request: Request) => server.fetch(request));
   vi.stubGlobal("self", {
     addEventListener: (type: string, listener: Listener) => listeners.set(type, listener),
     location: { href: `${ORIGIN}/sw.js?sound=ogg`, origin: ORIGIN },
@@ -116,6 +140,25 @@ function startWorker(
     await done;
   };
   return { activate: () => dispatch("activate"), install: () => dispatch("install"), storage };
+}
+
+// Settles promise under fake timers, advancing them until it does, and returns it.
+async function withTimersRun(promise: Promise<unknown>): Promise<unknown> {
+  let settled = false;
+  const watched = promise.then(
+    () => (settled = true),
+    () => (settled = true),
+  );
+  // Each step lets the pending backoff waits and the work after them run.
+  const advance = async (): Promise<void> => {
+    if (!settled) {
+      await vi.advanceTimersByTimeAsync(1000);
+      await advance();
+    }
+  };
+  await advance();
+  await watched;
+  return promise;
 }
 
 const FILES = {
@@ -139,24 +182,21 @@ const MANIFEST: PrecacheManifest = {
   version: "v2",
 };
 
+const without = (path: string, files: Readonly<Record<string, string>>) =>
+  Object.fromEntries(Object.entries(files).filter(([other]) => other !== path));
+
 const OLD = cacheNameFor(POLICY, "v1");
 const NEW = cacheNameFor(POLICY, "v2");
 
 describe("runServiceWorker's install", () => {
   beforeEach(() => {
     // The worker resolves relative URLs against its own location, as a browser does.
-    const NativeRequest = Request;
-    vi.stubGlobal(
-      "Request",
-      class extends NativeRequest {
-        constructor(input: string, init?: RequestInit) {
-          super(new URL(input, ORIGIN), init);
-        }
-      },
-    );
+    vi.stubGlobal("Request", PrioritizedRequest);
   });
 
   afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -211,5 +251,122 @@ describe("runServiceWorker's install", () => {
     await install();
     expect(server.fetched).toEqual([]);
     expect(await storage.named.get(NEW)?.texts()).toEqual({ "/play/": "page v2" });
+  });
+
+  it("fetches at most four files at once, each at low priority", async () => {
+    const files = Object.fromEntries(
+      Array.from({ length: 10 }, (_, index) => [`/art/${index}.png`, `art ${index}`]),
+    );
+    const server = new FakeServer(files);
+    const { install, storage } = startWorker(server, {}, { ...MANIFEST, urls: Object.keys(files) });
+    await install();
+    expect(server.maxInFlight).toBe(4);
+    expect(server.priorities).toEqual(Array.from({ length: 10 }, () => "low"));
+    expect(await storage.named.get(NEW)?.texts()).toEqual(files);
+  });
+
+  it("keeps what a failed attempt stored, and the next attempt fetches only what is missing", async () => {
+    vi.useFakeTimers();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const storage = new FakeCaches();
+    const first = new FakeServer(FILES);
+    first.failures.set("/art/new.png", "always");
+    await expect(
+      withTimersRun(startWorker(first, {}, MANIFEST, storage).install()),
+    ).rejects.toThrow("/art/new.png");
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(await storage.named.get(NEW)?.texts()).toEqual(without("/art/new.png", FILES));
+    const second = new FakeServer(FILES);
+    await startWorker(second, {}, MANIFEST, storage).install();
+    expect(second.fetched).toEqual(["/art/new.png"]);
+    expect(await storage.named.get(NEW)?.texts()).toEqual(FILES);
+  });
+
+  it("refetches a file an earlier attempt stored only where its bytes lack the recorded hash", async () => {
+    const server = new FakeServer(FILES);
+    const { install, storage } = startWorker(
+      server,
+      {
+        [NEW]: {
+          "/art/new.png": "new",
+          "/art/same.png": "same, truncated",
+          "/art/unrecorded.json": "unrecorded",
+          "/assets/main-new.js": "main v2",
+        },
+      },
+      MANIFEST,
+    );
+    await install();
+    expect(server.fetched.sort()).toEqual([
+      "/art/changed.png",
+      "/art/same.png",
+      "/assets/shared-abc.js",
+      "/play/",
+    ]);
+    expect(await storage.named.get(NEW)?.texts()).toEqual(FILES);
+  });
+
+  it("retries a failed fetch after a backoff, up to three attempts", async () => {
+    vi.useFakeTimers();
+    const server = new FakeServer(FILES);
+    server.failures.set("/play/", 2);
+    const { install, storage } = startWorker(server, {}, { ...MANIFEST, urls: ["/play/"] });
+    const done = install();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(server.fetched).toEqual(["/play/"]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(server.fetched).toEqual(["/play/", "/play/"]);
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(server.fetched).toEqual(["/play/", "/play/"]);
+    await vi.advanceTimersByTimeAsync(1);
+    await done;
+    expect(server.fetched).toEqual(["/play/", "/play/", "/play/"]);
+    expect(await storage.named.get(NEW)?.texts()).toEqual({ "/play/": "page v2" });
+  });
+
+  it("stores every other file, logs the failed one and rejects when a file always fails", async () => {
+    vi.useFakeTimers();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const server = new FakeServer(FILES);
+    server.failures.set("/art/same.png", "always");
+    const { install, storage } = startWorker(server, {}, MANIFEST);
+    await expect(withTimersRun(install())).rejects.toThrow(
+      "Precache failed for 1 of 7 files: /art/same.png",
+    );
+    expect(server.fetched.filter((path) => path === "/art/same.png")).toHaveLength(3);
+    expect(await storage.named.get(NEW)?.texts()).toEqual(without("/art/same.png", FILES));
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0]?.[0]).toContain("/art/same.png");
+    expect(String(error.mock.calls[0]?.[1])).toContain("Failed to fetch /art/same.png");
+  });
+
+  it("names the first ten failed files and counts the rest", async () => {
+    vi.useFakeTimers();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const urls = Array.from(
+      { length: 12 },
+      (_, index) => `/art/${String(index).padStart(2, "0")}.png`,
+    );
+    const server = new FakeServer({});
+    for (const url of urls) {
+      server.failures.set(url, "always");
+    }
+    const { install } = startWorker(server, {}, { ...MANIFEST, urls });
+    await expect(withTimersRun(install())).rejects.toThrow(
+      `Precache failed for 12 of 12 files: ${urls.slice(0, 10).join(", ")} and 2 more`,
+    );
+    expect(error).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts a response that is not ok as a failed attempt", async () => {
+    vi.useFakeTimers();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const server = new FakeServer(FILES);
+    server.statuses.set("/art/new.png", 404);
+    const { install, storage } = startWorker(server, {}, MANIFEST);
+    await expect(withTimersRun(install())).rejects.toThrow("/art/new.png");
+    expect(String(error.mock.calls[0]?.[1])).toContain("HTTP 404 for /art/new.png");
+    expect(server.fetched.filter((path) => path === "/art/new.png")).toHaveLength(3);
+    expect(await storage.named.get(NEW)?.texts()).toEqual(without("/art/new.png", FILES));
   });
 });

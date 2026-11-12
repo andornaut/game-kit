@@ -279,10 +279,11 @@ describe("startOfflinePlay", () => {
     },
   );
 
-  it.each<[string, Deployed]>([
-    ["after its precache install", "installing"],
-    ["after a precache that found no worker installing", "none"],
-  ])("reports a first visit's later install as updating %s", async (_, deployed) => {
+  it.each<[string, Deployed, "installed" | "redundant"]>([
+    ["after its precache install", "installing", "installed"],
+    ["after its precache install fails", "installing", "redundant"],
+    ["after a precache that found no worker installing", "none", "installed"],
+  ])("reports a first visit's later install as updating %s", async (_, deployed, ended) => {
     const activities: OfflineActivity[] = [];
     const { play, registration } = openPage(false, deployed, (activity) =>
       activities.push(activity),
@@ -294,7 +295,7 @@ describe("startOfflinePlay", () => {
     play.registrationReady();
     await settle();
     if (own !== null) {
-      endInstall(registration, own, "installed");
+      endInstall(registration, own, ended);
     }
     expect(activities).toEqual(["idle", "precaching", "idle"]);
     const later = foundInstall(registration);

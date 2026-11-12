@@ -50,9 +50,19 @@ async function fetchAndStore(cache: Cache, key: string, request: Request): Promi
   return response;
 }
 
-// How many earlier copies an install reads at once. A copy checked by its content hash is read
+// How many stored copies an install reads at once. A copy checked by its content hash is read
 // whole, so the bound caps the bytes held in memory.
 const REUSE_CONCURRENCY = 16;
+
+// How many files an install fetches at once. With low priority, the bound leaves the page's own
+// requests most of the link.
+const PRECACHE_CONCURRENCY = 4;
+
+// The waits before a file's second and third fetch: each file gets one attempt plus one per wait.
+const PRECACHE_RETRY_DELAYS_MS = [1000, 3000] as const;
+
+// How many failed URLs the install's error names; the count covers the rest.
+const FAILED_URLS_LOGGED = 10;
 
 // Runs task on each item, at most limit at a time, and returns the results in item order.
 async function mapBounded<T, R>(
@@ -82,9 +92,10 @@ async function responseContentHash(response: Response): Promise<string> {
   return digestContentHash(new Uint8Array(digest));
 }
 
-// The first earlier copy of url that is still stored and, where contentHash is given, whose bytes
-// have it. A copy can be gone by now: another worker's activate deletes the caches it replaces.
-async function earlierCopy(
+// The first copy of url that holders still store and, where contentHash is given, whose bytes
+// have it. An earlier version's copy can be gone by now: another worker's activate deletes the
+// caches it replaces.
+async function storedCopy(
   holders: readonly Cache[],
   url: string,
   contentHash: string | undefined,
@@ -104,28 +115,86 @@ async function earlierCopy(
   return undefined;
 }
 
-// Precaches manifest on install, deletes the policy's other caches on activate and answers
-// same-origin GETs by strategyFor: cache-first for hashed build output and sound files,
-// network-first for the page and every other precached file, since an unhashed file can change
-// under its name and code that reads it must see the deploy the page came from. No skipWaiting on
-// install: a new worker waits until every page the old one controls has closed, so a running game
-// never has its cache deleted or its code swapped. It takes over on the next launch, or when the
-// page posts the skip-waiting message (updateReady's activateWaitingWorker) and reloads once this
-// worker controls it.
+const wait = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+interface PrecacheFailure {
+  readonly error: unknown;
+  readonly url: string;
+}
+
+// Fetches url at low priority and stores it in cache, trying once plus once per retry delay. A
+// response that is not ok, or a write that fails, counts as a failed attempt. Returns the last
+// error once every attempt has failed.
+async function fetchIntoCache(
+  policy: CachePolicy,
+  cache: Cache,
+  url: string,
+): Promise<PrecacheFailure | undefined> {
+  let error: unknown;
+  for (let attempt = 0; attempt <= PRECACHE_RETRY_DELAYS_MS.length; attempt += 1) {
+    if (attempt > 0) {
+      // Attempts are sequential: each waits out the backoff after the one before.
+      // eslint-disable-next-line no-await-in-loop
+      await wait(PRECACHE_RETRY_DELAYS_MS[attempt - 1] as number);
+    }
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const response = await fetch(
+        new Request(url, { ...precacheFetchOptions(policy, url), priority: "low" }),
+      );
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} for ${url}`);
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await cache.put(url, response);
+      return undefined;
+    } catch (caught) {
+      error = caught;
+    }
+  }
+  return { error, url };
+}
+
+// Precaches manifest on install, file by file and resumably (precache below), deletes the
+// policy's other caches on activate and answers same-origin GETs by strategyFor: cache-first for
+// hashed build output and sound files, network-first for the page and every other precached file,
+// since an unhashed file can change under its name and code that reads it must see the deploy the
+// page came from. No skipWaiting on install: a new worker waits until every page the old one
+// controls has closed, so a running game never has its cache deleted or its code swapped. It takes
+// over on the next launch, or when the page posts the skip-waiting message (updateReady's
+// activateWaitingWorker) and reloads once this worker controls it.
 export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest): void {
   const worker = self as unknown as WorkerScope;
   const cacheName = cacheNameFor(policy, manifest.version);
   const cachedUrls = cachedUrlsOf(manifest);
 
-  // An earlier version's copy of each unchanged file is reused rather than fetched again, so a
-  // deploy downloads only what changed (installPlan): a hashed file by its name, any other file
-  // only where its bytes in the earlier cache have the content hash this manifest records. The
-  // hash is taken from the stored bytes, not from a record, because network-first replaces an
-  // earlier cache's copy with whatever the network serves. The earlier caches stay until activate.
+  // The install stores every URL in this version's cache (cacheName) in three steps:
+  // - A URL the cache already holds, from an earlier failed attempt to install this same version
+  //   (the same cache name means the same manifest), is kept: a file with a recorded content hash
+  //   only where its stored bytes have that hash, any other file by its presence.
+  // - An earlier version's copy of each unchanged file is reused rather than fetched again, so a
+  //   deploy downloads only what changed (installPlan): a hashed file by its name, any other file
+  //   only where its bytes in the earlier cache have the content hash this manifest records. The
+  //   hash is taken from the stored bytes, not from a record, because network-first replaces an
+  //   earlier cache's copy with whatever the network serves. The earlier caches stay until
+  //   activate.
+  // - Every other URL is fetched at low priority, at most PRECACHE_CONCURRENCY at a time, each
+  //   stored as soon as it arrives, with up to three attempts per file (fetchIntoCache). A file
+  //   whose attempts all fail does not stop the others. The install then logs the failed URLs and
+  //   rejects, which fails it, and the next attempt fetches only the files still missing.
   const precache = async () => {
     const soundFormat = new URL(worker.location.href).searchParams.get(SOUND_FORMAT_PARAM);
-    const urls = installUrls(manifest, soundFormat);
     const cache = await caches.open(cacheName);
+    const listedUrls = installUrls(manifest, soundFormat);
+    const kept = await mapBounded(
+      REUSE_CONCURRENCY,
+      async (url) => (await storedCopy([cache], url, manifest.contentHashes[url])) !== undefined,
+      listedUrls,
+    );
+    const urls = listedUrls.filter((_, index) => kept[index] !== true);
     const earlier = await Promise.all(
       staleCacheNames(policy, cacheName, await caches.keys()).map((name) => caches.open(name)),
     );
@@ -144,7 +213,7 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     const unreused = await mapBounded(
       REUSE_CONCURRENCY,
       async ([url, contentHash]) => {
-        const response = await earlierCopy(holders.get(url) ?? [], url, contentHash);
+        const response = await storedCopy(holders.get(url) ?? [], url, contentHash);
         if (response === undefined) {
           return [url];
         }
@@ -154,7 +223,22 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
       reusable,
     );
     const fetched = [...plan.fetch, ...unreused.flat()];
-    await cache.addAll(fetched.map((url) => new Request(url, precacheFetchOptions(policy, url))));
+    const outcomes = await mapBounded(
+      PRECACHE_CONCURRENCY,
+      (url) => fetchIntoCache(policy, cache, url),
+      fetched,
+    );
+    const failures = outcomes.filter((outcome) => outcome !== undefined);
+    const last = failures.at(-1);
+    if (last !== undefined) {
+      const named = failures.slice(0, FAILED_URLS_LOGGED).map(({ url }) => url);
+      const more =
+        failures.length > named.length ? ` and ${failures.length - named.length} more` : "";
+      const counted = `${failures.length} of ${fetched.length} files`;
+      const message = `Precache failed for ${counted}: ${named.join(", ")}${more}`;
+      console.error(`${message}. Last error:`, last.error);
+      throw new Error(message, { cause: last.error });
+    }
   };
 
   const deleteStaleCaches = async () => {
