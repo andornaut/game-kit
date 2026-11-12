@@ -1,4 +1,6 @@
 import { EventEmitter } from "node:events";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 
 import { Loader, type Scene, Scenes, type Types } from "phaser";
 import { describe, expect, it, vi } from "vitest";
@@ -20,6 +22,19 @@ vi.mock("phaser", async () => {
   };
 });
 
+// Phaser's own MultiFile, which links the files of a multi-file load the way Phaser's loader
+// methods do.
+const phaserRequire = createRequire(import.meta.url);
+const phaserRoot = dirname(phaserRequire.resolve("phaser/package.json"));
+type MultiFileClass = new (loader: object, type: string, key: string, files: FakeFile[]) => object;
+const MultiFile = phaserRequire(join(phaserRoot, "src/loader/MultiFile.js")) as MultiFileClass;
+
+interface FontConfig {
+  fontDataURL: string;
+  key: string;
+  textureURL: string;
+}
+
 interface FakeFile {
   config: unknown;
   key: string;
@@ -32,11 +47,14 @@ interface FakeFile {
 }
 
 // Phaser's LoaderPlugin as the watch sees it: an emitter of Phaser's loader events with its
-// queue, totals, path, prefix and XHR settings. start, settle and complete play a run.
+// queue, totals, base URL, path, prefix and XHR settings, and a bitmap font and an Aseprite sheet
+// method that queue multi-file loads. start, settle and complete play a run.
 class FakeLoader extends EventEmitter {
+  baseURL = "";
   readonly list = new Set<FakeFile>();
   loading = false;
   maxRetries: number = LOADER_CONFIG.maxRetries;
+  multiKeyIndex = 0;
   path = "";
   prefix = "";
   starts = 0;
@@ -45,8 +63,8 @@ class FakeLoader extends EventEmitter {
   totalToLoad = 0;
   readonly xhr = { timeout: LOADER_CONFIG.timeout };
 
-  add(type: string, key: string, url: string, config?: unknown, timeout = 0): FakeFile {
-    const file: FakeFile = {
+  create(type: string, key: string, url: string, config?: unknown, timeout = 0): FakeFile {
+    return {
       config,
       key: this.prefix + key,
       linkFile: null,
@@ -56,12 +74,43 @@ class FakeLoader extends EventEmitter {
       url: this.path + url,
       xhrSettings: { timeout },
     };
+  }
+  queue(file: FakeFile) {
     this.list.add(file);
-    this.emit(Loader.Events.ADD, file.key, type, this, file);
+    this.emit(Loader.Events.ADD, file.key, file.type, this, file);
     if (this.loading) {
       this.totalToLoad += 1;
     }
+  }
+  add(type: string, key: string, url: string, config?: unknown, timeout = 0): FakeFile {
+    const file = this.create(type, key, url, config, timeout);
+    this.queue(file);
     return file;
+  }
+  // Links one file per [type, url] part in a MultiFile, then queues them.
+  multi(type: string, key: string, parts: readonly (readonly [string, string])[]) {
+    const files = parts.map(([fileType, url]) => this.create(fileType, key, url));
+    new MultiFile(this, type, key, files);
+    for (const file of files) {
+      this.queue(file);
+    }
+  }
+  bitmapFont(key: string | FontConfig | readonly FontConfig[], textureURL = "", fontDataURL = "") {
+    const configs = typeof key === "string" ? [{ fontDataURL, key, textureURL }] : [key].flat();
+    for (const config of configs) {
+      this.multi("bitmapfont", config.key, [
+        ["image", config.textureURL],
+        ["xml", config.fontDataURL],
+      ]);
+    }
+    return this;
+  }
+  aseprite(key: string, textureURL: string, atlasURL: string) {
+    this.multi("atlasjson", key, [
+      ["image", textureURL],
+      ["json", atlasURL],
+    ]);
+    return this;
   }
   image(key: string, url: string) {
     this.add("image", key, url);
@@ -110,15 +159,19 @@ class FakeLoader extends EventEmitter {
     this.list.clear();
     this.emit(Loader.Events.COMPLETE, this, this.totalComplete, this.totalFailed);
   }
-  // Settles every queued file as loaded, or the files named in failing as failed, then completes.
+  // Settles every queued file as loaded, or the files whose key or URL failing names as failed,
+  // then completes.
   finish(failing: readonly string[] = []) {
     for (const file of [...this.list]) {
-      this.settle(file, !failing.includes(file.key));
+      this.settle(file, !(failing.includes(file.key) || failing.includes(file.url)));
     }
     this.complete();
   }
   keys() {
     return [...this.list].map((file) => file.key);
+  }
+  queued() {
+    return [...this.list].map(({ key, type, url }) => [type, key, url]);
   }
 }
 
@@ -354,7 +407,7 @@ describe("watchLoader", () => {
     expect(clock.pending()).toEqual([RETRY_ROUNDS_MS[1]]);
   });
 
-  it("logs a file it cannot queue again as not retried", () => {
+  it("logs a file it cannot queue again, or of an unseen multi-file load, as not retried", () => {
     const { clock, loader, warn, watch } = setup();
     const part = loader.add("image", "atlas", "atlas.png");
     part.multiFile = {};
@@ -369,6 +422,154 @@ describe("watchLoader", () => {
     ]);
     expect(watch.failures()).toEqual([]);
     expect(clock.pending()).toEqual([]);
+  });
+
+  it("gives every file of a multi-file load the loader's timeout", () => {
+    const loader = new FakeLoader();
+    loader.bitmapFont("early", "early.png", "early.xml");
+    const scene = { events: new EventEmitter(), load: loader } as unknown as Scene;
+    watchLoader({ console, progress: createProgressState(), timer: fakeTimer().timer }, scene);
+    loader.aseprite("late", "late.png", "late.json");
+    expect([...loader.list].map((file) => file.xhrSettings.timeout)).toEqual([
+      30_000, 30_000, 30_000, 30_000,
+    ]);
+  });
+
+  it.each([
+    {
+      call: (loader: FakeLoader) => loader.bitmapFont("pixel", "pixel.png", "pixel.xml"),
+      config: ["pixel", "pixel.png", "pixel.xml"],
+      failing: "art/pixel.png",
+      method: "bitmapFont",
+      queued: [
+        ["image", "ui.pixel", "art/pixel.png"],
+        ["xml", "ui.pixel", "art/pixel.xml"],
+      ],
+    },
+    {
+      call: (loader: FakeLoader) => loader.aseprite("pixel", "pixel.png", "pixel.json"),
+      config: ["pixel", "pixel.png", "pixel.json"],
+      failing: "art/pixel.json",
+      method: "aseprite",
+      queued: [
+        ["image", "ui.pixel", "art/pixel.png"],
+        ["json", "ui.pixel", "art/pixel.json"],
+      ],
+    },
+  ])("queues a failed $method load again whole in a silent round", (example) => {
+    const { call, config, failing, method, queued } = example;
+    const { begin, clock, loader, values, warn, watch } = setup();
+    loader.path = "art/";
+    loader.prefix = "ui.";
+    watch.waitFor("boot");
+    call(loader);
+    const [first] = [...loader.list];
+    loader.start();
+    loader.finish([failing]);
+    // The run counts each file of the load, as Phaser does.
+    expect(values()).toEqual([undefined, 0, 0.5, 1]);
+    expect(warn.mock.calls).toEqual([
+      [`Loading ${failing} failed after 3 attempts; retrying later`],
+    ]);
+    expect(watch.failures()).toEqual([
+      { config, key: "ui.pixel", rounds: 0, type: method, url: failing },
+    ]);
+    expect(clock.pending()).toEqual([RETRY_ROUNDS_MS[0]]);
+    loader.path = "other/";
+    loader.prefix = "other.";
+    const starts = loader.starts;
+    clock.fire();
+    // Every file of the load again, under the path and prefix it was first queued with, in one
+    // new MultiFile.
+    expect(loader.queued()).toEqual(queued);
+    const parents = new Set([...loader.list].map(({ multiFile }) => multiFile));
+    expect(parents.size).toBe(1);
+    expect(parents.has(first?.multiFile ?? null)).toBe(false);
+    expect([loader.path, loader.prefix]).toEqual(["other/", "other."]);
+    expect(loader.starts).toBe(starts + 1);
+    expect(watch.failures()).toEqual([]);
+    loader.finish();
+    expect(clock.pending()).toEqual([]);
+    expect(begin).toHaveBeenCalledTimes(1);
+  });
+
+  it("records a multi-file load once when several of its files fail, and queues it once", () => {
+    const { clock, loader, warn, watch } = setup();
+    loader.bitmapFont("pixel", "pixel.png", "pixel.xml");
+    loader.start();
+    loader.finish(["pixel"]);
+    expect(warn.mock.calls).toEqual([
+      ["Loading pixel.png failed after 3 attempts; retrying later"],
+      ["Loading pixel.xml failed after 3 attempts; retrying later"],
+    ]);
+    expect(watch.failures().map(({ type, url }) => [type, url])).toEqual([
+      ["bitmapFont", "pixel.png"],
+    ]);
+    clock.fire();
+    expect(loader.queued()).toEqual([
+      ["image", "pixel", "pixel.png"],
+      ["xml", "pixel", "pixel.xml"],
+    ]);
+  });
+
+  it("gives up a multi-file load that fails its third round", () => {
+    const { clock, loader, warn, watch } = setup();
+    loader.bitmapFont("pixel", "pixel.png", "pixel.xml");
+    loader.start();
+    loader.finish(["pixel"]);
+    for (const [index, ms] of RETRY_ROUNDS_MS.entries()) {
+      expect(clock.pending()).toEqual([ms]);
+      expect(watch.failures().map(({ rounds }) => rounds)).toEqual([index]);
+      clock.fire();
+      expect(loader.list.size).toBe(2);
+      loader.finish(["pixel"]);
+    }
+    expect(warn.mock.calls.slice(-2)).toEqual([
+      ["Loading pixel.png failed after 3 attempts in retry round 3; giving up"],
+      ["Loading pixel.xml failed after 3 attempts in retry round 3; giving up"],
+    ]);
+    expect(warn).toHaveBeenCalledTimes(8);
+    expect(clock.pending()).toEqual([]);
+    expect(watch.failures()).toEqual([]);
+  });
+
+  it("queues again only the failed load of a call given several configs", () => {
+    const { clock, loader, watch } = setup();
+    loader.bitmapFont([
+      { fontDataURL: "a.xml", key: "a", textureURL: "a.png" },
+      { fontDataURL: "b.xml", key: "b", textureURL: "b.png" },
+    ]);
+    loader.start();
+    loader.finish(["a.png"]);
+    expect(watch.failures().map(({ config }) => config)).toEqual([
+      [{ fontDataURL: "a.xml", key: "a", textureURL: "a.png" }],
+    ]);
+    clock.fire();
+    expect(loader.queued()).toEqual([
+      ["image", "a", "a.png"],
+      ["xml", "a", "a.xml"],
+    ]);
+  });
+
+  it("wraps each multi-file method while it lasts and restores it on dispose", () => {
+    const atlas = vi.fn<(...args: unknown[]) => unknown>();
+    const loader = Object.assign(new FakeLoader(), { atlas });
+    const scene = { events: new EventEmitter(), load: loader } as unknown as Scene;
+    const warn = vi.fn<(message: string) => void>();
+    const progress = createProgressState();
+    const watch = watchLoader({ console: { warn }, progress, timer: fakeTimer().timer }, scene);
+    expect(Object.hasOwn(loader, "bitmapFont")).toBe(true);
+    expect(loader.atlas("sky", "sky.png", "sky.json")).toBe(loader);
+    expect(atlas.mock.calls).toEqual([["sky", "sky.png", "sky.json"]]);
+    expect(atlas.mock.contexts).toEqual([loader]);
+    watch.dispose();
+    expect(Object.hasOwn(loader, "bitmapFont")).toBe(false);
+    expect(loader.atlas).toBe(atlas);
+    // A load queued after dispose is no longer watched.
+    loader.bitmapFont("pixel", "pixel.png", "pixel.xml");
+    loader.start();
+    loader.finish(["pixel"]);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("stops on scene shutdown: no round, a measured run finished, no more listening", () => {
