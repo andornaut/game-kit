@@ -42,6 +42,13 @@
   image-rendering: pixelated;
 }
 
+/* A layer held hidden until its art decodes (imageReady). It keeps its layout and takes no
+   presses or focus, and no descendant can show through it. */
+[data-ui-pending],
+[data-ui-pending] * {
+  visibility: hidden !important;
+}
+
 /* The refusal cue (refusalCue). It overrides the colour of the control and of each label in it
    that the game marks data-ui-refusal-label while it plays, as an inline style would. */
 [data-ui-refusal-red],

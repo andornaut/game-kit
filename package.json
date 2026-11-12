@@ -170,6 +170,7 @@
     "./web/save/sessionStore": "./src/web/save/sessionStore.ts",
     "./web/save/storage": "./src/web/save/storage.ts",
     "./web/ui/dom/domPress": "./src/web/ui/dom/domPress.ts",
+    "./web/ui/dom/imageReady": "./src/web/ui/dom/imageReady.ts",
     "./web/ui/dom/layoutProperties": "./src/web/ui/dom/layoutProperties.ts",
     "./web/ui/dom/modalLayer": "./src/web/ui/dom/modalLayer.ts",
     "./web/ui/dom/refusalCue": "./src/web/ui/dom/refusalCue.ts",

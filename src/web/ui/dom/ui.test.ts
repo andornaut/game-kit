@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { BUTTON_GAP, SMALL_BUTTON_GAP, STACK_BUTTON_GAP } from "../../../ui/spacing.ts";
+import { PENDING_ATTRIBUTE } from "./imageReady.ts";
 import { REFUSAL_ATTRIBUTES, REFUSAL_SHAKE, REFUSAL_SHAKE_MS } from "./refusalCue.ts";
 import { UI_UNIT, units, VIEW_PROPERTIES } from "./viewUnits.ts";
 
@@ -29,6 +30,12 @@ describe("ui.css", () => {
     const layer = /\.ui-layer\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
     expect(new RegExp(`${name}:\\s*([^;]+);`).exec(layer)?.[1]).toBe(units(gap));
     expect(css.split(`${name}:`)).toHaveLength(2);
+  });
+
+  it("hides a pending layer and everything in it", () => {
+    expect(css).toContain(
+      `[${PENDING_ATTRIBUTE}],\n[${PENDING_ATTRIBUTE}] * {\n  visibility: hidden !important;`,
+    );
   });
 
   it.each(Object.values(REFUSAL_ATTRIBUTES))("styles [%s]", (name) => {
