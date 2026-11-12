@@ -24,6 +24,9 @@ type Game = (typeof GAMES)[number];
 const GAME_NAMES: Record<Game, string> = { archie: "Archie", chibi: "Chibi" };
 /** The npm script each game defines to test its kit wiring against the installed artifact. */
 export const GAME_KIT_TEST_SCRIPT = "test:game-kit";
+/** The npm script each game defines to type-check its source alone. */
+export const GAME_TYPECHECK_SCRIPT = "typecheck";
+const REQUIRED_SCRIPTS = [GAME_TYPECHECK_SCRIPT, GAME_KIT_TEST_SCRIPT] as const;
 
 /** Archive members must stay under package/ without parent segments. */
 export function unsafeArchivePaths(listing: string): string[] {
@@ -41,13 +44,15 @@ export function unsafeArchiveModes(verboseListing: string): string[] {
     .filter((line) => !["-", "d"].includes(line.charAt(0)));
 }
 
-/** Fail unless the pinned consumer snapshot defines its kit wiring test script. */
-export function requireGameKitTest(game: Game, work: string): void {
+/** Fail unless the pinned consumer snapshot defines its type check and kit wiring test scripts. */
+export function requireGameScripts(game: Game, work: string): void {
   const manifest = JSON.parse(readFileSync(join(work, "package.json"), "utf8"));
-  if (typeof manifest.scripts?.[GAME_KIT_TEST_SCRIPT] !== "string") {
-    throw new ScriptError(
-      `The pinned ${GAME_NAMES[game]} snapshot defines no "${GAME_KIT_TEST_SCRIPT}" npm script`,
-    );
+  for (const script of REQUIRED_SCRIPTS) {
+    if (typeof manifest.scripts?.[script] !== "string") {
+      throw new ScriptError(
+        `The pinned ${GAME_NAMES[game]} snapshot defines no "${script}" npm script`,
+      );
+    }
   }
 }
 
@@ -182,13 +187,13 @@ function proveGame(
       { maxBuffer: 1 << 30 },
     );
     execFileSync("tar", ["-x", "-C", work], { input: snapshot });
-    requireGameKitTest(game, work);
+    requireGameScripts(game, work);
     adoptArtifact(ARTIFACT, work);
     run("npm", ["install", "--package-lock-only", ...NPM_OFFLINE]);
     run("npm", ["ci", ...NPM_OFFLINE]);
     probe(INSTALLED_ARTIFACT_PROBE);
     probe(TYPESCRIPT_RESOLUTION_PROBE);
-    run("npm", ["run", "check"]);
+    run("npm", ["run", GAME_TYPECHECK_SCRIPT]);
     probe(CONFIG_BOOTSTRAP_PROBE);
     run("npm", ["run", GAME_KIT_TEST_SCRIPT, "--", "--maxWorkers=4"]);
     return true;

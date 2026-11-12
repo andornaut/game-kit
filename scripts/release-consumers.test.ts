@@ -17,7 +17,8 @@ import { expect, it, vi } from "vitest";
 import {
   adoptArtifact,
   GAME_KIT_TEST_SCRIPT,
-  requireGameKitTest,
+  GAME_TYPECHECK_SCRIPT,
+  requireGameScripts,
   unsafeArchiveModes,
   unsafeArchivePaths,
 } from "./release-consumer-job.ts";
@@ -147,16 +148,23 @@ it.each<[string, Record<string, string>]>([
 });
 
 it.each([
-  ["archie", /Archie snapshot defines no "test:game-kit" npm script/],
-  ["chibi", /Chibi snapshot defines no "test:game-kit" npm script/],
-] as const)("requires the %s snapshot to define its kit test script", (game, missing) => {
+  ["archie", "Archie"],
+  ["chibi", "Chibi"],
+] as const)("requires the %s snapshot's type check and kit test scripts", (game, name) => {
   const root = mkdtempSync(join(tmpdir(), "kit-consumer-test-script-"));
   const manifest = (scripts: Record<string, string>) =>
     writeFileSync(join(root, "package.json"), JSON.stringify({ scripts }));
-  manifest({ test: "vitest run" });
-  expect(() => requireGameKitTest(game, root)).toThrow(missing);
-  manifest({ [GAME_KIT_TEST_SCRIPT]: "vitest run src/a.test.ts" });
-  expect(() => requireGameKitTest(game, root)).not.toThrow();
+  const kitTest = { [GAME_KIT_TEST_SCRIPT]: "vitest run src/a.test.ts" };
+  manifest({ [GAME_TYPECHECK_SCRIPT]: "tsc", test: "vitest run" });
+  expect(() => requireGameScripts(game, root)).toThrow(
+    `${name} snapshot defines no "test:game-kit" npm script`,
+  );
+  manifest({ ...kitTest, check: "tsc" });
+  expect(() => requireGameScripts(game, root)).toThrow(
+    `${name} snapshot defines no "typecheck" npm script`,
+  );
+  manifest({ ...kitTest, [GAME_TYPECHECK_SCRIPT]: "tsc" });
+  expect(() => requireGameScripts(game, root)).not.toThrow();
 });
 
 it("refuses archive members outside package/ or with parent segments", () => {
@@ -267,7 +275,7 @@ it.each([
       if (path.startsWith("/tmp/work/") && path.endsWith("/package.json")) {
         return JSON.stringify({
           dependencies: { "@andornaut/game-kit": "0.19.0" },
-          scripts: { "test:game-kit": "vitest run" },
+          scripts: { "test:game-kit": "vitest run", typecheck: "tsc" },
         });
       }
       return Reflect.apply(fs.readFileSync, undefined, [path, ...args]);
