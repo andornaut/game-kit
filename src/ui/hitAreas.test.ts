@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Rect } from "../rect.ts";
-import { hitAround, hitMargin, type HitRule, type PressArea, pressedArea } from "./hitAreas.ts";
-
-const RULE: HitRule = { leastMargin: 6, marginShare: 0.25, minTarget: 48, mostMargin: 16 };
+import { HIT_RULE as RULE, hitAround, hitMargin, type PressArea, pressedArea } from "./hitAreas.ts";
 
 const square = (side: number) => ({ height: side, width: side, x: 100, y: 100 });
 

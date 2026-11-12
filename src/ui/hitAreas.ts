@@ -12,6 +12,14 @@ export interface HitRule {
   readonly mostMargin: number;
 }
 
+// The press-area rule every game uses: a quarter of the shorter side, 6 to 16 px, at least 48 px.
+export const HIT_RULE = {
+  leastMargin: 6,
+  marginShare: 0.25,
+  minTarget: 48,
+  mostMargin: 16,
+} as const satisfies HitRule;
+
 // How far a drawn control's press area reaches past it on every side.
 export function hitMargin(rule: HitRule, art: Rect): number {
   const { leastMargin, marginShare, mostMargin } = rule;
