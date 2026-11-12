@@ -28,20 +28,25 @@ The kit's own tests define each module's contract. A release is also proven agai
 
 `testing/phaser/sceneStub` covers the scene members both games' tests use as of 0.19.0 and is otherwise frozen: a test that needs more extends the stub through its overrides.
 
+## Migration to 0.27.0
+
+Additive. `ui/spacing` adds `STACK_BUTTON_GAP` (8 base px) between standard buttons stacked vertically, and `ui.css` defines `--ui-stack-button-gap` on `.ui-layer`. Small buttons take `SMALL_BUTTON_GAP` in any direction, stacks included. Replace a game-local stack gap with the constant, or with `var(--ui-stack-button-gap)` inside `.ui-layer`.
+
 ## Migration to 0.26.0
 
 A service worker install reuses every unchanged precached file from an earlier version's cache, so a deploy downloads only the files that changed. Games need no source changes: rebuilding with this version writes the content hashes into `/sw.js`.
 
 - `web/pwa/precacheList`: `PrecacheManifest` has a required `contentHashes` field. Code that builds a manifest literal, such as a test, adds it. A sound file outside `hashedAssetPrefix` now changes the version with its content, as every other unhashed file does.
 - `web/pwa/cachePolicy`: `installPlan(policy, contentHashes, previouslyCached, urls)` takes the manifest's `contentHashes` and returns an `InstallPlan` with `copy`, `verify` and `fetch`.
+- `ui/spacing` (new): `BUTTON_GAP` (16 base px) between standard buttons side by side and `SMALL_BUTTON_GAP` (24) between small buttons, with `--ui-button-gap` and `--ui-small-button-gap` on `.ui-layer`. Replace each game-local gap between buttons with the constants, or with the properties inside `.ui-layer`; they are undefined outside it.
 
 ## Migration to 0.25.0
 
 Loading bars follow one rule: nothing while idle, a measured bar that fills to full and then disappears, and an indeterminate segment that travels left to right until the work finishes. The static centred segment is removed. Each game changes:
 
-- `progress`: `progressBarLayout` takes a `number`; a nonfinite share lays out empty. A build-time layout of `undefined`, such as a pre-script strip, becomes the DOM bar's markup with its bands at `progressBarLayout(style, frame, 1).fills`, animated by `progressBar.css`.
+- `progress`: `progressBarLayout` takes a `number`; a nonfinite share lays out empty. A build-time layout of `undefined`, such as a pre-script strip, becomes the DOM bar's markup with its bands at `progressBarLayout(style, frame, 1).fills`, animated by `progressBar.css`. Match the script's markup: the track is the bar's first child, then one `.progress-bar-band` per fill, each holding one segment. The script sets `overflow: hidden` on each band, so pre-script CSS must clip the bands itself.
 - `progress/phaser/drawProgressBar`: `drawProgressBar` takes a `number` and stays for measured meters. A loading bar keeps a `createProgressDisplay(fullMs)` that its progress state reports to (`state.subscribe(display.report)`), and each frame clears its graphics and calls `drawProgressDisplay(graphics, style, motion, frame, display.at(time))` with the scene clock and a `ProgressMotion`.
-- `web/progress/dom/progressBar`: import `@andornaut/game-kit/web/progress/dom/progressBar.css`; without it a pending bar draws its segment across the whole track. Existing `createDomProgressBar(parent, style, frame)` and `update(value)` calls are unchanged and travel while pending. Pass `timing` to set the motion and hold, and subscribe `report` in place of toggling visibility to hide the bar while idle and fill it on a measured finish.
+- `web/progress/dom/progressBar`: import `@andornaut/game-kit/web/progress/dom/progressBar.css`; without it a pending bar draws its segment across the whole track. Existing `createDomProgressBar(parent, style, frame)` and `update(value)` calls are unchanged and travel while pending. Pass `timing` to set the motion and hold, and subscribe `report` in place of toggling visibility to hide the bar while idle and fill it on a measured finish. The fill shows only when the last active report was measured: reporting `undefined` before the finish hides the bar at once. To fill a measured load and then wait on work of unknown length, finish the measured operation at 1 and begin a separate one for the rest.
 
 ## Migration to 0.21.0
 
