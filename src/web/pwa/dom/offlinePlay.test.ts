@@ -6,7 +6,6 @@ import {
   type OfflineActivity,
   type OfflinePage,
   type OfflinePlay,
-  type OfflinePlayOptions,
   type RegisteringContainer,
   startOfflinePlay,
 } from "./offlinePlay.ts";
@@ -22,7 +21,7 @@ class FakeDocument extends EventTarget implements VisibilitySource {
   }
 }
 
-const OPTIONS = { bootWaitMs: 4000, serviceWorkerUrl: "/sw.js?sound=ogg" };
+const OPTIONS = { serviceWorkerUrl: "/sw.js?sound=ogg" };
 
 class FakeWorker extends EventTarget implements ServiceWorkerLike {
   readonly messages: unknown[] = [];
@@ -83,7 +82,6 @@ function openPage(
   controlled: boolean,
   deployed: Deployed | "fails",
   onOfflineActivity?: (activity: OfflineActivity) => void,
-  activationPolicy: OfflinePlayOptions["activationPolicy"] = "automatic",
 ) {
   const registration = deployed === "fails" ? undefined : new FakeRegistration(deployed);
   const container = new FakeContainer(
@@ -92,7 +90,6 @@ function openPage(
       ? Promise.reject(new Error("no worker"))
       : Promise.resolve(registration),
   );
-  const timers: { handler: () => void; ms: number }[] = [];
   const clock = { now: 0, reloads: 0 };
   const shown: boolean[] = [];
   const visibilitySource = new FakeDocument();
@@ -104,19 +101,17 @@ function openPage(
     reload: () => {
       clock.reloads += 1;
     },
-    setTimeout: (handler, ms) => timers.push({ handler, ms }),
     visibilitySource,
   };
   const play = startOfflinePlay(
     {
       ...OPTIONS,
-      activationPolicy,
       ...(onOfflineActivity === undefined ? {} : { onOfflineActivity }),
       onUpdateShown: (visible) => shown.push(visible),
     },
     page,
   );
-  return { clock, container, page, play, registration, shown, timers, visibilitySource };
+  return { clock, container, page, play, registration, shown, visibilitySource };
 }
 
 // The home screen coming to the front or leaving it, as a game reports it: it shows or hides the
@@ -155,25 +150,29 @@ function foundInstall(registration: FakeRegistration | undefined): FakeWorker {
   return worker;
 }
 
-// The installing worker leaving the "installing" state for state.
+// The installing worker leaving the "installing" state for state, waiting once installed.
 function endInstall(
   registration: FakeRegistration | undefined,
   worker: FakeWorker,
   state: string,
 ): void {
-  requireRegistration(registration).installing = null;
+  const found = requireRegistration(registration);
+  found.installing = null;
+  if (state === "installed") {
+    found.waiting = worker;
+  }
   worker.state = state;
   worker.dispatchEvent(new Event("statechange"));
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
 describe("startOfflinePlay", () => {
   it("defers first registration until client readiness after its prepared frame independently of offers", async () => {
-    const { container, play } = openPage(false, "none", undefined, "manual");
-    await expect(play.bootable).resolves.toBeUndefined();
+    const { container, play } = openPage(false, "none");
     play.flow.setOfferVisible(true);
     play.flow.setOfferVisible(false);
     play.flow.beginOfferVisit();
@@ -188,27 +187,8 @@ describe("startOfflinePlay", () => {
     expect(container.registered).toHaveLength(1);
   });
 
-  it("registers controlled manual pages immediately without activation before interaction", async () => {
-    const { container, play, registration, shown } = openPage(true, "waiting", undefined, "manual");
-    expect(container.registered).toHaveLength(1);
-    play.registrationReady();
-    expect(container.registered).toHaveLength(1);
-    await settle();
-    await expect(play.bootable).resolves.toBeUndefined();
-    play.flow.setOfferVisible(true);
-    expect(shown).toEqual([true]);
-    expect(registration?.waiting?.messages).toEqual([]);
-    play.flow.accept();
-    expect(registration?.waiting?.messages).toEqual([SKIP_WAITING_MESSAGE]);
-  });
-
-  it("keeps manual arrival and resume checks eligible after dismissal without readiness changes", async () => {
-    const { clock, page, play, registration, shown, visibilitySource } = openPage(
-      true,
-      "none",
-      undefined,
-      "manual",
-    );
+  it("keeps arrival and resume checks eligible after dismissal without readiness changes", async () => {
+    const { clock, page, play, registration, shown, visibilitySource } = openPage(true, "none");
     await settle();
     expect(registration?.updates).toBe(1);
     play.flow.setOfferVisible(true);
@@ -244,7 +224,6 @@ describe("startOfflinePlay", () => {
       activities.push(activity),
     );
     const worker = startInstall(registration);
-    await expect(play.bootable).resolves.toBeUndefined();
     expect(activities).toEqual(["idle"]);
     play.registrationReady();
     expect(activities).toEqual(["idle", "precaching"]);
@@ -254,7 +233,7 @@ describe("startOfflinePlay", () => {
     expect(activities).toEqual(["idle", "precaching", "idle"]);
   });
 
-  it("ends a first visit's precache when registration fails, and still boots", async () => {
+  it("ends a first visit's precache when registration fails", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const activities: OfflineActivity[] = [];
     const { play } = openPage(false, "fails", (activity) => activities.push(activity));
@@ -263,7 +242,6 @@ describe("startOfflinePlay", () => {
     await settle();
     expect(activities).toEqual(["idle", "precaching", "idle"]);
     expect(warn).toHaveBeenCalledTimes(1);
-    await expect(play.bootable).resolves.toBeUndefined();
   });
 
   // A hard reload has no controller while a worker is already installed and waiting or active.
@@ -328,7 +306,7 @@ describe("startOfflinePlay", () => {
     expect(activities).toEqual(["idle"]);
   });
 
-  it("isolates a throwing activity callback from registration and boot", async () => {
+  it("isolates a throwing activity callback from registration", async () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const activities: OfflineActivity[] = [];
     const { container, play } = openPage(false, "none", (activity) => {
@@ -341,7 +319,6 @@ describe("startOfflinePlay", () => {
     expect(errors).toHaveBeenCalledTimes(3);
     expect(errors).toHaveBeenCalledWith("Offline activity callback failed.", expect.any(Error));
     expect(container.registered).toHaveLength(1);
-    await expect(play.bootable).resolves.toBeUndefined();
   });
 
   // Each step is true for the home screen in front, false for it hidden.
@@ -358,123 +335,131 @@ describe("startOfflinePlay", () => {
     );
   });
 
-  // A waiting version takes over at once before the player interacts, and is offered on the home
-  // screen after.
+  it("never asks the game to wait and never switches or reloads on its own", async () => {
+    vi.useFakeTimers();
+    const { clock, play, registration, shown } = openPage(true, "waiting");
+    const installing = foundInstall(registration);
+    showHome(play, true);
+    await vi.advanceTimersByTimeAsync(10 * RESUME_CHECK_MS);
+    endInstall(registration, installing, "redundant");
+    expect(Object.keys(play).sort()).toEqual(["flow", "registrationReady"]);
+    expect(Object.keys(play.flow).sort()).toEqual([
+      "accept",
+      "beginOfferVisit",
+      "dismissOffer",
+      "noteInteraction",
+      "setOfferVisible",
+      "setVisible",
+      "watch",
+    ]);
+    expect({ messages: registration?.waiting?.messages, reloads: clock.reloads }).toEqual({
+      messages: [],
+      reloads: 0,
+    });
+    expect(shown).toEqual([true]);
+  });
+
+  // A waiting version is offered on the home screen, whether or not the player has interacted.
   it.each<[string, string | undefined]>([
     ...INTERACTION_EVENTS.map((type): [string, string] => [type, type]),
     ["no input", undefined],
-  ])("with a waiting version, after %s, offers it or switches", async (_, interaction) => {
-    const { page, play, registration, shown } = openPage(true, "waiting");
+  ])("on a controlled page, offers a waiting version after %s", async (_, interaction) => {
+    const { clock, page, play, registration, shown } = openPage(true, "waiting");
     if (interaction !== undefined) {
       page.eventTarget.dispatchEvent(new Event(interaction));
     }
     await settle();
+    expect(shown).toEqual([]);
     showHome(play, true);
-    expect({ messages: registration?.waiting?.messages, shown }).toEqual(
-      interaction === undefined
-        ? { messages: [SKIP_WAITING_MESSAGE], shown: [] }
-        : { messages: [], shown: [true] },
-    );
+    expect(shown).toEqual([true]);
+    showHome(play, false);
+    expect(shown).toEqual([true, false]);
+    expect({ messages: registration?.waiting?.messages, reloads: clock.reloads }).toEqual({
+      messages: [],
+      reloads: 0,
+    });
   });
 
-  // A page no version controls runs its first install's build. A worker that installs after it is
-  // newer: pending while it installs, then offered on the home screen, or before input taken by a
-  // reload, whether it waits or activates at once.
-  it.each<[string, Deployed, string[], boolean, { reloads: number; shown: boolean[] }]>([
-    ["offers nothing for its own first install", "installing", [], true, { reloads: 0, shown: [] }],
-    [
-      "offers nothing while a later worker installs",
-      "installing",
-      ["installing"],
-      true,
-      { reloads: 0, shown: [] },
-    ],
-    [
-      "offers a later worker that activates at once, and reloads",
-      "installing",
-      ["installing", "installed", "activating", "activated"],
-      true,
-      { reloads: 1, shown: [true, false] },
-    ],
-    [
-      "offers a later worker that waits, and reloads",
-      "installing",
-      ["installing", "installed"],
-      true,
-      { reloads: 1, shown: [true, false] },
-    ],
-    [
-      "offers nothing for a later worker that fails",
-      "installing",
-      ["installing", "redundant"],
-      true,
-      { reloads: 0, shown: [] },
-    ],
-    [
-      "offers a later worker with none installing at watch, and reloads",
-      "none",
-      ["installing", "installed", "activated"],
-      true,
-      { reloads: 1, shown: [true, false] },
-    ],
-    [
-      "reloads into a later worker before input",
-      "installing",
-      ["installing", "installed", "activated"],
-      false,
-      { reloads: 1, shown: [] },
-    ],
-  ])("on an uncontrolled page, %s", async (_, deployed, later, interacted, expected) => {
+  it("offers a version once its background install has finished and it waits", async () => {
+    const { play, registration, shown } = openPage(true, "none");
+    await settle();
+    showHome(play, true);
+    const worker = foundInstall(registration);
+    expect(shown).toEqual([]);
+    endInstall(registration, worker, "installed");
+    expect(shown).toEqual([true]);
+  });
+
+  it("switches to the waiting version on accept, and reloads once it controls the page", async () => {
+    const { clock, container, play, registration, shown } = openPage(true, "waiting");
+    await settle();
+    showHome(play, true);
+    play.flow.accept();
+    play.flow.accept();
+    expect(registration?.waiting?.messages).toEqual([SKIP_WAITING_MESSAGE]);
+    expect({ reloads: clock.reloads, shown }).toEqual({ reloads: 0, shown: [true, false] });
+    container.dispatchEvent(new Event("controllerchange"));
+    container.dispatchEvent(new Event("controllerchange"));
+    expect(clock.reloads).toBe(1);
+  });
+
+  it("hides the offer on dismiss for the visit, and shows it again for a new visit", async () => {
+    const { clock, play, registration, shown } = openPage(true, "waiting");
+    await settle();
+    showHome(play, true);
+    play.flow.dismissOffer();
+    showHome(play, false);
+    showHome(play, true);
+    expect(shown).toEqual([true, false]);
+    play.flow.beginOfferVisit();
+    expect(shown).toEqual([true, false, true]);
+    expect({ messages: registration?.waiting?.messages, reloads: clock.reloads }).toEqual({
+      messages: [],
+      reloads: 0,
+    });
+  });
+
+  // A page no version controls loaded from the network, and the next launch runs the newest
+  // installed version, so no worker is ever offered there.
+  it.each<[string, Deployed, string[]]>([
+    ["its own first install", "installing", []],
+    ["a later worker that waits", "installing", ["installing", "installed"]],
+    ["a later worker that activates", "installing", ["installing", "installed", "activated"]],
+    ["a later worker with none installing at watch", "none", ["installing", "installed"]],
+    ["a worker already waiting at watch", "waiting", []],
+  ])("on an uncontrolled page, offers nothing for %s", async (_, deployed, later) => {
     const { clock, page, play, registration, shown } = openPage(false, deployed);
-    if (registration === undefined) {
-      throw new Error("Missing test registration");
-    }
-    const own = registration.installing;
+    const found = requireRegistration(registration);
+    const own = found.installing;
     if (own !== null) {
       own.state = "installing";
     }
-    if (interacted) {
-      page.eventTarget.dispatchEvent(new Event("pointerdown"));
-    }
+    page.eventTarget.dispatchEvent(new Event("pointerdown"));
     showHome(play, true);
     await settle();
-    const advance = (worker: FakeWorker, state: string) => {
-      worker.state = state;
-      if (state !== "installing") {
-        registration.installing = null;
-      }
-      worker.dispatchEvent(new Event("statechange"));
-    };
     if (own !== null) {
-      ["installed", "activating", "activated"].forEach((state) => advance(own, state));
+      endInstall(found, own, "installed");
     }
     const worker = new FakeWorker();
     later.forEach((state, index) => {
+      worker.state = state;
       if (index === 0) {
-        worker.state = state;
-        registration.installing = worker;
-        registration.dispatchEvent(new Event("updatefound"));
-      } else {
-        advance(worker, state);
+        found.installing = worker;
+        found.dispatchEvent(new Event("updatefound"));
+        return;
       }
+      found.installing = null;
+      found.waiting = state === "installed" ? worker : null;
+      worker.dispatchEvent(new Event("statechange"));
     });
-    if (shown.at(-1) === true) {
-      play.flow.accept();
-    }
-    expect({ reloads: clock.reloads, shown }).toEqual(expected);
-  });
-
-  it("holds the boot while a newer version installs, until bootWaitMs runs out", async () => {
-    const { play, timers } = openPage(true, "installing");
-    let booted = false;
-    void play.bootable.then(() => {
-      booted = true;
+    play.flow.beginOfferVisit();
+    showHome(play, false);
+    showHome(play, true);
+    expect({ messages: found.waiting?.messages ?? [], reloads: clock.reloads, shown }).toEqual({
+      messages: [],
+      reloads: 0,
+      shown: [],
     });
-    await settle();
-    const before = booted;
-    timers.filter(({ ms }) => ms === OPTIONS.bootWaitMs).forEach(({ handler }) => handler());
-    await settle();
-    expect([before, booted]).toEqual([false, true]);
   });
 
   // On the home screen a minute after the launch's check, coming back into view checks again.

@@ -1,67 +1,33 @@
-// When to update to a newer version of a game the service worker (dom/serviceWorker) precached.
-// The game has a home screen, where it may show an update plate whose button switches versions.
-// dom/updateReady acts on these decisions in the page.
+// When to offer a newer version of a game the service worker (dom/serviceWorker) precached. A
+// controlled page runs the version on disk at once; a newer version installs in the background,
+// checked file by file, and is offered only once it waits, fully stored. The game has a home
+// screen, where it may show an update offer whose button switches versions. dom/updateReady acts
+// on these decisions in the page.
 
 // The message a page posts to a waiting service worker to make it take over now.
 // dom/serviceWorker imports only its type, so the built worker holds nothing else.
 export const SKIP_WAITING_MESSAGE = "skip-waiting";
 export type SkipWaitingMessage = typeof SKIP_WAITING_MESSAGE;
 
-// A newer version than the one the page runs: none found, still being checked for or installing,
-// or installed and waiting behind the running one. On a page no version controls, a newer worker
-// that installed counts as waiting even once it activates, since it never controls the page.
-export type NewerVersion = "none" | "pending" | "waiting";
-
-export interface UpdateFlowOptions {
-  // Automatic by default. Manual activation requires accept(), including before input.
-  readonly activationPolicy?: "automatic" | "manual";
-}
-
-export interface UpdateState {
-  readonly activationPolicy?: UpdateFlowOptions["activationPolicy"];
-  // A key, touch or click, or play started, since the page loaded.
-  interacted: boolean;
-  newer: NewerVersion;
+export interface OfferState {
+  // The player dismissed the offer for this visit (UpdateFlow's dismissOffer).
+  dismissed: boolean;
   // The update offer may show: the game's home screen is in front, never mid-game or in a menu
   // over it.
   offerVisible: boolean;
-  // navigator.onLine: false means there is no network to check for a newer version on.
-  online: boolean;
   // The waiting version was told to take over, and the page reloads once it does.
   reloading: boolean;
-  // The boot's wait for a newer version to be checked for and installed has run out.
-  waitOver: boolean;
+  // A newer version is installed and waiting behind the one that controls the page. A page no
+  // version controls never has one: it loaded from the network, and the next launch runs the
+  // newest installed version.
+  waiting: boolean;
 }
 
-// wait: hold the boot, so a newer version can be checked for and installed first.
-// run: run the version the page loaded, with no update plate.
-// switch: have the waiting version take over and reload into it.
-// prompt: show the home screen's update plate, whose button switches.
-export type UpdateAction = "prompt" | "run" | "switch" | "wait";
-
-// Under automatic activation, before input a waiting version takes over at once. On a fresh load
-// the boot waits for the check and install, so that reload comes before the game draws. Once they
-// have interacted the page never reloads on its own, and the update plate shows on each arrival
-// home. A switch that has not reloaded by the end of the boot wait lets the game boot.
-export function updateAction({
-  activationPolicy = "automatic",
-  interacted,
-  newer,
-  offerVisible,
-  online,
-  reloading,
-  waitOver,
-}: UpdateState): UpdateAction {
-  if (reloading) {
-    return waitOver ? "run" : "wait";
-  }
-  if (newer === "waiting") {
-    if (!interacted && activationPolicy === "automatic") {
-      return "switch";
-    }
-    return offerVisible ? "prompt" : "run";
-  }
-  return newer === "pending" && online && !interacted && !waitOver ? "wait" : "run";
+// Whether the game shows the update offer: a version waits, the home screen is in front, the
+// player has not dismissed it this visit, and no switch is under way. Neither input nor time
+// changes this: the page never reloads on its own.
+export function offerShown({ dismissed, offerVisible, reloading, waiting }: OfferState): boolean {
+  return waiting && offerVisible && !dismissed && !reloading;
 }
 
 // The shortest time between checks for a newer version when the page comes back into view, so
@@ -72,7 +38,7 @@ export interface ResumeState {
   // When the last check for a newer version ran, on now()'s clock, if one has.
   lastCheck: number | undefined;
   now: number;
-  // The update offer may show, as in UpdateState.
+  // The update offer may show, as in OfferState.
   offerVisible: boolean;
   online: boolean;
   // The page is in view: the app or tab came back to the front.

@@ -28,14 +28,20 @@ const cached = cachedUrlsOf({
 
 describe("strategyFor", () => {
   it.each([
-    ["a navigation to the precached page", true, "/play/", "network-first"],
-    ["a navigation to the page's other path", true, "/play/index.html", "network-first"],
+    ["a navigation to the precached page", true, "/play/", "cache-first"],
+    ["a navigation to the page's other path", true, "/play/index.html", "cache-first"],
     ["a navigation outside the precache, left to the browser", true, "/", "network-only"],
+    [
+      "a navigation to hashed build output outside the precache",
+      true,
+      "/assets/x.png",
+      "network-only",
+    ],
     ["precached hashed build output", false, "/assets/play-abc.js", "cache-first"],
     ["hashed build output outside the precache", false, "/assets/play-def.js", "cache-first"],
     ["a sound file in the format the install stored", false, "/art/a.ogg", "cache-first"],
     ["a sound file in another format", false, "/art/a.m4a", "cache-first"],
-    ["a precached unhashed file", false, "/art/manifest.json", "network-first"],
+    ["a precached unhashed file", false, "/art/manifest.json", "cache-first"],
     ["a file outside the precache", false, "/art/notes.json", "network-only"],
     ["the service worker", false, "/sw.js", "network-only"],
   ])("fetches %s by its strategy", (_case, isNavigation, pathname, expected) => {

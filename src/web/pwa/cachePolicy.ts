@@ -1,13 +1,12 @@
 import type { PrecacheManifest } from "./precacheList.ts";
 
 // How the service worker answers a same-origin GET.
-// cache-first: content-hashed build output, and the files of every sound format, so one the
-// install did not store is stored on its first fetch.
-// network-first: the precached page and every other precached file; the cached copy answers
-// offline. An unhashed file can change under its name, so code that reads it must see the deploy
-// the page came from.
+// cache-first: the precached page and every other precached file, content-hashed build output and
+// the files of every sound format. The active version's cache answers, so a controlled page runs
+// the version on disk; a file the cache lacks (one the install did not store, or storage evicted)
+// is fetched and stored.
 // network-only: anything else, left to the browser.
-export type FetchStrategy = "cache-first" | "network-first" | "network-only";
+export type FetchStrategy = "cache-first" | "network-only";
 
 // A game's caching rules, which the service worker and the precache build share.
 export interface CachePolicy {
@@ -133,11 +132,8 @@ export function strategyFor(
   request: { isNavigation: boolean; pathname: string },
 ): FetchStrategy {
   const key = cacheKeyFor(request.pathname);
-  if (request.isNavigation) {
-    return cachedUrls.urls.has(key) ? "network-first" : "network-only";
-  }
-  if (isHashedAssetUrl(policy, key) || cachedUrls.sounds.has(key)) {
-    return "cache-first";
-  }
-  return cachedUrls.urls.has(key) ? "network-first" : "network-only";
+  const cached =
+    cachedUrls.urls.has(key) ||
+    (!request.isNavigation && (isHashedAssetUrl(policy, key) || cachedUrls.sounds.has(key)));
+  return cached ? "cache-first" : "network-only";
 }

@@ -1,4 +1,3 @@
-import type { UpdateFlowOptions } from "../updateReady.ts";
 import {
   type ContainerLike,
   createUpdateFlow,
@@ -8,15 +7,13 @@ import {
 } from "./updateReady.ts";
 import { type VisibilitySource, watchVisibility } from "./visibility.ts";
 
-// Input that counts as the player interacting, after which the page never reloads on its own.
+// Input that counts as the player interacting, after which each arrival home checks for a newer
+// version.
 export const INTERACTION_EVENTS = ["keydown", "pointerdown"] as const;
 
 export type OfflineActivity = "idle" | "precaching" | "updating";
 
-export interface OfflinePlayOptions extends UpdateFlowOptions {
-  // How long a fresh load holds the first screen and the save for a newer version to be checked
-  // for and installed, so it reloads into that version before the first screen draws.
-  readonly bootWaitMs: number;
+export interface OfflinePlayOptions {
   // What the service worker is doing, with no byte or percentage claim. "precaching" is the
   // first-visit precache: only on a page whose container had no controller at start, from the
   // registration request until the first installation ends (its worker leaves the "installing"
@@ -26,7 +23,9 @@ export interface OfflinePlayOptions extends UpdateFlowOptions {
   // start; a controlled page's registration request alone leaves it idle. Each change is reported
   // once. This never changes when registration, update checks or play are allowed.
   readonly onOfflineActivity?: (activity: OfflineActivity) => void;
-  // Called with whether the game offers the update, on each change (createUpdateFlow's show).
+  // Called with whether the game offers the update, on each change (createUpdateFlow's show): a
+  // newer version fully installed and checked waits behind the one controlling the page, and the
+  // home screen is in front. Never on a page no version controls.
   readonly onUpdateShown: (shown: boolean) => void;
   // The service worker's URL (serviceWorkerUrl's), registered with scope "/".
   readonly serviceWorkerUrl: string;
@@ -44,15 +43,10 @@ export interface OfflinePage {
   now(): number;
   online(): boolean;
   reload(): void;
-  setTimeout(handler: () => void, ms: number): unknown;
   readonly visibilitySource: VisibilitySource;
 }
 
 export interface OfflinePlay {
-  // Resolves once the game may show its first screen and write a save: at once, or after a fresh
-  // load has checked for a newer version, for at most bootWaitMs. It never resolves for a page
-  // that reloads into one first.
-  readonly bootable: Promise<void>;
   // The update flow: accept() is the update offer's button, and noteInteraction() counts play
   // that started without input.
   readonly flow: UpdateFlow;
@@ -72,15 +66,16 @@ export function browserOfflinePage(): OfflinePage | undefined {
     now: () => Date.now(),
     online: () => navigator.onLine,
     reload: () => window.location.reload(),
-    setTimeout: (handler, ms) => window.setTimeout(handler, ms),
     visibilitySource: document,
   };
 }
 
-// Offline play and updates, on the kit's update flow: the player's keys and presses count as
-// interacting, the page coming back into view checks for a newer version (an installed app
-// resumed without relaunching), the boot waits at most bootWaitMs, and the service worker
-// registers when ready. A failed registration leaves the game running online.
+// Offline play and updates, on the kit's update flow. The game shows its first screen at once:
+// nothing here waits or reloads on its own. A controlled page runs the version on disk and
+// registers at once, so the update checks run in the background; the player's keys and presses
+// count as interacting, and the page coming back into view checks for a newer version (an
+// installed app resumed without relaunching). A first visit runs from the network and registers
+// when ready, precaching in the background. A failed registration leaves the game running online.
 export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage): OfflinePlay {
   const { container, eventTarget } = page;
   const firstVisit = container.controller === null;
@@ -126,7 +121,6 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
     () => page.online(),
     () => page.reload(),
     options.onUpdateShown,
-    options,
   );
   for (const type of INTERACTION_EVENTS) {
     eventTarget.addEventListener(type, () => flow.noteInteraction(), {
@@ -135,7 +129,6 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
     });
   }
   watchVisibility(eventTarget, page.visibilitySource, (visible) => flow.setVisible(visible));
-  page.setTimeout(() => flow.endBootWait(), options.bootWaitMs);
   let registered = false;
   const register = () => {
     registered = true;
@@ -146,14 +139,15 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
     void container
       .register(options.serviceWorkerUrl, { scope: "/" })
       .then(watchInstallation)
-      .catch((error: unknown) => {
-        reportActivity("idle");
-        console.warn("Service worker registration failed; the game will not work offline.", error);
-        throw error;
-      })
       .then(
         (registration) => flow.watch(registration),
-        () => flow.noRegistration(),
+        (error: unknown) => {
+          reportActivity("idle");
+          console.warn(
+            "Service worker registration failed; the game will not work offline.",
+            error,
+          );
+        },
       );
   };
   const registrationReady = () => {
@@ -164,5 +158,5 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
   if (container.controller !== null) {
     register();
   }
-  return { bootable: flow.bootable, flow, registrationReady };
+  return { flow, registrationReady };
 }

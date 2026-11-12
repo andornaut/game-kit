@@ -112,7 +112,23 @@ class FakeCaches {
   }
 }
 
-type Listener = (event: { waitUntil(promise: Promise<unknown>): void }) => void;
+interface WorkerEvent {
+  readonly request?: Request;
+  respondWith?(response: Promise<Response>): void;
+  waitUntil(promise: Promise<unknown>): void;
+}
+
+type Listener = (event: WorkerEvent) => void;
+
+// A same-origin GET for path, as a navigation where navigate is set. Node's Request refuses the
+// navigate mode, so it is set on the instance.
+function requestFor(path: string, navigate = false): Request {
+  const request = new Request(path);
+  if (navigate) {
+    Object.defineProperty(request, "mode", { value: "navigate" });
+  }
+  return request;
+}
 
 // Runs the worker for manifest over server and seeded caches in storage, and returns its
 // lifecycle steps.
@@ -139,7 +155,22 @@ function startWorker(
     listeners.get(type)?.({ waitUntil: (promise) => (done = promise) });
     await done;
   };
-  return { activate: () => dispatch("activate"), install: () => dispatch("install"), storage };
+  // The worker's answer to request, or undefined where it leaves the request to the browser.
+  const respond = async (request: Request): Promise<string | undefined> => {
+    let answer: Promise<Response> | undefined;
+    listeners.get("fetch")?.({
+      request,
+      respondWith: (response) => (answer = response),
+      waitUntil: () => undefined,
+    });
+    return answer === undefined ? undefined : (await answer).text();
+  };
+  return {
+    activate: () => dispatch("activate"),
+    install: () => dispatch("install"),
+    respond,
+    storage,
+  };
 }
 
 // Settles promise under fake timers, advancing them until it does, and returns it.
@@ -358,6 +389,37 @@ describe("runServiceWorker's install", () => {
     expect(error).toHaveBeenCalledTimes(1);
   });
 
+  it("retries bytes that lack the recorded content hash, then fails without storing them", async () => {
+    vi.useFakeTimers();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const server = new FakeServer({ ...FILES, "/art/same.png": "same, a newer deploy" });
+    const { install, storage } = startWorker(server, {}, MANIFEST);
+    await expect(withTimersRun(install())).rejects.toThrow(
+      "Precache failed for 1 of 7 files: /art/same.png",
+    );
+    expect(server.fetched.filter((path) => path === "/art/same.png")).toHaveLength(3);
+    expect(String(error.mock.calls[0]?.[1])).toContain(
+      `Content hash ${hashOf("same, a newer deploy")} for /art/same.png, expected ${hashOf("same")}`,
+    );
+    expect(await storage.named.get(NEW)?.texts()).toEqual(without("/art/same.png", FILES));
+  });
+
+  it("stores bytes that gain the recorded content hash on a later attempt", async () => {
+    vi.useFakeTimers();
+    const files: Record<string, string> = { ...FILES, "/play/": "page v3" };
+    const server = new FakeServer(files);
+    const fetchFile = server.fetch.bind(server);
+    vi.spyOn(server, "fetch").mockImplementation(async (request) => {
+      const response = await fetchFile(request);
+      files["/play/"] = FILES["/play/"];
+      return response;
+    });
+    const { install, storage } = startWorker(server, {}, { ...MANIFEST, urls: ["/play/"] });
+    await withTimersRun(install());
+    expect(server.fetched).toEqual(["/play/", "/play/"]);
+    expect(await storage.named.get(NEW)?.texts()).toEqual({ "/play/": "page v2" });
+  });
+
   it("counts a response that is not ok as a failed attempt", async () => {
     vi.useFakeTimers();
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -368,5 +430,53 @@ describe("runServiceWorker's install", () => {
     expect(String(error.mock.calls[0]?.[1])).toContain("HTTP 404 for /art/new.png");
     expect(server.fetched.filter((path) => path === "/art/new.png")).toHaveLength(3);
     expect(await storage.named.get(NEW)?.texts()).toEqual(without("/art/new.png", FILES));
+  });
+});
+
+describe("runServiceWorker's fetch", () => {
+  beforeEach(() => {
+    vi.stubGlobal("Request", PrioritizedRequest);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // The installed version's files, which the network has since replaced with a newer deploy's.
+  const INSTALLED = {
+    "/art/same.png": "same v1",
+    "/art/unrecorded.json": "unrecorded v1",
+    "/play/": "page v1",
+  };
+
+  it.each([
+    ["the precached page", "/play/", true, "page v1"],
+    ["the precached page at its other path", "/play/index.html", true, "page v1"],
+    ["an unhashed file with a recorded hash", "/art/same.png", false, "same v1"],
+    ["an unhashed file with no recorded hash", "/art/unrecorded.json", false, "unrecorded v1"],
+  ])("answers %s from this version's cache without fetching", async (_, path, navigate, text) => {
+    const server = new FakeServer(FILES);
+    const { respond } = startWorker(server, { [NEW]: INSTALLED }, MANIFEST);
+    expect(await respond(requestFor(path, navigate))).toBe(text);
+    expect(server.fetched).toEqual([]);
+  });
+
+  it("fetches and stores a precached file the cache lacks", async () => {
+    const server = new FakeServer(FILES);
+    const { respond, storage } = startWorker(server, { [NEW]: INSTALLED }, MANIFEST);
+    expect(await respond(requestFor("/art/new.png"))).toBe("new");
+    expect(server.fetched).toEqual(["/art/new.png"]);
+    expect(await storage.named.get(NEW)?.texts()).toEqual({ ...INSTALLED, "/art/new.png": "new" });
+  });
+
+  // Built in the test, once Request resolves paths against the worker's origin.
+  it.each<[string, () => Request]>([
+    ["a file outside the precache", () => requestFor("/art/notes.json")],
+    ["a navigation outside the precache", () => requestFor("/", true)],
+    ["a precached file posted to", () => new Request("/play/", { body: "x", method: "POST" })],
+  ])("leaves %s to the network", async (_, request) => {
+    const server = new FakeServer(FILES);
+    const { respond } = startWorker(server, { [NEW]: INSTALLED }, MANIFEST);
+    expect(await respond(request())).toBeUndefined();
   });
 });

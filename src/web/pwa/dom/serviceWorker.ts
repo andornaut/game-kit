@@ -9,7 +9,6 @@ import {
   cacheNameFor,
   type CachePolicy,
   digestContentHash,
-  type FetchStrategy,
   installPlan,
   installUrls,
   precacheFetchOptions,
@@ -126,10 +125,13 @@ interface PrecacheFailure {
 }
 
 // Fetches url at low priority and stores it in cache, trying once plus once per retry delay. A
-// response that is not ok, or a write that fails, counts as a failed attempt. Returns the last
-// error once every attempt has failed.
+// response that is not ok, bytes that lack url's content hash in contentHashes
+// (PrecacheManifest's) where it has one, or a write that fails, counts as a failed attempt.
+// Returns the last error once every attempt has failed. A hashed build file has no recorded
+// hash: its name is its identity.
 async function fetchIntoCache(
   policy: CachePolicy,
+  contentHashes: Readonly<Record<string, string>>,
   cache: Cache,
   url: string,
 ): Promise<PrecacheFailure | undefined> {
@@ -148,6 +150,14 @@ async function fetchIntoCache(
       if (!response.ok) {
         throw new Error(`HTTP ${response.status} for ${url}`);
       }
+      const expected = contentHashes[url];
+      if (expected !== undefined) {
+        // eslint-disable-next-line no-await-in-loop
+        const actual = await responseContentHash(response);
+        if (actual !== expected) {
+          throw new Error(`Content hash ${actual} for ${url}, expected ${expected}`);
+        }
+      }
       // eslint-disable-next-line no-await-in-loop
       await cache.put(url, response);
       return undefined;
@@ -158,14 +168,14 @@ async function fetchIntoCache(
   return { error, url };
 }
 
-// Precaches manifest on install, file by file and resumably (precache below), deletes the
-// policy's other caches on activate and answers same-origin GETs by strategyFor: cache-first for
-// hashed build output and sound files, network-first for the page and every other precached file,
-// since an unhashed file can change under its name and code that reads it must see the deploy the
-// page came from. No skipWaiting on install: a new worker waits until every page the old one
-// controls has closed, so a running game never has its cache deleted or its code swapped. It takes
-// over on the next launch, or when the page posts the skip-waiting message (updateReady's
-// activateWaitingWorker) and reloads once this worker controls it.
+// Precaches manifest on install, file by file, resumably and checked (precache below), deletes the
+// policy's other caches on activate and answers same-origin GETs by strategyFor: every precached
+// URL, the page included, from this version's cache, so a controlled page starts at once with the
+// version on disk, and anything else from the network. No skipWaiting on install: a new worker
+// waits until every page the old one controls has closed, so a running game never has its cache
+// deleted or its code swapped. It takes over on the next launch, or when the page posts the
+// skip-waiting message (updateReady's activateWaitingWorker) and reloads once this worker
+// controls it.
 export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest): void {
   const worker = self as unknown as WorkerScope;
   const cacheName = cacheNameFor(policy, manifest.version);
@@ -178,13 +188,14 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
   // - An earlier version's copy of each unchanged file is reused rather than fetched again, so a
   //   deploy downloads only what changed (installPlan): a hashed file by its name, any other file
   //   only where its bytes in the earlier cache have the content hash this manifest records. The
-  //   hash is taken from the stored bytes, not from a record, because network-first replaces an
-  //   earlier cache's copy with whatever the network serves. The earlier caches stay until
-  //   activate.
+  //   hash is taken from the stored bytes, not from a record, because a cache miss stores whatever
+  //   the network serves, unchecked. The earlier caches stay until activate.
   // - Every other URL is fetched at low priority, at most PRECACHE_CONCURRENCY at a time, each
-  //   stored as soon as it arrives, with up to three attempts per file (fetchIntoCache). A file
-  //   whose attempts all fail does not stop the others. The install then logs the failed URLs and
-  //   rejects, which fails it, and the next attempt fetches only the files still missing.
+  //   checked against its recorded content hash and stored as soon as it arrives, with up to three
+  //   attempts per file (fetchIntoCache). Bytes from a newer deploy fail the check, so this version
+  //   never stores them; the update check that finds that deploy's worker installs it instead. A
+  //   file whose attempts all fail does not stop the others. The install then logs the failed URLs
+  //   and rejects, which fails it, and the next attempt fetches only the files still missing.
   const precache = async () => {
     const soundFormat = new URL(worker.location.href).searchParams.get(SOUND_FORMAT_PARAM);
     const cache = await caches.open(cacheName);
@@ -225,7 +236,7 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     const fetched = [...plan.fetch, ...unreused.flat()];
     const outcomes = await mapBounded(
       PRECACHE_CONCURRENCY,
-      (url) => fetchIntoCache(policy, cache, url),
+      (url) => fetchIntoCache(policy, manifest.contentHashes, cache, url),
       fetched,
     );
     const failures = outcomes.filter((outcome) => outcome !== undefined);
@@ -246,32 +257,11 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     await Promise.all(stale.map((name) => caches.delete(name)));
   };
 
-  // The network's response, stored for offline use; the cached copy only when the fetch fails.
-  const networkFirst = async (request: Request, key: string) => {
-    const cache = await caches.open(cacheName);
-    try {
-      return await fetchAndStore(cache, key, request);
-    } catch (error) {
-      const cached = await cache.match(key);
-      if (cached === undefined) {
-        throw error;
-      }
-      return cached;
-    }
-  };
-
+  // This version's stored copy, or on a miss the network's response, stored for next time.
   const cacheFirst = async (request: Request, key: string) => {
     const cache = await caches.open(cacheName);
     const cached = await cache.match(key);
     return cached ?? fetchAndStore(cache, key, request);
-  };
-
-  const responders: Record<
-    Exclude<FetchStrategy, "network-only">,
-    (request: Request, key: string) => Promise<Response>
-  > = {
-    "cache-first": cacheFirst,
-    "network-first": networkFirst,
   };
 
   worker.addEventListener("install", (event) => event.waitUntil(precache()));
@@ -292,8 +282,8 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
       isNavigation: request.mode === "navigate",
       pathname: url.pathname,
     });
-    if (strategy !== "network-only") {
-      event.respondWith(responders[strategy](request, cacheKeyFor(url.pathname)));
+    if (strategy === "cache-first") {
+      event.respondWith(cacheFirst(request, cacheKeyFor(url.pathname)));
     }
   });
 }
