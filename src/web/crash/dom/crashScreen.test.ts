@@ -11,6 +11,7 @@ class FakeElement extends EventTarget {
   textContent = "";
   type = "";
   focus = vi.fn();
+  ownerDocument: EventTarget | undefined;
 
   append(...children: (FakeElement | string)[]): void {
     for (const child of children) {
@@ -61,8 +62,12 @@ function fakePage(navigator: object = {}) {
   body.append(game, controls);
   const window = new EventTarget();
   const reload = vi.fn();
+  const document: EventTarget = Object.assign(new EventTarget(), {
+    body,
+    createElement: () => Object.assign(new FakeElement(), { ownerDocument: document }),
+  });
   const page = Object.assign(window, {
-    document: { body, createElement: () => new FakeElement() },
+    document,
     getSelection: () => null,
     location: { reload },
     navigator,
@@ -71,7 +76,7 @@ function fakePage(navigator: object = {}) {
     window.dispatchEvent(
       Object.assign(new Event("error"), { error: thrown, filename, message: thrown.message }),
     );
-  return { body, controls, error, game, page, reload, window };
+  return { body, controls, document, error, game, page, reload, window };
 }
 
 // A service worker container whose registration holds waiting, and whose page a worker controls
@@ -136,9 +141,19 @@ describe("installCrashScreen", () => {
     const button = content.find((element) => element.className === "crash-button");
     expect(button?.textContent).toBe(OPTIONS.words.reload);
     expect(button?.focus).toHaveBeenCalledTimes(1);
+    expect(button?.focus).toHaveBeenCalledWith({ focusVisible: false, preventScroll: true });
     expect(reload).not.toHaveBeenCalled();
     button?.dispatchEvent(new Event("click"));
     expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the focus ring on Reload after keyboard input", () => {
+    const { body, document, error, page } = fakePage();
+    installCrashScreen(page, OPTIONS);
+    document.dispatchEvent(new Event("keydown"));
+    error(privateError());
+    const button = descendants(body).find((element) => element.className === "crash-button");
+    expect(button?.focus).toHaveBeenCalledExactlyOnceWith();
   });
 
   it("activates a waiting service worker and reloads once it controls the page", async () => {

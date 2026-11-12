@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { trackInputModality } from "./focusModality.ts";
 import { createModalLayer, type ModalLayer } from "./modalLayer.ts";
 
 // A UI root with a HUD layer (holding the opener) and a card layer (holding a dialog with three
@@ -44,7 +45,9 @@ beforeEach(() => {
 
 afterEach(() => {
   layer.dispose();
+  trackInputModality(document)();
   parts.root.remove();
+  vi.restoreAllMocks();
 });
 
 describe("createModalLayer", () => {
@@ -149,6 +152,49 @@ describe("createModalLayer", () => {
     parts.hud.inert = true;
     layer.open({}, parts.dialog)();
     expect(parts.hud.inert).toBe(true);
+  });
+});
+
+describe("createModalLayer focus rings", () => {
+  const HIDDEN_RING = { focusVisible: false, preventScroll: true };
+  const pointerdown = () =>
+    parts.opener.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+
+  it("hides the ring on the card it opens after a press", () => {
+    const focus = vi.spyOn(parts.last, "focus");
+    pointerdown();
+    layer.open({ focus: parts.last }, parts.dialog);
+    expect(focus).toHaveBeenCalledExactlyOnceWith(HIDDEN_RING);
+  });
+
+  it("shows the ring on the card it opens after a key, as the layer tracks from creation", () => {
+    const focus = vi.spyOn(parts.last, "focus");
+    key("Shift");
+    layer.open({ focus: parts.last }, parts.dialog);
+    expect(focus).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it("shows the ring on the controls the keys step to", () => {
+    const focus = vi.spyOn(parts.first, "focus");
+    pointerdown();
+    layer.open({}, parts.dialog);
+    key("Tab");
+    expect(focus).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it("returns the focus to the opener and the restore target by modality", () => {
+    const opener = vi.spyOn(parts.opener, "focus");
+    pointerdown();
+    layer.open({}, parts.dialog)();
+    expect(opener).toHaveBeenLastCalledWith(HIDDEN_RING);
+    const fallback = document.createElement("button");
+    parts.cards.append(fallback);
+    const restore = vi.spyOn(fallback, "focus");
+    const close = layer.open({ restore: () => fallback }, parts.dialog);
+    parts.opener.remove();
+    key("Shift");
+    close();
+    expect(restore).toHaveBeenCalledExactlyOnceWith();
   });
 });
 

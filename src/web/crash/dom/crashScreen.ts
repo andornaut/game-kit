@@ -1,8 +1,11 @@
 // The crash screen: plain HTML over the whole page, since the canvas may be what broke. It
 // writes nothing; a game that saves as it goes keeps what it last saved. Its styles are
 // web/crash/dom/crash.css, which the game imports (a script cannot add a <style> under a CSP
-// without 'unsafe-inline'), in the game's colours, which the screen sets as CSS variables.
+// without 'unsafe-inline'), in the game's colours, which the screen sets as CSS variables. It
+// tracks the input modality from install and focuses Reload through focusTarget
+// (web/ui/dom/focusModality), so the ring shows only after keyboard input.
 import { activateWaitingWorker } from "../../pwa/dom/updateReady.ts";
+import { focusTarget, trackInputModality } from "../../ui/dom/focusModality.ts";
 import {
   crashGate,
   type CrashReport,
@@ -153,7 +156,7 @@ function showCrashScreen(page: CrashPage, options: CrashScreenOptions, report: C
     child.toggleAttribute("inert", true);
   }
   document.body.append(screen);
-  reload.focus();
+  focusTarget(reload);
 }
 
 // Listens on page (the game's window) for uncaught errors and unhandled rejections and shows the
@@ -161,6 +164,8 @@ function showCrashScreen(page: CrashPage, options: CrashScreenOptions, report: C
 // thrown while one loads shows the screen rather than a blank page. Phaser 4 does not catch errors in its game step:
 // they reach window's error event and stop its requestAnimationFrame loop.
 export function installCrashScreen(page: CrashPage, options: CrashScreenOptions): CrashScreen {
+  // From install, so the keys pressed before a crash decide whether Reload shows its ring.
+  trackInputModality(page.document);
   const accept = crashGate();
   let stopGame = () => {};
   const crash = (report: CrashReport) => {

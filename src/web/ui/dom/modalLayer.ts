@@ -1,12 +1,15 @@
 import { type FocusKeyAction, focusKeyAction, stepFocus } from "../../../ui/focusKeys.ts";
+import { focusTarget, trackInputModality } from "./focusModality.ts";
 
 // One modal layer shared by every card a game opens over its UI root. The top modal alone takes
 // the keyboard: Tab and the arrows step the focus through its controls, then its live elements',
 // wrapping and trapped in them; Enter and Space click the focused control once per press; Escape
 // and P close a closeable card (ui/focusKeys). It marks the card aria-modal, makes the rest of the
 // root inert apart from the card's layer and live elements, focuses the card's default action on
-// open and restores the focus on close. It does not use <dialog>.showModal() or popover: the top
-// layer renders outside a turned page frame.
+// open and restores the focus on close. It moves the focus through focusTarget (focusModality),
+// so the ring shows only after keyboard input, and tracks the document's input modality from its
+// creation. It does not use <dialog>.showModal() or popover: the top layer renders outside a
+// turned page frame.
 
 export interface ModalOptions {
   // Closes the card on Escape, P or back: the game's own close, which then calls the close
@@ -127,6 +130,9 @@ function inertTargets(
 // The modal layer over root, whose element children are the game's UI layers.
 export function createModalLayer(root: HTMLElement): ModalLayer {
   const document = root.ownerDocument;
+  // From creation, so a key pressed before the first card opens counts; the layer's dispose
+  // leaves it, since the tracking is the document's.
+  trackInputModality(document);
   const stack: OpenModal[] = [];
   const inerted = new Set<Element>();
   const top = () => stack.at(-1);
@@ -153,7 +159,7 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
       }
     }
   };
-  const focusOpen = (modal: OpenModal) => (modal.options.focus ?? modal.dialog).focus();
+  const focusOpen = (modal: OpenModal) => focusTarget(modal.options.focus ?? modal.dialog);
   // Performs a key's action in the top card, and returns whether the key is the card's.
   const act = (modal: OpenModal, action: FocusKeyAction, repeat: boolean): boolean => {
     const active = document.activeElement;
@@ -174,11 +180,14 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
       return modal.options.close !== undefined;
     }
     const targets = modalTargets(modal);
-    stepFocus(
+    const target = stepFocus(
       targets,
-      targets.find((target) => target === active),
+      targets.find((element) => element === active),
       action,
-    )?.focus();
+    );
+    if (target !== undefined) {
+      focusTarget(target);
+    }
     return true;
   };
   const onKeyDown = (event: KeyboardEvent) => {
@@ -243,12 +252,12 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
         const below = top();
         const { opener } = modal;
         if (usable(opener) && (below === undefined || within(below, opener))) {
-          opener.focus();
+          focusTarget(opener);
           return;
         }
         const fallback = options.restore?.() ?? null;
         if (usable(fallback)) {
-          fallback.focus();
+          focusTarget(fallback);
         } else if (below !== undefined) {
           focusOpen(below);
         }

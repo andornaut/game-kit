@@ -23,6 +23,7 @@
     "src/web/save/dom/pageSessionStore.ts",
     "src/web/ui/dom/buttonSkin.ts",
     "src/web/ui/dom/domPress.ts",
+    "src/web/ui/dom/focusModality.ts",
     "src/web/ui/dom/imageReady.ts",
     "src/web/ui/dom/layoutProperties.ts",
     "src/web/ui/dom/modalLayer.ts",
