@@ -56,12 +56,14 @@ export function createImageCache(document: Document): ImageCache {
 
 const pending = new WeakMap<Element, () => void>();
 
-// Sets data-ui-pending on layer until cache has settled every url, then removes it. A reveal
-// already pending on layer is cancelled first. There is no timeout: a request that never settles
-// keeps layer hidden, so the caller keeps a fallback view drawing until the reveal.
+// Sets data-ui-pending on layer at once, until urls (or the list a promise of them resolves to)
+// have all settled in cache, then removes it. A rejected promise counts as settled, so the layer
+// shows. A reveal already pending on layer is cancelled first. There is no timeout: a promise or
+// request that never settles keeps layer hidden, so the caller keeps a fallback view drawing until
+// the reveal.
 export function revealWhenDecoded(
   cache: ImageCache,
-  urls: readonly string[],
+  urls: readonly string[] | Promise<readonly string[]>,
   layer: Element,
 ): Reveal {
   pending.get(layer)?.();
@@ -84,6 +86,11 @@ export function revealWhenDecoded(
   const cancel = () => finish(false);
   pending.set(layer, cancel);
   layer.setAttribute(PENDING_ATTRIBUTE, "");
-  void cache.decoded(urls).then(() => finish(true));
+  // A list starts its requests at once; a promised list starts them when it resolves.
+  const decoded =
+    urls instanceof Promise
+      ? urls.then((list) => cache.decoded(list), ignore)
+      : cache.decoded(urls);
+  void decoded.then(() => finish(true));
   return { cancel, revealed };
 }

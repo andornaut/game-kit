@@ -83,6 +83,52 @@ describe("revealWhenDecoded", () => {
     expect(pending(layer)).toBe(true);
   });
 
+  it("holds the layer pending until a promised list resolves, then until its urls settle", async () => {
+    const cache = createImageCache(document);
+    const layer = document.createElement("div");
+    let resolve: (urls: readonly string[]) => void = () => undefined;
+    const urls = new Promise<readonly string[]>((settle) => {
+      resolve = settle;
+    });
+    const reveal = revealWhenDecoded(cache, urls, layer);
+    const beforeList = [pending(layer), await settled(reveal.revealed), requested.length];
+    resolve(["a.png"]);
+    await settled(reveal.revealed);
+    const beforeDecode = [pending(layer), [...requested]];
+    decodes.get("a.png")!.finish();
+    expect([beforeList, beforeDecode, await reveal.revealed, pending(layer)]).toEqual([
+      [true, false, 0],
+      [true, ["a.png"]],
+      true,
+      false,
+    ]);
+  });
+
+  it("shows the layer and resolves true when the promised list rejects", async () => {
+    const cache = createImageCache(document);
+    const layer = document.createElement("div");
+    const reveal = revealWhenDecoded(cache, Promise.reject(new Error("no list")), layer);
+    expect([await reveal.revealed, pending(layer), requested]).toEqual([true, false, []]);
+  });
+
+  it("shows the layer on cancel before the promised list resolves, and leaves it after", async () => {
+    const cache = createImageCache(document);
+    const layer = document.createElement("div");
+    let resolve: (urls: readonly string[]) => void = () => undefined;
+    const urls = new Promise<readonly string[]>((settle) => {
+      resolve = settle;
+    });
+    const reveal = revealWhenDecoded(cache, urls, layer);
+    reveal.cancel();
+    const shown = !pending(layer);
+    layer.setAttribute(PENDING_ATTRIBUTE, "");
+    resolve(["a.png"]);
+    await settled(reveal.revealed);
+    decodes.get("a.png")!.finish();
+    await cache.decoded(["a.png"]);
+    expect([shown, await reveal.revealed, pending(layer)]).toEqual([true, false, true]);
+  });
+
   it("cancels a reveal already pending on the layer", async () => {
     const cache = createImageCache(document);
     const layer = document.createElement("div");

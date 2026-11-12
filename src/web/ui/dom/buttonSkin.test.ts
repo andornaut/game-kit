@@ -157,6 +157,18 @@ describe("createButtonSkin", () => {
     expect(urls).toHaveLength(2);
   });
 
+  it("revokes a sheet's cut frames and leaves it unset when one of its cuts fails", async () => {
+    let encodes = 0;
+    vi.mocked(HTMLCanvasElement.prototype.toBlob).mockImplementation((callback) => {
+      // The ui-button sheet's second frame cannot be encoded.
+      callback(encodes++ === 1 ? null : new Blob(["png"], { type: "image/png" }));
+    });
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const root = document.createElement("div");
+    const urls = await createButtonSkin(document, { ...SOURCE, sheets: ["ui-button"] }).apply(root);
+    expect([urls, root.style.length, revoke.mock.calls]).toEqual([[], 0, [["blob:0"]]]);
+  });
+
   it("applies nothing and requests nothing again when the manifest fails", async () => {
     responses.delete(MANIFEST);
     const skin = createButtonSkin(document, SOURCE);

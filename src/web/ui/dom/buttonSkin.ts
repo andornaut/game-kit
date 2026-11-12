@@ -122,7 +122,8 @@ function tagRects(tags: readonly string[], sheet: FramedSheet): ReadonlyMap<stri
   return rects;
 }
 
-// One sheet's cut frames by property. Rejects on any failed fetch, decode, parse or cut.
+// One sheet's cut frames by property. Rejects on any failed fetch, decode, parse or cut, having
+// revoked the sheet's frames already cut.
 async function cutSheet(
   document: Document,
   tags: readonly string[],
@@ -133,13 +134,19 @@ async function cutSheet(
     fetchJson(new URL(sprite.json, manifestUrl).href),
     loadImage(document, new URL(sprite.png, manifestUrl).href),
   ]);
-  const rects = tagRects(tags, asSheet(json));
-  return Promise.all(
-    [...rects].map(async ([tag, rect]): Promise<[string, string]> => [
+  const cuts = await Promise.allSettled(
+    [...tagRects(tags, asSheet(json))].map(async ([tag, rect]): Promise<[string, string]> => [
       buttonSkinProperty(sprite.key, tag),
       await cutFrame(document, image, rect),
     ]),
   );
+  const frames = cuts.flatMap((cut) => (cut.status === "fulfilled" ? [cut.value] : []));
+  if (frames.length < cuts.length) {
+    // A sheet applies whole or not at all, so the frames it did cut are revoked.
+    frames.forEach(([, url]) => URL.revokeObjectURL(url));
+    throw new Error(`Unable to cut every frame of ${sprite.key}`);
+  }
+  return frames;
 }
 
 async function buildFrames(
@@ -168,7 +175,8 @@ async function buildFrames(
 
 // The skin for source's sheets. Requests start at once, so the game creates one skin during boot
 // and applies it to every root. A failed manifest or sheet is not requested again for this skin;
-// a new skin requests everything again. The blob: URLs last for the page and are never revoked.
+// a new skin requests everything again. The blob: URLs it sets last for the page and are never
+// revoked.
 export function createButtonSkin(document: Document, source: ButtonSkinSource): ButtonSkin {
   const frames = buildFrames(document, source).catch(() => new Map<string, string>());
   return {
