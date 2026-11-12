@@ -87,9 +87,8 @@ export interface UpdateFlow {
   // active one. Does nothing while a switch is reloading. A save a newer version wrote uses
   // requireNewer instead.
   accept(): void;
-  // Starts an explicit offer visit and clears its dismissal, including while hidden.
-  beginOfferVisit(): void;
-  // Hides the offer for this visit without consuming or activating its waiting worker.
+  // Hides the offer for the rest of the page session, for this and any later waiting version,
+  // without consuming or activating its waiting worker. Arrival and resume checks continue.
   dismissOffer(): void;
   // A key, touch or click, or play started without input. Each arrival home after it checks for
   // a newer version.
@@ -103,8 +102,8 @@ export interface UpdateFlow {
   // once to become controlled. Idempotent; it lasts for the page.
   requireNewer(): void;
   // Offer eligibility: whether the home screen, the only place the offer shows, is in front. Each
-  // arrival after input checks for a newer version. Independent of registration and visit
-  // lifetime.
+  // arrival after input checks for a newer version. Independent of registration; it never clears
+  // a dismissal.
   setOfferVisible(visible: boolean): void;
   // Whether the page is in view. Coming back into view on the home screen checks for a newer
   // version, at most once per RESUME_CHECK_MS; a required update retries on every return.
@@ -267,7 +266,6 @@ export function createUpdateFlow(
         activateWaitingWorker(container, () => page.reload(), waitingWorker);
       }
     },
-    beginOfferVisit: () => update({ dismissed: false }),
     dismissOffer: () => update({ dismissed: true }),
     noteInteraction() {
       interacted = true;

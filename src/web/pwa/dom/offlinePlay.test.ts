@@ -224,7 +224,6 @@ describe("startOfflinePlay", () => {
     const { container, play } = openPage(false, "none");
     play.flow.setOfferVisible(true);
     play.flow.setOfferVisible(false);
-    play.flow.beginOfferVisit();
     play.flow.setOfferVisible(true);
     expect(container.registered).toEqual([]);
     play.registrationReady();
@@ -236,7 +235,7 @@ describe("startOfflinePlay", () => {
     expect(container.registered).toHaveLength(1);
   });
 
-  it("keeps arrival and resume checks eligible after dismissal without readiness changes", async () => {
+  it("keeps arrival and resume checks after dismissal, and never shows a version that waits later", async () => {
     const { clock, page, play, registration, shown, visibilitySource } = openPage(true, "none");
     await settle();
     expect(registration?.updates).toBe(1);
@@ -263,8 +262,9 @@ describe("startOfflinePlay", () => {
     registration.waiting = new FakeWorker();
     registration.dispatchEvent(new Event("updatefound"));
     expect(shown).toEqual([]);
-    play.flow.beginOfferVisit();
-    expect(shown).toEqual([true]);
+    play.flow.setOfferVisible(false);
+    play.flow.setOfferVisible(true);
+    expect({ shown, updates: registration.updates }).toEqual({ shown: [], updates: 4 });
   });
 
   it("reports a first visit's precache from its registration request until its install ends", async () => {
@@ -394,7 +394,6 @@ describe("startOfflinePlay", () => {
     expect(Object.keys(play).sort()).toEqual(["flow", "registrationReady"]);
     expect(Object.keys(play.flow).sort()).toEqual([
       "accept",
-      "beginOfferVisit",
       "dismissOffer",
       "noteInteraction",
       "noteOnline",
@@ -454,16 +453,17 @@ describe("startOfflinePlay", () => {
     expect(clock.reloads).toBe(1);
   });
 
-  it("hides the offer on dismiss for the visit, and shows it again for a new visit", async () => {
-    const { clock, play, registration, shown } = openPage(true, "waiting");
+  it("hides the offer on dismiss for the rest of the page session, across returns home", async () => {
+    const { clock, page, play, registration, shown } = openPage(true, "waiting");
     await settle();
     showHome(play, true);
     play.flow.dismissOffer();
+    page.eventTarget.dispatchEvent(new Event("pointerdown"));
+    showHome(play, false);
+    showHome(play, true);
     showHome(play, false);
     showHome(play, true);
     expect(shown).toEqual([true, false]);
-    play.flow.beginOfferVisit();
-    expect(shown).toEqual([true, false, true]);
     expect({ messages: registration?.waiting?.messages, reloads: clock.reloads }).toEqual({
       messages: [],
       reloads: 0,
@@ -503,7 +503,6 @@ describe("startOfflinePlay", () => {
       found.waiting = state === "installed" ? worker : null;
       worker.dispatchEvent(new Event("statechange"));
     });
-    play.flow.beginOfferVisit();
     showHome(play, false);
     showHome(play, true);
     expect({ messages: found.waiting?.messages ?? [], reloads: clock.reloads, shown }).toEqual({
@@ -699,7 +698,6 @@ describe("requireNewer", () => {
     endInstall(registration, worker, "installed");
     expect(shown).toEqual([true]);
     play.flow.requireNewer();
-    play.flow.beginOfferVisit();
     showHome(play, false);
     showHome(play, true);
     play.flow.accept();
