@@ -238,12 +238,16 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
   ) => {
     await (await routing()).put(recordUrl(kind, id), new Response(JSON.stringify(value)));
   };
-  const readPin = async (id: string): Promise<string | undefined> => {
+  const readPin = async (id: string): Promise<string | null | undefined> => {
     const response = await (await routing()).match(recordUrl("client", id));
     if (response === undefined) {
       return undefined;
     }
     const value: unknown = await response.json();
+    // null positively records a document loaded through a network-only navigation.
+    if (value === null) {
+      return null;
+    }
     if (typeof value !== "string" || !value.startsWith(policy.cacheNamePrefix)) {
       throw new TypeError("Invalid document build pin");
     }
@@ -256,29 +260,6 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     }
     return (await response.json()) as BuildRecord;
   };
-  // An evicted document pin cannot turn one of an older build's private URLs into network-only.
-  const managedByEarlierBuild = async (pathname: string): Promise<boolean> => {
-    const records = await routing();
-    const keys = await records.keys();
-    const builds = keys.filter((key) =>
-      new URL(key.url).pathname.startsWith("/.game-kit-routing/build/"),
-    );
-    const matches = await Promise.all(
-      builds.map(async (key) => {
-        const response = await records.match(key);
-        if (response === undefined) {
-          throw new TypeError("Missing build routing record");
-        }
-        const { manifest: build } = (await response.json()) as BuildRecord;
-        return (
-          strategyFor(policy, cachedUrlsOf(build), { isNavigation: false, pathname }) ===
-          "cache-first"
-        );
-      }),
-    );
-    return matches.some(Boolean);
-  };
-
   // The install stores every URL in this version's cache (cacheName) in three steps:
   // - A URL the cache already holds, from an earlier failed attempt to install this same version
   //   (the same cache name means the same manifest), is kept: a file with a recorded content hash
@@ -470,7 +451,11 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
         pathname: new URL(request.url).pathname,
       }) === "network-only"
     ) {
-      return fetch(request);
+      const response = await fetch(request);
+      if (resultingClientId) {
+        await writeRecord("client", resultingClientId, null);
+      }
+      return response;
     }
     const pinned = navigation
       ? await navigationBuild()
@@ -478,16 +463,10 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
         ? cacheName
         : await readPin(clientId);
     if (pinned === undefined) {
-      if (
-        strategyFor(policy, cachedUrlsOf(manifest), {
-          isNavigation: navigation,
-          pathname: new URL(request.url).pathname,
-        }) === "network-only" &&
-        !(await managedByEarlierBuild(new URL(request.url).pathname))
-      ) {
-        return fetch(request);
-      }
       throw new TypeError("Missing document build pin");
+    }
+    if (pinned === null) {
+      return fetch(request);
     }
     const build = pinned === cacheName ? manifest : (await readBuild(pinned)).manifest;
     const pathname = new URL(request.url).pathname;
@@ -527,9 +506,11 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
         return;
       }
       // A recorded pin without its manifest is not evidence that the peer can keep running.
-      await Promise.all(pins.map((pin) => readBuild(pin as string)));
+      await Promise.all(
+        pins.filter((pin): pin is string => typeof pin === "string").map(readBuild),
+      );
       const requesterPin = await readPin(requester);
-      if (requesterPin !== undefined) {
+      if (typeof requesterPin === "string") {
         await readBuild(requesterPin);
       }
       const { deadline } = event.data as { deadline: number };

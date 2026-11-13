@@ -771,7 +771,7 @@ describe("document build pins", () => {
     match.mockRestore();
   });
 
-  it("passes an unpinned non-game page and its subresources through to the network", async () => {
+  it("records a network-only navigation before passing its document's subresources through", async () => {
     const server = new FakeServer({ "/tuning/": "tuning page", "/tuning/editor.js": "editor" });
     const worker = startWorker(server, {}, manifestFor("b", secondFiles));
     expect(await worker.respond(requestFor("/tuning/", true), "", "non-game")).toBe("tuning page");
@@ -780,8 +780,59 @@ describe("document build pins", () => {
     expect(
       await worker.storage.named
         .get("game-kit-routing:game-")
-        ?.match("/.game-kit-routing/client/non-game"),
-    ).toBeUndefined();
+        ?.match("/.game-kit-routing/client/non-game")
+        .then((response) => response?.json()),
+    ).toBeNull();
+  });
+
+  it("refuses unknown documents even for URLs absent from every recorded manifest", async () => {
+    const server = new FakeServer({ "/tuning/editor.js": "editor" });
+    const worker = startWorker(server, {}, manifestFor("b", secondFiles));
+    await expect(worker.respond(requestFor("/tuning/editor.js"), "unknown")).rejects.toThrow(
+      "Missing document build pin",
+    );
+    expect(server.fetched).toEqual([]);
+  });
+
+  it("does not serve a non-game navigation if its network-only pin cannot be persisted", async () => {
+    const worker = startWorker(
+      new FakeServer({ "/tuning/": "tuning page" }),
+      {},
+      manifestFor("b", secondFiles),
+    );
+    const records = await worker.storage.open("game-kit-routing:game-");
+    const put = vi.spyOn(records, "put").mockRejectedValue(new Error("quota"));
+    await expect(worker.respond(requestFor("/tuning/", true), "", "non-game")).rejects.toThrow(
+      "quota",
+    );
+    put.mockRestore();
+  });
+
+  it("requires a new navigation after a network-only document's pin is evicted", async () => {
+    const server = new FakeServer({ "/tuning/": "tuning page", "/tuning/editor.js": "editor" });
+    const worker = startWorker(server, {}, manifestFor("b", secondFiles));
+    await worker.respond(requestFor("/tuning/", true), "", "non-game");
+    await worker.storage.delete("game-kit-routing:game-");
+    server.fetched.length = 0;
+    await expect(worker.respond(requestFor("/tuning/editor.js"), "non-game")).rejects.toThrow(
+      "Missing document build pin",
+    );
+    expect(server.fetched).toEqual([]);
+    await worker.respond(requestFor("/tuning/", true), "non-game", "new-document");
+    expect(await worker.respond(requestFor("/tuning/editor.js"), "new-document")).toBe("editor");
+  });
+
+  it("recognises a positively pinned non-game peer without requiring a build manifest for it", async () => {
+    const worker = startWorker(
+      new FakeServer({ ...secondFiles, "/tuning/": "tuning page" }),
+      {},
+      manifestFor("b", secondFiles),
+      new FakeCaches(),
+      [{ id: "non-game" }, { id: "requester" }],
+    );
+    await worker.install();
+    await worker.respond(requestFor("/tuning/", true), "", "non-game");
+    expect(await worker.requestActivation("requester")).toEqual(["activating"]);
   });
 
   it("keeps the requesting running document on A until its reload navigation", async () => {
@@ -825,6 +876,38 @@ describe("document build pins", () => {
     await second.install();
     server.fetched.length = 0;
     await expect(second.respond(requestFor("/art/card.png"), "lost-pin")).rejects.toThrow(
+      "Missing document build pin",
+    );
+    expect(server.fetched).toEqual([]);
+  });
+
+  it("does not fetch A-only URLs from B after all routing metadata is evicted while A runs", async () => {
+    const storage = new FakeCaches();
+    const clients = [{ id: "running-A" }];
+    const first = startWorker(
+      new FakeServer(firstFiles),
+      {},
+      manifestFor("a", firstFiles),
+      storage,
+      clients,
+    );
+    await first.install();
+    await first.respond(requestFor("/play/", true), "", "running-A");
+    const server = new FakeServer({ ...secondFiles, "/art/card.png": "B bytes for A-only URL" });
+    const second = startWorker(
+      server,
+      {},
+      manifestFor("b", { "/play/": "page B" }),
+      storage,
+      clients,
+      first.nativeWorker,
+    );
+    await second.install();
+    expect(await second.requestActivation("running-A")).toEqual(["activating"]);
+    await second.activate();
+    await storage.delete("game-kit-routing:game-");
+    server.fetched.length = 0;
+    await expect(second.respond(requestFor("/art/card.png"), "running-A")).rejects.toThrow(
       "Missing document build pin",
     );
     expect(server.fetched).toEqual([]);
