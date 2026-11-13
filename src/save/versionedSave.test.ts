@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { type Checked, encodeSave, loadSave, type SaveFormat } from "./versionedSave.ts";
 
@@ -28,6 +28,24 @@ const FRESH = { coins: 0, name: "" };
 const json = (value: unknown) => JSON.stringify(value);
 
 describe("loadSave", () => {
+  it.each([4, 3.5, Number.MAX_SAFE_INTEGER + 1, Number.MAX_VALUE])(
+    "protects finite future header %s before migration or decoding",
+    (version) => {
+      const decode = vi.fn(FORMAT.decode);
+      const migrate = vi.fn(() => {
+        throw new Error("future save must not migrate");
+      });
+      const format = { ...FORMAT, decode, migrations: { 1: migrate, 2: migrate } };
+      expect(loadSave(format, json({ version }))).toEqual({
+        reason: `the save is from version ${version}, newer than this game`,
+        save: FRESH,
+        status: "newer",
+      });
+      expect(migrate).not.toHaveBeenCalled();
+      expect(decode).not.toHaveBeenCalled();
+    },
+  );
+
   it.each<[string, string | null, unknown]>([
     ["nothing stored as new", null, { save: FRESH, status: "new" }],
     [
@@ -59,6 +77,13 @@ describe("loadSave", () => {
     ["JSON that is not an object", "[1]", "the save is not an object"],
     ["a save with no version", json({ coins: 5 }), "the save has no integer version"],
     ["a fractional version", json({ coins: 5, version: 2.5 }), "the save has no integer version"],
+    [
+      "an unsafe lower version",
+      json({ version: -Number.MAX_VALUE }),
+      "the save has no integer version",
+    ],
+    ["a nonfinite header", '{"version":1e999}', "the save has no integer version"],
+    ["a string future header", json({ version: "4" }), "the save has no integer version"],
     [
       "a save older than the migrations",
       json({ version: 0 }),

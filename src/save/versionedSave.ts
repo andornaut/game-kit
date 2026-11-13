@@ -1,6 +1,6 @@
-// A save is stored as JSON: an object whose integer version field names the format it was
-// written in. The game owns the format; this module reads its version, runs its migrations and
-// hands the result to the game to validate.
+// A save is stored as JSON: an object whose version field names its format. Future finite
+// numeric headers are protected before requiring a safe integer for this format. The game owns
+// the format; this module reads its version, runs migrations and hands it to the game to validate.
 
 // A value, or why there is none.
 export type Checked<T> = { ok: true; value: T } | { ok: false; reason: string };
@@ -16,7 +16,7 @@ export interface SaveFormat<Doc> {
   // migrations[n] turns a save stored at version n into one at version n + 1; the store then
   // sets its version. A save older than the oldest migration loads as corrupt.
   readonly migrations: Readonly<Record<number, (save: StoredObject) => StoredObject>>;
-  // A new player's save, also played in place of one that cannot be loaded.
+  // A new player's save, also returned as a placeholder when one cannot be loaded.
   fresh(): Doc;
   // A stored save at the current version, validated and made ready for play, or why it cannot
   // be (the game's schema rejects it).
@@ -27,8 +27,9 @@ export interface SaveFormat<Doc> {
 }
 
 // "new" when nothing was stored. "corrupt" carries the stored text so the caller can keep it as
-// a backup; its save is fresh. "newer" is a save from a later version than this game: its save
-// is fresh, and the stored save must be left as it is.
+// a backup; its save is fresh. "newer" has a finite numeric header above this format, even if
+// fractional or unsafe as an integer. Its fresh save is only a placeholder: callers must block
+// play and leave the stored save untouched until a compatible version can load it.
 export type LoadResult<Doc> =
   | { raw: string; reason: string; save: Doc; status: "corrupt" }
   | { reason: string; save: Doc; status: "newer" }
@@ -84,16 +85,17 @@ export function loadSave<Doc>(format: SaveFormat<Doc>, raw: string | null): Load
     if (!isStoredObject(parsed)) {
       return corrupt("the save is not an object");
     }
-    const version = storedVersion(parsed);
-    if (version === undefined) {
-      return corrupt("the save has no integer version");
-    }
-    if (version > format.version) {
+    const header = parsed.version;
+    if (typeof header === "number" && Number.isFinite(header) && header > format.version) {
       return {
-        reason: `the save is from version ${version}, newer than this game`,
+        reason: `the save is from version ${header}, newer than this game`,
         save: format.fresh(),
         status: "newer",
       };
+    }
+    const version = storedVersion(parsed);
+    if (version === undefined) {
+      return corrupt("the save has no integer version");
     }
     const current = migrated(format, version, parsed);
     if (!current.ok) {

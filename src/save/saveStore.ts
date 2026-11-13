@@ -8,11 +8,11 @@ export interface SaveKeys {
   readonly save: string;
 }
 
-// "unavailable" means storage threw: the game plays on with this save in memory and tells the
-// player progress won't be saved. "newer" means a later version of the game wrote the stored
-// save: the game plays on with this save in memory and offers the newer version. "corrupt"
-// means the stored save could not be read: it was copied to the backup key and this save is
-// fresh.
+// "unavailable" means storage failed or a write fence prevented backing up corrupt text; its
+// save is a fresh placeholder. "newer" means the stored header exceeds this format: its save is
+// a placeholder; callers must block play and load a compatible version before using that save.
+// "corrupt" means the stored save could not be read and was copied to the backup key; its save
+// is fresh. Neither unavailable nor newer authorizes overwriting the original.
 export type StoreLoadResult<Doc> =
   | { reason: string; save: Doc; status: "corrupt" | "newer" | "unavailable" }
   | { save: Doc; status: "loaded" | "new" };
@@ -21,6 +21,10 @@ export type StoreSaveResult =
   { reason: string; status: "invalid" | "unavailable" } | { status: "saved" };
 
 export interface SaveStore<Doc> {
+  // Irreversibly prevents future storage writes for this store; the first reason wins. Reads
+  // remain available and never rearm writes. A backend write already entered may still finish
+  // and report its actual result; this is not cancellation or a rollback.
+  blockWrites(reason: string): void;
   load(): Promise<StoreLoadResult<Doc>>;
   save(save: Doc): Promise<StoreSaveResult>;
 }
@@ -29,10 +33,10 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-// A save in format, kept in storage at keys. Once a read fails, a corrupt save cannot be backed
-// up, or the stored save is from a later version, the store stops writing for the session, so
-// it never overwrites a save it could not read, keep or understand. A save the format cannot
-// encode is not written ("invalid") and the stored one is kept.
+// A save in format, kept in storage at keys. Failed reads/backups and newer saves latch the
+// session's write fence, preventing later storage-write entry. An already-entered write keeps
+// its actual result. Invalid encoding leaves storage unchanged. blockWrites also fences backup
+// writes after a pending read; save rechecks after encoding callbacks run.
 export function saveStore<Doc>(
   storage: SaveStorage,
   keys: SaveKeys,
@@ -40,13 +44,17 @@ export function saveStore<Doc>(
 ): SaveStore<Doc> {
   // Why writes are refused for the session, or null while they are allowed.
   let writesBlocked: string | null = null;
+  const blockWrites = (reason: string) => {
+    writesBlocked ??= reason;
+  };
 
   const unavailable = (error: unknown): StoreLoadResult<Doc> => {
-    writesBlocked = "storage was unavailable at load";
+    blockWrites("storage was unavailable at load");
     return { reason: describe(error), save: format.fresh(), status: "unavailable" };
   };
 
   return {
+    blockWrites,
     async load() {
       let raw: string | null;
       try {
@@ -56,11 +64,14 @@ export function saveStore<Doc>(
       }
       const result = loadSave(format, raw);
       if (result.status === "newer") {
-        writesBlocked = "a newer version of the game wrote the stored save";
+        blockWrites("a newer version of the game wrote the stored save");
         return result;
       }
       if (result.status !== "corrupt") {
         return result;
+      }
+      if (writesBlocked !== null) {
+        return { reason: writesBlocked, save: result.save, status: "unavailable" };
       }
       try {
         await storage.write(keys.backup, result.raw);
@@ -75,6 +86,9 @@ export function saveStore<Doc>(
         return { reason: writesBlocked, status: "unavailable" };
       }
       const encoded = encodeSave(format, save);
+      if (writesBlocked !== null) {
+        return { reason: writesBlocked, status: "unavailable" };
+      }
       if (!encoded.ok) {
         return { reason: encoded.reason, status: "invalid" };
       }
