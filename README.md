@@ -28,6 +28,11 @@ The kit's own tests define each module's contract. A release is also proven agai
 
 `testing/phaser/sceneStub` covers the scene members both games' tests use as of 0.19.0 and is otherwise frozen: a test that needs more extends the stub through its overrides.
 
+## Migration to 0.39.0
+
+- `save/versionedSave`: any finite numeric header above `format.version` returns `"newer"` before integer validation, migration or decoding, including higher fractional and unsafe integer values. Lower malformed headers remain `"corrupt"`. The fresh save returned for `"newer"` is only a placeholder: keep play blocked and preserve the stored save until a compatible version can load it.
+- `save/saveStore`: `SaveStore` gains `blockWrites(reason: string): void`; add it to store test doubles. The first reason permanently fences later save and corrupt-backup writes for that store instance, including after a pending read or an encoder callback. Later reads remain available and never rearm writes; a fenced `save()` returns `"unavailable"`. Use this when another store or a session guard requires writes to stop. A backend write already entered may finish and report its actual result, including `"saved"`; the fence does not cancel or roll back that write.
+
 ## Migration to 0.38.0
 
 - Call `await offline.launchReady()` once at document boot, before constructing the game, reading saves or applying pending save edits. It snapshots only a worker already waiting before registration or update checks. A result of `"reloading"` means that worker acquired control and the reload callback ran: do not start the old bundle. `"continue"` and `"blocked"` permit the existing build to start. A blocked switch can be retried through Update now. Repeated calls reuse the first result and never activate a later installation. A first uncontrolled visit continues immediately and still calls `registrationReady()` after its prepared frame; it does not wait for registration or installation. A controlled page begins registration after this launch check. Crash-screen Reload reloads immediately; the new document's `launchReady()` boundary handles any staged activation.
