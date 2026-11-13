@@ -242,6 +242,7 @@ function activateInstall(registration: FakeRegistration | undefined, worker: Fak
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("startOfflinePlay", () => {
@@ -801,6 +802,158 @@ describe("startOfflinePlay", () => {
 });
 
 describe("requireNewer", () => {
+  it.each(["online", "visible"] as const)(
+    "keeps the newer-save requirement latched after a blocked switch and retries on %s",
+    async (retry) => {
+      const { clock, container, page, play, registration, required, shown, visibilitySource } =
+        openPage(true, "waiting");
+      await settle();
+      showHome(play, true);
+      const worker = requireRegistration(registration).waiting;
+      if (worker === null) {
+        throw new Error("Missing worker");
+      }
+      const post = vi.spyOn(worker, "postMessage").mockImplementation((_, transfer) => {
+        (transfer?.[0] as MessagePort).postMessage("blocked");
+      });
+      play.flow.requireNewer();
+      await vi.waitFor(() => expect(required).toEqual(["updating", "unavailable"]));
+      expect(clock.reloads).toBe(0);
+      play.flow.requireNewer();
+      play.flow.setOfferVisible(false);
+      play.flow.setOfferVisible(true);
+      expect(post).toHaveBeenCalledOnce();
+      expect(shown).toEqual([true, false]);
+      post.mockRestore();
+      if (retry === "online") {
+        page.eventTarget.dispatchEvent(new Event("online"));
+      } else {
+        visibilitySource.setVisibility("hidden");
+        visibilitySource.setVisibility("visible");
+      }
+      expect(worker.messages).toEqual([SKIP_WAITING_MESSAGE]);
+      expect(required).toEqual(["updating", "unavailable", "updating"]);
+      container.dispatchEvent(new Event("controllerchange"));
+      await settle();
+      expect(clock.reloads).toBe(1);
+      expect(shown).toEqual([true, false]);
+      // No ready/unblocked report is emitted to the caller holding the save guard.
+      expect(required.at(-1)).toBe("updating");
+    },
+  );
+
+  it("retries a replacement after a required activation candidate becomes redundant", async () => {
+    const { clock, container, page, play, registration, required, shown } = openPage(
+      true,
+      "waiting",
+    );
+    await settle();
+    const found = requireRegistration(registration);
+    const original = found.waiting;
+    if (original === null) {
+      throw new Error("Missing worker");
+    }
+    const post = vi.spyOn(original, "postMessage").mockImplementation(() => undefined);
+    play.flow.requireNewer();
+    original.state = "redundant";
+    found.waiting = null;
+    original.dispatchEvent(new Event("statechange"));
+    await settle();
+    expect(required).toEqual(["updating", "unavailable"]);
+    expect(clock.reloads).toBe(0);
+    const replacement = new FakeWorker();
+    found.waiting = replacement;
+    page.eventTarget.dispatchEvent(new Event("online"));
+    expect(replacement.messages).toEqual([SKIP_WAITING_MESSAGE]);
+    container.dispatchEvent(new Event("controllerchange"));
+    await settle();
+    expect(clock.reloads).toBe(1);
+    expect(required).toEqual(["updating", "unavailable", "updating"]);
+    expect(shown).toEqual([]);
+    post.mockRestore();
+  });
+
+  it("reports a rejected activation helper as unavailable and retains the retryable requirement", async () => {
+    const { clock, container, page, play, registration, required, shown } = openPage(
+      true,
+      "waiting",
+    );
+    await settle();
+    const NativeMessageChannel = globalThis.MessageChannel;
+    vi.stubGlobal(
+      "MessageChannel",
+      class {
+        constructor() {
+          throw new Error("channel unavailable");
+        }
+      },
+    );
+    play.flow.requireNewer();
+    await settle();
+    expect(required).toEqual(["updating", "unavailable"]);
+    expect(clock.reloads).toBe(0);
+    vi.stubGlobal("MessageChannel", NativeMessageChannel);
+    page.eventTarget.dispatchEvent(new Event("online"));
+    expect(registration?.waiting?.messages).toEqual([SKIP_WAITING_MESSAGE]);
+    container.dispatchEvent(new Event("controllerchange"));
+    await settle();
+    expect(clock.reloads).toBe(1);
+    expect(shown).toEqual([]);
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps ordinary title arrivals and visibility resumes offer-only until requireNewer", async () => {
+    const { clock, container, play, registration, required, visibilitySource } = openPage(
+      true,
+      "none",
+    );
+    await settle();
+    const worker = foundInstall(registration);
+    endInstall(registration, worker, "installed");
+    showHome(play, true);
+    play.flow.arriveHome();
+    clock.now = RESUME_CHECK_MS;
+    visibilitySource.setVisibility("hidden");
+    visibilitySource.setVisibility("visible");
+    await settle();
+    expect(worker.messages).toEqual([]);
+    expect(required).toEqual([]);
+    expect(clock.reloads).toBe(0);
+    play.flow.requireNewer();
+    expect(worker.messages).toEqual([SKIP_WAITING_MESSAGE]);
+    container.dispatchEvent(new Event("controllerchange"));
+    await settle();
+    expect(clock.reloads).toBe(1);
+  });
+
+  it("reloads a required old document if another client activated its candidate after a blocked attempt", async () => {
+    const { clock, container, page, play, registration, required, shown } = openPage(
+      true,
+      "waiting",
+    );
+    await settle();
+    const found = requireRegistration(registration);
+    const candidate = found.waiting;
+    if (candidate === null) {
+      throw new Error("Missing worker");
+    }
+    const post = vi.spyOn(candidate, "postMessage").mockImplementation((_, transfer) => {
+      (transfer?.[0] as MessagePort).postMessage("blocked");
+    });
+    play.flow.requireNewer();
+    await vi.waitFor(() => expect(required).toEqual(["updating", "unavailable"]));
+    candidate.state = "activated";
+    found.waiting = null;
+    found.active = candidate;
+    container.dispatchEvent(new Event("controllerchange"));
+    expect(clock.reloads).toBe(0);
+    page.eventTarget.dispatchEvent(new Event("online"));
+    expect(clock.reloads).toBe(1);
+    expect(required).toEqual(["updating", "unavailable", "updating"]);
+    expect(shown).toEqual([]);
+    post.mockRestore();
+  });
+
   it("activates a waiting version at once, before or after registration, and reloads into it", async () => {
     const { clock, container, play, registration, required, shown } = openPage(true, "waiting");
     showHome(play, true);

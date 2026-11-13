@@ -157,6 +157,9 @@ export interface UpdateFlow {
   // otherwise this checks for a newer version and activates it once it waits, fully installed and
   // verified. A page no version controls registers, waits for its install to activate and reloads
   // once to become controlled. Idempotent; it lasts for the page.
+  // The caller keeps Start, save loading and writes blocked in both reported states. Neither a
+  // blocked switch nor an unavailable update releases that guard; only the new document may
+  // recheck the save against its running version.
   requireNewer(): void;
   // Offer eligibility only: whether the home screen, the only place the offer shows, is in front
   // with no menu or card over it. Independent of registration; it never checks and never clears a
@@ -204,6 +207,7 @@ export function createUpdateFlow(
   reports: UpdateReports,
 ): UpdateFlow {
   const { container } = page;
+  const initialController = container.controller;
   let state: OfferState = {
     dismissed: false,
     offerVisible: false,
@@ -280,16 +284,31 @@ export function createUpdateFlow(
       report(pending.length > 0 || registering > 0 ? "updating" : "unavailable");
       return;
     }
+    // Another document may have completed the switch while this document kept its old build.
+    if (
+      container.controller !== initialController &&
+      registration.active === container.controller &&
+      registration.active?.state === "activated"
+    ) {
+      update({ reloading: true });
+      report("updating");
+      page.reload();
+      return;
+    }
     const waiting = registration.waiting;
     if (waiting !== null) {
       update({ reloading: true });
       report("updating");
+      const blocked = () => {
+        // required stays latched while reconnect/view retries become available again.
+        update({ reloading: false });
+        report("unavailable");
+      };
       void activateWaitingWorker(container, () => page.reload(), waiting).then((result) => {
         if (result === "blocked") {
-          update({ reloading: false });
-          report("unavailable");
+          blocked();
         }
-      });
+      }, blocked);
       return;
     }
     if (registration.installing === null && retry && checks === 0 && page.online()) {
