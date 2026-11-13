@@ -1,9 +1,12 @@
 import {
+  activateWaitingWorker,
   type ContainerLike,
   createUpdateFlow,
   type RegistrationLike,
   type ServiceWorkerLike,
   type SessionLike,
+  SWITCH_TIMEOUT_MS,
+  type SwitchResult,
   type UpdateFlow,
   type UpdatePage,
   type UpdateReports,
@@ -34,6 +37,7 @@ export interface OfflinePlayOptions extends UpdateReports {
 
 // The service worker container, as far as registering in it goes.
 export interface RegisteringContainer extends ContainerLike {
+  getRegistration(): Promise<RegistrationLike | undefined>;
   register(url: string, options: { scope: string }): Promise<RegistrationLike>;
 }
 
@@ -44,12 +48,18 @@ export interface OfflinePage extends UpdatePage {
   readonly visibilitySource: VisibilitySource;
 }
 
+export type LaunchResult = "continue" | SwitchResult;
+
 export interface OfflinePlay {
+  // Once at document boot, before game construction or save access. A blocked switch may
+  // continue the old build safely. Never call this on title arrival or visibility resume.
+  // A reloading result means the caller must not start the game.
+  launchReady(): Promise<LaunchResult>;
   // The update flow: arriveHome() marks each arrival home, accept() is the update offer's button,
   // and requireNewer() updates by itself for a save a newer version wrote.
   readonly flow: UpdateFlow;
   // Registers the service worker on a first install, once the client has prepared its first
-  // playable frame. A controlled page registers at start, and later calls do nothing.
+  // playable frame. A controlled page registers after launchReady, and this call does nothing.
   registrationReady(): void;
 }
 
@@ -78,13 +88,10 @@ function browserSession(): SessionLike | undefined {
   }
 }
 
-// Offline play and updates, on the kit's update flow. The game shows its first screen at once:
-// nothing here waits or reloads on its own. A controlled page runs the version on disk and
-// registers at once, so the update checks run in the background on each arrival home and when the
-// page comes back into view on it (an installed app resumed without relaunching). A first visit
-// runs from the network and registers when ready, precaching in the background. A failed
-// registration leaves the game running online. The window's online event retries a required
-// update.
+// Call launchReady once before game construction or save access. Controlled launches inspect an
+// already-waiting version before registration can find another update, then register when play
+// may continue. First visits return immediately and register only after registrationReady marks
+// the prepared frame. Arrival and visibility checks stage updates without activating them.
 export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage): OfflinePlay {
   const { container, eventTarget } = page;
   const firstVisit = container.controller === null;
@@ -158,12 +165,47 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
   eventTarget.addEventListener("online", () => flow.noteOnline());
   watchVisibility(eventTarget, page.visibilitySource, (visible) => flow.setVisible(visible));
   const registrationReady = () => {
-    if (!registered) {
+    if (firstVisit && !registered) {
       void register();
     }
   };
-  if (container.controller !== null) {
-    void register();
-  }
-  return { flow, registrationReady };
+  let launch: Promise<LaunchResult> | undefined;
+  const launchReady = (): Promise<LaunchResult> => {
+    if (launch !== undefined) {
+      return launch;
+    }
+    // First visits keep registration behind the prepared-frame boundary.
+    if (firstVisit) {
+      launch = Promise.resolve("continue");
+      return launch;
+    }
+    launch = (async (): Promise<LaunchResult> => {
+      let result: LaunchResult = "continue";
+      try {
+        // Snapshot before register(), which can itself discover and install a later worker.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const registration = await Promise.race([
+          container.getRegistration(),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("Launch lookup timed out")),
+              SWITCH_TIMEOUT_MS,
+            );
+          }),
+        ]).finally(() => clearTimeout(timer));
+        const candidate = registration?.waiting;
+        if (candidate !== null && candidate !== undefined) {
+          result = await activateWaitingWorker(container, () => page.reload(), candidate);
+        }
+      } catch {
+        result = "blocked";
+      }
+      if (result !== "reloading") {
+        void register();
+      }
+      return result;
+    })();
+    return launch;
+  };
+  return { flow, launchReady, registrationReady };
 }

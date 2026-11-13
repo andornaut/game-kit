@@ -11,7 +11,7 @@ import {
 
 // The parts of the Service Worker API this uses, so tests can pass fakes.
 export interface ServiceWorkerLike extends EventTarget {
-  postMessage(message: unknown): void;
+  postMessage(message: unknown, transfer?: Transferable[]): void;
   readonly state: string;
 }
 
@@ -36,21 +36,71 @@ export function waitingWorkerOf(
   return container.controller === null ? undefined : (registration.waiting ?? undefined);
 }
 
-// Tells the waiting worker to take over, then reloads once it controls the page. Without this a
-// waiting worker activates on the next launch, and controllerchange never fires mid-session.
+// Blocked keeps this document on its pinned build and permits a later explicit retry.
+// Reloading means this exact worker acquired control and reload() was called.
+export type SwitchResult = "blocked" | "reloading";
+
+// Ten seconds bounds local validation and control acquisition, not installation or networking.
+// The worker cannot start skipWaiting after this deadline. If control arrives after the bound,
+// the old document stays pinned and no removed reload listener can interrupt its game.
+export const SWITCH_TIMEOUT_MS = 10_000;
+
 export function activateWaitingWorker(
   container: ContainerLike,
   reload: () => void,
   worker: ServiceWorkerLike,
-): void {
-  let reloaded = false;
-  container.addEventListener("controllerchange", () => {
-    if (!reloaded) {
-      reloaded = true;
-      reload();
+): Promise<SwitchResult> {
+  if (worker.state !== "installed") {
+    return Promise.resolve("blocked");
+  }
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    let done = false;
+    let reloaded = false;
+    const changed = () => {
+      if (!reloaded && container.controller === worker) {
+        reloaded = true;
+        container.removeEventListener("controllerchange", changed);
+        finish("reloading");
+        reload();
+      }
+    };
+    const finish = (result: SwitchResult) => {
+      if (done) {
+        return;
+      }
+      done = true;
+      clearTimeout(timer);
+      channel.port1.close();
+      channel.port2.close();
+      worker.removeEventListener("statechange", changedState);
+      if (result === "blocked") {
+        container.removeEventListener("controllerchange", changed);
+      }
+      resolve(result);
+    };
+    const changedState = () => {
+      if (worker.state === "redundant") {
+        finish("blocked");
+      }
+    };
+    const timer = setTimeout(() => finish("blocked"), SWITCH_TIMEOUT_MS);
+    channel.port1.onmessage = ({ data }: MessageEvent<unknown>) => {
+      // Acceptance alone does not establish control. Only controllerchange may reload.
+      if (data !== "activating") {
+        finish("blocked");
+      }
+    };
+    container.addEventListener("controllerchange", changed);
+    worker.addEventListener("statechange", changedState);
+    try {
+      worker.postMessage({ deadline: Date.now() + SWITCH_TIMEOUT_MS, type: SKIP_WAITING_MESSAGE }, [
+        channel.port2,
+      ]);
+    } catch {
+      finish("blocked");
     }
   });
-  worker.postMessage(SKIP_WAITING_MESSAGE);
 }
 
 // The tab's sessionStorage, as far as the reload guard goes.
@@ -86,7 +136,7 @@ export interface UpdateFlow {
   // The offer's button: switch to the waiting version, or with none waiting reload into the
   // active one. Does nothing while a switch is reloading. A save a newer version wrote uses
   // requireNewer instead.
-  accept(): void;
+  accept(): Promise<SwitchResult>;
   // An arrival at the home screen: the first launch and each return to it from play, never a
   // menu or card over it closing. Clears a dismissal and checks for a newer version unless
   // offline, nothing is watched yet or a check is under way; watch's first check serves an
@@ -144,8 +194,8 @@ function releaseControlReload(session: SessionLike | undefined): void {
 }
 
 // Shows the update offer through reports.onUpdateShown, on each change of offerShown. Nothing
-// here delays the game or reloads the page on its own: the game shows its first screen at once,
-// checks run in the background, and only accept() or requireNewer() switches versions.
+// here delays the game: launchReady owns its separate boot boundary. Checks run in the
+// background, while accept() and the required-save policy govern this running document.
 // register() requests a service worker registration that ends in watch(), and settles once it has
 // or failed; requireNewer calls it when nothing is watched or a first install failed.
 export function createUpdateFlow(
@@ -161,6 +211,7 @@ export function createUpdateFlow(
     required: false,
     waiting: false,
   };
+  let accepting: Promise<SwitchResult> | undefined;
   let checks = 0;
   let lastCheck: number | undefined;
   let registering = 0;
@@ -233,7 +284,12 @@ export function createUpdateFlow(
     if (waiting !== null) {
       update({ reloading: true });
       report("updating");
-      activateWaitingWorker(container, () => page.reload(), waiting);
+      void activateWaitingWorker(container, () => page.reload(), waiting).then((result) => {
+        if (result === "blocked") {
+          update({ reloading: false });
+          report("unavailable");
+        }
+      });
       return;
     }
     if (registration.installing === null && retry && checks === 0 && page.online()) {
@@ -269,15 +325,28 @@ export function createUpdateFlow(
   }
   return {
     accept() {
+      if (accepting !== undefined) {
+        return accepting;
+      }
       if (state.reloading) {
-        return;
+        return Promise.resolve("blocked");
       }
       update({ reloading: true });
-      if (waitingWorker === undefined) {
+      const candidate = watched?.waiting ?? waitingWorker;
+      if (candidate === undefined || candidate.state !== "installed") {
         page.reload();
-      } else {
-        activateWaitingWorker(container, () => page.reload(), waitingWorker);
+        return Promise.resolve("reloading");
       }
+      accepting = activateWaitingWorker(container, () => page.reload(), candidate).then(
+        (result) => {
+          if (result === "blocked") {
+            accepting = undefined;
+            update({ reloading: false });
+          }
+          return result;
+        },
+      );
+      return accepting;
     },
     arriveHome() {
       update({ dismissed: false });

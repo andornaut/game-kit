@@ -18,6 +18,10 @@ const pathOf = (key: Request | string) =>
 class FakeCache {
   readonly bodies = new Map<string, Response>();
 
+  delete(key: Request | string): Promise<boolean> {
+    return Promise.resolve(this.bodies.delete(pathOf(key)));
+  }
+
   keys(): Promise<Request[]> {
     return Promise.resolve([...this.bodies.keys()].map((path) => new Request(`${ORIGIN}${path}`)));
   }
@@ -123,6 +127,11 @@ class FakeCaches {
 
 interface WorkerEvent {
   readonly request?: Request;
+  readonly clientId?: string;
+  readonly resultingClientId?: string;
+  readonly data?: unknown;
+  readonly source?: unknown;
+  readonly ports?: readonly { postMessage(value: unknown): void }[];
   respondWith?(response: Promise<Response>): void;
   waitUntil(promise: Promise<unknown>): void;
 }
@@ -146,6 +155,11 @@ function startWorker(
   seeded: Readonly<Record<string, Readonly<Record<string, string>>>>,
   manifest: PrecacheManifest,
   storage = new FakeCaches(),
+  clients: { id: string }[] = [],
+  outgoing:
+    | "capable"
+    | "legacy"
+    | { postMessage(message: unknown, ports: Transferable[]): void } = "capable",
 ) {
   for (const [name, files] of Object.entries(seeded)) {
     storage.seed(name, files);
@@ -153,10 +167,24 @@ function startWorker(
   const listeners = new Map<string, Listener>();
   vi.stubGlobal("caches", storage);
   vi.stubGlobal("fetch", (request: Request) => server.fetch(request));
+  const skipWaiting = vi.fn(() => Promise.resolve());
   vi.stubGlobal("self", {
     addEventListener: (type: string, listener: Listener) => listeners.set(type, listener),
+    clients: { matchAll: () => Promise.resolve(clients) },
     location: { href: `${ORIGIN}/sw.js?sound=ogg`, origin: ORIGIN },
-    skipWaiting: () => Promise.resolve(),
+    registration: {
+      active:
+        typeof outgoing === "string"
+          ? {
+              postMessage: (_message: unknown, ports: MessagePort[]) => {
+                if (outgoing === "capable") {
+                  ports[0]?.postMessage(true);
+                }
+              },
+            }
+          : outgoing,
+    },
+    skipWaiting,
   });
   runServiceWorker(POLICY, manifest);
   const dispatch = async (type: string) => {
@@ -165,19 +193,50 @@ function startWorker(
     await done;
   };
   // The worker's answer to request, or undefined where it leaves the request to the browser.
-  const respond = async (request: Request): Promise<string | undefined> => {
+  const respond = async (
+    request: Request,
+    clientId = "",
+    resultingClientId = "",
+  ): Promise<string | undefined> => {
     let answer: Promise<Response> | undefined;
     listeners.get("fetch")?.({
+      clientId,
       request,
       respondWith: (response) => (answer = response),
+      resultingClientId,
       waitUntil: () => undefined,
     });
     return answer === undefined ? undefined : (await answer).text();
   };
   return {
     activate: () => dispatch("activate"),
+    clients,
     install: () => dispatch("install"),
+    nativeWorker: {
+      postMessage: (data: unknown, ports: Transferable[]) => {
+        listeners.get("message")?.({
+          data,
+          ports: ports as MessagePort[],
+          waitUntil: () => undefined,
+        });
+      },
+    },
+    requestActivation: async (requester: string, deadline = Date.now() + 10_000) => {
+      const replies: unknown[] = [];
+      let done = Promise.resolve<unknown>(undefined);
+      listeners.get("message")?.({
+        data: { deadline, type: "skip-waiting" },
+        ports: [{ postMessage: (value) => replies.push(value) }],
+        source: { id: requester },
+        waitUntil: (promise) => {
+          done = promise;
+        },
+      });
+      await done;
+      return replies;
+    },
     respond,
+    skipWaiting,
     storage,
   };
 }
@@ -273,9 +332,9 @@ describe("runServiceWorker's install", () => {
       "/play/",
     ]);
     expect(await storage.named.get(NEW)?.texts()).toEqual(FILES);
-    expect([...storage.named.keys()]).toEqual([OLD, NEW]);
+    expect([...storage.named.keys()]).toEqual([OLD, NEW, "game-kit-routing:game-"]);
     await activate();
-    expect([...storage.named.keys()]).toEqual([NEW]);
+    expect([...storage.named.keys()]).toEqual([NEW, "game-kit-routing:game-"]);
   });
 
   it("copies from whichever earlier cache holds the file's recorded content", async () => {
@@ -492,7 +551,17 @@ describe("runServiceWorker's fetch", () => {
     ["an unhashed file with no recorded hash", "/art/unrecorded.json", false, "unrecorded v1"],
   ])("answers %s from this version's cache without fetching", async (_, path, navigate, text) => {
     const server = new FakeServer(FILES);
-    const { respond } = startWorker(server, { [NEW]: INSTALLED }, MANIFEST);
+    const { respond } = startWorker(
+      server,
+      { [NEW]: INSTALLED },
+      {
+        ...MANIFEST,
+        contentHashes: Object.fromEntries(
+          Object.entries(INSTALLED).map(([key, text]) => [key, hashOf(text)]),
+        ),
+        urls: Object.keys(INSTALLED),
+      },
+    );
     expect(await respond(requestFor(path, navigate))).toBe(text);
     expect(server.fetched).toEqual([]);
   });
@@ -505,6 +574,47 @@ describe("runServiceWorker's fetch", () => {
     expect(await storage.named.get(NEW)?.texts()).toEqual({ ...INSTALLED, "/art/new.png": "new" });
   });
 
+  it.each([
+    ["/art/new.png", false],
+    ["/play/index.html", true],
+  ])("rejects newer deploy bytes on an active-cache miss for %s", async (path, navigate) => {
+    const files: Record<string, string> = { ...FILES };
+    const server = new FakeServer(files);
+    const worker = startWorker(server, {}, MANIFEST);
+    await worker.install();
+    await worker.activate();
+    const key = path === "/play/index.html" ? "/play/" : path;
+    worker.storage.named.get(NEW)?.bodies.delete(key);
+    files[key] = "bytes from a newer deploy";
+    await expect(worker.respond(requestFor(path, navigate))).rejects.toThrow("active build");
+    expect(worker.storage.named.get(NEW)?.bodies.has(key)).toBe(false);
+  });
+
+  it("rejects wrong miss bytes even when the cache write would fail", async () => {
+    const server = new FakeServer({ ...FILES, "/art/new.png": "art v3" });
+    const { respond, storage } = startWorker(server, { [NEW]: {} }, MANIFEST);
+    const cache = storage.named.get(NEW);
+    if (cache === undefined) {
+      throw new Error("Missing cache");
+    }
+    const put = vi.spyOn(cache, "put").mockRejectedValue(new Error("quota"));
+    await expect(respond(requestFor("/art/new.png"))).rejects.toThrow("active build");
+    expect(put).not.toHaveBeenCalled();
+    put.mockRestore();
+  });
+
+  it("answers verified miss bytes even when the cache write fails", async () => {
+    const { respond, storage } = startWorker(new FakeServer(FILES), { [NEW]: {} }, MANIFEST);
+    const cache = storage.named.get(NEW);
+    if (cache === undefined) {
+      throw new Error("Missing cache");
+    }
+    const put = vi.spyOn(cache, "put").mockRejectedValue(new Error("quota"));
+    expect(await respond(requestFor("/art/new.png"))).toBe("new");
+    expect(await cache.texts()).toEqual({});
+    put.mockRestore();
+  });
+
   // Built in the test, once Request resolves paths against the worker's origin.
   it.each<[string, () => Request]>([
     ["a file outside the precache", () => requestFor("/art/notes.json")],
@@ -513,6 +623,320 @@ describe("runServiceWorker's fetch", () => {
   ])("leaves %s to the network", async (_, request) => {
     const server = new FakeServer(FILES);
     const { respond } = startWorker(server, { [NEW]: INSTALLED }, MANIFEST);
-    expect(await respond(request())).toBeUndefined();
+    const input = request();
+    expect(await respond(input)).toBe(
+      input.method === "POST"
+        ? undefined
+        : ((FILES as Record<string, string>)[pathOf(input)] ?? ""),
+    );
+  });
+});
+
+describe("document build pins", () => {
+  beforeEach(() => vi.stubGlobal("Request", PrioritizedRequest));
+  afterEach(() => vi.unstubAllGlobals());
+
+  const firstFiles = {
+    "/art/card.json": "manifest A",
+    "/art/card.png": "art A",
+    "/play/": "page A",
+  };
+  const secondFiles = {
+    "/art/card.json": "manifest B",
+    "/art/card.png": "art B",
+    "/play/": "page B",
+  };
+  const manifestFor = (version: string, files: Record<string, string>): PrecacheManifest => ({
+    contentHashes: Object.fromEntries(
+      Object.entries(files).map(([path, text]) => [path, hashOf(text)]),
+    ),
+    sounds: {},
+    urls: Object.keys(files),
+    version,
+  });
+
+  it("pins before returning HTML, retains A through B activation, and assigns B to reload", async () => {
+    const storage = new FakeCaches();
+    const clients = [{ id: "old-document" }, { id: "fresh-launch" }];
+    const first = startWorker(
+      new FakeServer(firstFiles),
+      {},
+      manifestFor("a", firstFiles),
+      storage,
+      clients,
+    );
+    await first.install();
+    expect(await first.respond(requestFor("/play/", true), "", "old-document")).toBe("page A");
+    const routing = storage.named.get("game-kit-routing:game-");
+    expect(
+      await routing?.bodies.get("/.game-kit-routing/client/old-document")?.clone().json(),
+    ).toBe("game-a");
+    const second = startWorker(
+      new FakeServer(secondFiles),
+      {},
+      manifestFor("b", secondFiles),
+      storage,
+      clients,
+    );
+    await second.install();
+    expect(await second.requestActivation("fresh-launch")).toEqual(["activating"]);
+    expect(second.skipWaiting).toHaveBeenCalledOnce();
+    await second.activate();
+    expect(storage.named.has("game-a")).toBe(true);
+    expect(await second.respond(requestFor("/art/card.json"), "old-document")).toBe("manifest A");
+    expect(await second.respond(requestFor("/art/card.png"), "old-document")).toBe("art A");
+    expect(
+      await second.respond(requestFor("/play/", true), "fresh-launch", "reloaded-document"),
+    ).toBe("page B");
+    expect(await second.respond(requestFor("/art/card.json"), "reloaded-document")).toBe(
+      "manifest B",
+    );
+    expect(await second.respond(requestFor("/art/card.png"), "reloaded-document")).toBe("art B");
+    storage.named.get("game-a")?.bodies.delete("/art/card.png");
+    await expect(second.respond(requestFor("/art/card.png"), "old-document")).rejects.toThrow(
+      "active build",
+    );
+  });
+
+  it("refuses activation with an unpinned legacy peer and preserves its cache", async () => {
+    const worker = startWorker(
+      new FakeServer(secondFiles),
+      { [OLD]: firstFiles },
+      manifestFor("b", secondFiles),
+      new FakeCaches(),
+      [{ id: "legacy" }, { id: "requester" }],
+    );
+    await worker.install();
+    expect(await worker.requestActivation("requester")).toEqual(["blocked"]);
+    expect(worker.skipWaiting).not.toHaveBeenCalled();
+    await worker.activate();
+    expect(worker.storage.named.has(OLD)).toBe(true);
+  });
+
+  it("allows a lone unpinned requester behind a capable worker, but rejects incomplete stages and expiry", async () => {
+    const worker = startWorker(
+      new FakeServer(secondFiles),
+      {},
+      manifestFor("b", secondFiles),
+      new FakeCaches(),
+      [{ id: "requester" }],
+    );
+    await worker.install();
+    expect(await worker.requestActivation("requester", Date.now() - 1)).toEqual(["blocked"]);
+    worker.storage.named.get("game-b")?.bodies.delete("/art/card.png");
+    expect(await worker.requestActivation("requester")).toEqual(["blocked"]);
+    expect(worker.skipWaiting).not.toHaveBeenCalled();
+    worker.storage.named.get("game-b")?.bodies.set("/art/card.png", new Response("art B"));
+    expect(await worker.requestActivation("requester")).toEqual(["activating"]);
+  });
+
+  it("fails closed for missing pins and metadata errors", async () => {
+    const worker = startWorker(
+      new FakeServer(secondFiles),
+      {},
+      manifestFor("b", secondFiles),
+      new FakeCaches(),
+      [{ id: "peer" }],
+    );
+    await worker.install();
+    await expect(worker.respond(requestFor("/art/card.png"), "unknown")).rejects.toThrow(
+      "Missing document build pin",
+    );
+    const records = worker.storage.named.get("game-kit-routing:game-");
+    if (records === undefined) {
+      throw new Error("Missing routing records");
+    }
+    const match = vi.spyOn(records, "match").mockRejectedValue(new Error("storage unavailable"));
+    expect(await worker.requestActivation("requester")).toEqual(["blocked"]);
+    await worker.activate();
+    expect(worker.skipWaiting).not.toHaveBeenCalled();
+    match.mockRestore();
+  });
+
+  it("passes an unpinned non-game page and its subresources through to the network", async () => {
+    const server = new FakeServer({ "/tuning/": "tuning page", "/tuning/editor.js": "editor" });
+    const worker = startWorker(server, {}, manifestFor("b", secondFiles));
+    expect(await worker.respond(requestFor("/tuning/", true), "", "non-game")).toBe("tuning page");
+    expect(await worker.respond(requestFor("/tuning/editor.js"), "non-game")).toBe("editor");
+    expect(server.fetched).toEqual(["/tuning/", "/tuning/editor.js"]);
+    expect(
+      await worker.storage.named
+        .get("game-kit-routing:game-")
+        ?.match("/.game-kit-routing/client/non-game"),
+    ).toBeUndefined();
+  });
+
+  it("keeps the requesting running document on A until its reload navigation", async () => {
+    const storage = new FakeCaches();
+    const clients = [{ id: "requester" }];
+    const first = startWorker(
+      new FakeServer(firstFiles),
+      {},
+      manifestFor("a", firstFiles),
+      storage,
+      clients,
+    );
+    await first.install();
+    await first.respond(requestFor("/play/", true), "", "requester");
+    const second = startWorker(
+      new FakeServer(secondFiles),
+      {},
+      manifestFor("b", secondFiles),
+      storage,
+      clients,
+    );
+    await second.install();
+    expect(await second.requestActivation("requester")).toEqual(["activating"]);
+    await second.activate();
+    expect(await second.respond(requestFor("/art/card.json"), "requester")).toBe("manifest A");
+    expect(await second.respond(requestFor("/art/card.png"), "requester")).toBe("art A");
+  });
+
+  it("does not fetch an older build's removed asset when its document pin is missing", async () => {
+    const storage = new FakeCaches();
+    const first = startWorker(
+      new FakeServer(firstFiles),
+      {},
+      manifestFor("a", firstFiles),
+      storage,
+    );
+    await first.install();
+    const server = new FakeServer(secondFiles);
+    const nextManifest = manifestFor("b", { "/play/": "page B" });
+    const second = startWorker(server, {}, nextManifest, storage);
+    await second.install();
+    server.fetched.length = 0;
+    await expect(second.respond(requestFor("/art/card.png"), "lost-pin")).rejects.toThrow(
+      "Missing document build pin",
+    );
+    expect(server.fetched).toEqual([]);
+  });
+
+  it("reports a skipWaiting rejection instead of acknowledging activation", async () => {
+    const worker = startWorker(
+      new FakeServer(secondFiles),
+      {},
+      manifestFor("b", secondFiles),
+      new FakeCaches(),
+      [{ id: "requester" }],
+    );
+    await worker.install();
+    worker.skipWaiting.mockRejectedValue(new Error("activation rejected"));
+    expect(await worker.requestActivation("requester")).toEqual(["blocked"]);
+  });
+
+  it("requires the selected sound format without demanding other formats", async () => {
+    const files = { ...secondFiles, "/audio/theme.m4a": "m4a", "/audio/theme.ogg": "ogg" };
+    const manifest = manifestFor("b", files);
+    manifest.urls = Object.keys(secondFiles);
+    manifest.sounds = { m4a: ["/audio/theme.m4a"], ogg: ["/audio/theme.ogg"] };
+    const worker = startWorker(new FakeServer(files), {}, manifest, new FakeCaches(), [
+      { id: "requester" },
+    ]);
+    await worker.install();
+    expect(worker.storage.named.get("game-b")?.bodies.has("/audio/theme.m4a")).toBe(false);
+    expect(await worker.requestActivation("requester")).toEqual(["activating"]);
+    worker.storage.named.get("game-b")?.bodies.delete("/audio/theme.ogg");
+    expect(await worker.requestActivation("requester")).toEqual(["blocked"]);
+  });
+
+  it("refuses a legacy outgoing worker even when a new unpinned navigation appears during the request", async () => {
+    vi.useFakeTimers();
+    try {
+      const clients = [{ id: "requester" }];
+      const worker = startWorker(
+        new FakeServer(secondFiles),
+        {},
+        manifestFor("b", secondFiles),
+        new FakeCaches(),
+        clients,
+        "legacy",
+      );
+      await worker.install();
+      const switchResult = worker.requestActivation("requester");
+      clients.push({ id: "late-legacy-navigation" });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await switchResult).toEqual(["blocked"]);
+      expect(worker.skipWaiting).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("verifies routing capability through the actual outgoing worker's handler", async () => {
+    const storage = new FakeCaches();
+    const clients = [{ id: "requester" }];
+    const first = startWorker(
+      new FakeServer(firstFiles),
+      {},
+      manifestFor("a", firstFiles),
+      storage,
+      clients,
+    );
+    await first.install();
+    await first.respond(requestFor("/play/", true), "", "requester");
+    const second = startWorker(
+      new FakeServer(secondFiles),
+      {},
+      manifestFor("b", secondFiles),
+      storage,
+      clients,
+      first.nativeWorker,
+    );
+    await second.install();
+    expect(await second.requestActivation("requester")).toEqual(["activating"]);
+  });
+
+  it("selects the complete old build offline when B loses a file before natural activation", async () => {
+    const storage = new FakeCaches();
+    const first = startWorker(
+      new FakeServer(firstFiles),
+      {},
+      manifestFor("a", firstFiles),
+      storage,
+    );
+    await first.install();
+    await first.activate();
+    const server = new FakeServer(secondFiles);
+    const second = startWorker(server, {}, manifestFor("b", secondFiles), storage);
+    await second.install();
+    storage.named.get("game-b")?.bodies.delete("/art/card.png");
+    await second.activate();
+    server.fetched.length = 0;
+    server.failures.set("/play/", "always");
+    server.failures.set("/art/card.png", "always");
+    expect(storage.named.has("game-a")).toBe(true);
+    expect(await second.respond(requestFor("/play/", true), "", "fallback-document")).toBe(
+      "page A",
+    );
+    expect(await second.respond(requestFor("/art/card.json"), "fallback-document")).toBe(
+      "manifest A",
+    );
+    expect(await second.respond(requestFor("/art/card.png"), "fallback-document")).toBe("art A");
+    expect(server.fetched).toEqual([]);
+  });
+
+  it("does not serve B when natural activation has no complete cached build", async () => {
+    const worker = startWorker(new FakeServer(secondFiles), {}, manifestFor("b", secondFiles));
+    await worker.install();
+    worker.storage.named.get("game-b")?.bodies.delete("/art/card.png");
+    await worker.activate();
+    await expect(worker.respond(requestFor("/play/", true), "", "new-document")).rejects.toThrow(
+      "No complete cached build",
+    );
+  });
+
+  it("does not return a navigation response if its pin cannot be stored", async () => {
+    const worker = startWorker(new FakeServer(firstFiles), {}, manifestFor("a", firstFiles));
+    await worker.install();
+    const records = worker.storage.named.get("game-kit-routing:game-");
+    if (records === undefined) {
+      throw new Error("Missing routing records");
+    }
+    const put = vi.spyOn(records, "put").mockRejectedValue(new Error("quota"));
+    await expect(worker.respond(requestFor("/play/", true), "", "new-document")).rejects.toThrow(
+      "quota",
+    );
+    put.mockRestore();
   });
 });

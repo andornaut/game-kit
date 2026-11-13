@@ -25,24 +25,58 @@ interface LifecycleEvent extends Event {
 
 interface FetchRequestEvent extends LifecycleEvent {
   readonly request: Request;
+  readonly clientId: string;
+  readonly resultingClientId: string;
   respondWith(response: Promise<Response>): void;
 }
 
+interface MessageRequestEvent extends MessageEvent {
+  waitUntil(promise: Promise<unknown>): void;
+}
+
+interface WorkerInstance {
+  postMessage(message: unknown, transfer: Transferable[]): void;
+}
+
+interface BuildRecord {
+  readonly manifest: PrecacheManifest;
+  readonly urls: readonly string[];
+}
+
 interface WorkerScope {
+  readonly registration: { readonly active: WorkerInstance | null };
+  readonly clients: {
+    matchAll(options: {
+      includeUncontrolled: boolean;
+      type: "window";
+    }): Promise<readonly { id: string }[]>;
+  };
   addEventListener(type: "activate" | "install", listener: (event: LifecycleEvent) => void): void;
   addEventListener(type: "fetch", listener: (event: FetchRequestEvent) => void): void;
-  addEventListener(type: "message", listener: (event: MessageEvent) => void): void;
+  addEventListener(type: "message", listener: (event: MessageRequestEvent) => void): void;
   readonly location: { readonly href: string; readonly origin: string };
   skipWaiting(): Promise<void>;
 }
 
 const SOUND_FORMAT_PARAM: SoundFormatParam = "sound";
 const SKIP_WAITING: SkipWaitingMessage = "skip-waiting";
+const ROUTING_CAPABILITY = "game-kit-routing-capability";
 
 // Only a whole response is stored: Cache.put rejects a 206, which an audio element's range
-// request can get. A write that fails (a full quota) still answers with the network's response.
-async function fetchAndStore(cache: Cache, key: string, request: Request): Promise<Response> {
+// request can get. Validate before answering, even when the cache write cannot succeed.
+async function fetchAndStore(
+  cache: Cache,
+  contentHash: string | undefined,
+  key: string,
+  request: Request,
+): Promise<Response> {
   const response = await fetch(request);
+  if (
+    contentHash !== undefined &&
+    (response.status !== 200 || (await responseContentHash(response)) !== contentHash)
+  ) {
+    throw new TypeError(`Response does not match the active build for ${key}`);
+  }
   if (response.status === 200) {
     await cache.put(key, response.clone()).catch(() => undefined);
   }
@@ -184,18 +218,66 @@ async function fetchIntoCache(
   return { error, url };
 }
 
-// Precaches manifest on install, file by file, resumably and checked (precache below), deletes the
-// policy's other caches on activate and answers same-origin GETs by strategyFor: every precached
-// URL, the page included, from this version's cache, so a controlled page starts at once with the
-// version on disk, and anything else from the network. No skipWaiting on install: a new worker
-// waits until every page the old one controls has closed, so a running game never has its cache
-// deleted or its code swapped. It takes over on the next launch, or when the page posts the
-// skip-waiting message (updateReady's activateWaitingWorker) and reloads once this worker
-// controls it.
+// Stages the selected sound format and all common files in a separate build cache. Installation
+// succeeds only after every required response is stored and verified. Document pins preserve
+// their build's manifest and assets across another document's explicit activation and reload.
+// An activation handshake refuses unknown peers and incomplete stages. Cache reclamation occurs
+// only at a client-free activation; missing visibility or metadata preserves old builds.
 export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest): void {
   const worker = self as unknown as WorkerScope;
   const cacheName = cacheNameFor(policy, manifest.version);
-  const cachedUrls = cachedUrlsOf(manifest);
+  // Routing records are private and cannot be mistaken for a version cache.
+  const routingName = `game-kit-routing:${policy.cacheNamePrefix}`;
+  const recordUrl = (kind: "build" | "client" | "selection", id: string) =>
+    `${worker.location.origin}/.game-kit-routing/${kind}/${encodeURIComponent(id)}`;
+  const routing = () => caches.open(routingName);
+  const writeRecord = async (
+    kind: "build" | "client" | "selection",
+    id: string,
+    value: unknown,
+  ) => {
+    await (await routing()).put(recordUrl(kind, id), new Response(JSON.stringify(value)));
+  };
+  const readPin = async (id: string): Promise<string | undefined> => {
+    const response = await (await routing()).match(recordUrl("client", id));
+    if (response === undefined) {
+      return undefined;
+    }
+    const value: unknown = await response.json();
+    if (typeof value !== "string" || !value.startsWith(policy.cacheNamePrefix)) {
+      throw new TypeError("Invalid document build pin");
+    }
+    return value;
+  };
+  const readBuild = async (name: string): Promise<BuildRecord> => {
+    const response = await (await routing()).match(recordUrl("build", name));
+    if (response === undefined) {
+      throw new TypeError("Missing document build manifest");
+    }
+    return (await response.json()) as BuildRecord;
+  };
+  // An evicted document pin cannot turn one of an older build's private URLs into network-only.
+  const managedByEarlierBuild = async (pathname: string): Promise<boolean> => {
+    const records = await routing();
+    const keys = await records.keys();
+    const builds = keys.filter((key) =>
+      new URL(key.url).pathname.startsWith("/.game-kit-routing/build/"),
+    );
+    const matches = await Promise.all(
+      builds.map(async (key) => {
+        const response = await records.match(key);
+        if (response === undefined) {
+          throw new TypeError("Missing build routing record");
+        }
+        const { manifest: build } = (await response.json()) as BuildRecord;
+        return (
+          strategyFor(policy, cachedUrlsOf(build), { isNavigation: false, pathname }) ===
+          "cache-first"
+        );
+      }),
+    );
+    return matches.some(Boolean);
+  };
 
   // The install stores every URL in this version's cache (cacheName) in three steps:
   // - A URL the cache already holds, from an earlier failed attempt to install this same version
@@ -204,8 +286,7 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
   // - An earlier version's copy of each unchanged file is reused rather than fetched again, so a
   //   deploy downloads only what changed (installPlan): a hashed file by its name, any other file
   //   only where its bytes in the earlier cache have the content hash this manifest records. The
-  //   hash is taken from the stored bytes, not from a record, because a cache miss stores whatever
-  //   the network serves, unchecked. The earlier caches stay until activate.
+  //   hash is taken from the stored bytes, not from a record. Live documents retain earlier caches.
   // - Every other URL is fetched at low priority, at most PRECACHE_CONCURRENCY at a time, each
   //   checked against its recorded content hash and stored as soon as it arrives, with up to three
   //   attempts per file (fetchIntoCache). Bytes from a newer deploy fail the check, so this version
@@ -223,7 +304,9 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     );
     const urls = listedUrls.filter((_, index) => kept[index] !== true);
     const earlier = await Promise.all(
-      staleCacheNames(policy, cacheName, await caches.keys()).map((name) => caches.open(name)),
+      staleCacheNames(policy, cacheName, await caches.keys())
+        .filter((name) => name !== routingName)
+        .map((name) => caches.open(name)),
     );
     const listed = await Promise.all(
       earlier.map(async (old) =>
@@ -266,25 +349,231 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
       console.error(`${message}. Last error:`, last.error);
       throw new Error(message, { cause: last.error });
     }
+    await writeRecord("build", cacheName, { manifest, urls: listedUrls });
   };
 
+  const currentBuild: BuildRecord = {
+    manifest,
+    urls: installUrls(manifest, new URL(worker.location.href).searchParams.get(SOUND_FORMAT_PARAM)),
+  };
+  const completeBuild = async (name: string, build: BuildRecord): Promise<boolean> => {
+    const cache = await caches.open(name);
+    const complete = await mapBounded(
+      REUSE_CONCURRENCY,
+      async (url) =>
+        (await storedCopy([cache], url, build.manifest.contentHashes[url])) !== undefined,
+      build.urls,
+    );
+    return complete.every(Boolean);
+  };
+  const selectCompleteBuild = async (): Promise<boolean> => {
+    // Persist failure first so an interrupted activation cannot select an incomplete cache.
+    await writeRecord("selection", cacheName, null);
+    if (await completeBuild(cacheName, currentBuild)) {
+      await writeRecord("selection", cacheName, cacheName);
+      return true;
+    }
+    const previous = staleCacheNames(policy, cacheName, await caches.keys()).filter(
+      (name) => name !== routingName,
+    );
+    for (const name of previous.reverse()) {
+      try {
+        // Earlier builds are tried in turn, stopping at the first complete selected format.
+        // eslint-disable-next-line no-await-in-loop
+        const build = await readBuild(name);
+        // eslint-disable-next-line no-await-in-loop
+        if (await completeBuild(name, build)) {
+          // eslint-disable-next-line no-await-in-loop
+          await writeRecord("selection", cacheName, name);
+          return false;
+        }
+      } catch {
+        // A legacy cache without a manifest cannot prove completeness and is retained.
+      }
+    }
+    return false;
+  };
+  const navigationBuild = async (): Promise<string> => {
+    const record = await (await routing()).match(recordUrl("selection", cacheName));
+    if (record === undefined) {
+      if (await completeBuild(cacheName, currentBuild)) {
+        return cacheName;
+      }
+      throw new TypeError("No complete cached build");
+    }
+    const selected: unknown = await record.json();
+    if (typeof selected !== "string" || !selected.startsWith(policy.cacheNamePrefix)) {
+      throw new TypeError("No complete cached build");
+    }
+    return selected;
+  };
+  const outgoingCanPin = (deadline: number): Promise<boolean> => {
+    const active = worker.registration.active;
+    if (active === null) {
+      return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+      const channel = new MessageChannel();
+      const finish = (capable: boolean) => {
+        clearTimeout(timer);
+        channel.port1.close();
+        channel.port2.close();
+        resolve(capable);
+      };
+      const timer = setTimeout(() => finish(false), Math.max(0, deadline - Date.now()));
+      channel.port1.onmessage = ({ data }: MessageEvent<unknown>) => finish(data === true);
+      try {
+        active.postMessage(ROUTING_CAPABILITY, [channel.port2]);
+      } catch {
+        finish(false);
+      }
+    });
+  };
+
+  // Missing visibility or records preserve all caches. Only proven-unused builds are removed.
   const deleteStaleCaches = async () => {
-    const stale = staleCacheNames(policy, cacheName, await caches.keys());
-    await Promise.all(stale.map((name) => caches.delete(name)));
+    const clients = await worker.clients.matchAll({ includeUncontrolled: true, type: "window" });
+    const pins = await Promise.all(clients.map(({ id }) => readPin(id)));
+    if (pins.some((pin) => pin === undefined)) {
+      return;
+    }
+    // Live and reserved navigations may still be completing under the previous worker.
+    // Reclaim only at a client-free activation; an explicit switch always retains old builds.
+    if (clients.length > 0) {
+      return;
+    }
+    const stale = staleCacheNames(policy, cacheName, await caches.keys()).filter(
+      (name) => name !== routingName,
+    );
+    const records = await routing();
+    const keys = await records.keys();
+    await Promise.all(
+      stale.map(async (name) => {
+        await caches.delete(name);
+        await records.delete(recordUrl("build", name));
+      }),
+    );
+    await Promise.all(
+      keys
+        .filter((key) => new URL(key.url).pathname.startsWith("/.game-kit-routing/client/"))
+        .map((key) => records.delete(key)),
+    );
   };
 
-  // This version's stored copy, or on a miss the network's response, stored for next time.
-  const cacheFirst = async (request: Request, key: string) => {
-    const cache = await caches.open(cacheName);
-    const cached = await cache.match(key);
-    return cached ?? fetchAndStore(cache, key, request);
+  const cacheFirst = async (event: FetchRequestEvent): Promise<Response> => {
+    const { clientId, request, resultingClientId } = event;
+    const navigation = request.mode === "navigate";
+    if (
+      navigation &&
+      strategyFor(policy, cachedUrlsOf(manifest), {
+        isNavigation: true,
+        pathname: new URL(request.url).pathname,
+      }) === "network-only"
+    ) {
+      return fetch(request);
+    }
+    const pinned = navigation
+      ? await navigationBuild()
+      : !clientId
+        ? cacheName
+        : await readPin(clientId);
+    if (pinned === undefined) {
+      if (
+        strategyFor(policy, cachedUrlsOf(manifest), {
+          isNavigation: navigation,
+          pathname: new URL(request.url).pathname,
+        }) === "network-only" &&
+        !(await managedByEarlierBuild(new URL(request.url).pathname))
+      ) {
+        return fetch(request);
+      }
+      throw new TypeError("Missing document build pin");
+    }
+    const build = pinned === cacheName ? manifest : (await readBuild(pinned)).manifest;
+    const pathname = new URL(request.url).pathname;
+    const strategy = strategyFor(policy, cachedUrlsOf(build), {
+      isNavigation: navigation,
+      pathname,
+    });
+    if (strategy !== "cache-first") {
+      return fetch(request);
+    }
+    const cache = await caches.open(pinned);
+    const key = cacheKeyFor(pathname);
+    const response =
+      (await cache.match(key)) ??
+      (await fetchAndStore(cache, build.contentHashes[key], key, request));
+    // The new document cannot request any resources until its pin has been persisted.
+    if (navigation && resultingClientId) {
+      await writeRecord("client", resultingClientId, pinned);
+    }
+    return response;
+  };
+
+  const requestActivation = async (event: MessageRequestEvent) => {
+    const port = event.ports[0];
+    // Legacy callers have no handshake and cannot safely distinguish a refused switch.
+    if (port === undefined) {
+      return;
+    }
+    try {
+      const source = event.source;
+      const requester = source !== null && "id" in source ? source.id : undefined;
+      const clients = await worker.clients.matchAll({ includeUncontrolled: true, type: "window" });
+      const peers = clients.filter(({ id }) => id !== requester);
+      const pins = await Promise.all(peers.map(({ id }) => readPin(id)));
+      if (typeof requester !== "string" || pins.some((pin) => pin === undefined)) {
+        port.postMessage("blocked");
+        return;
+      }
+      // A recorded pin without its manifest is not evidence that the peer can keep running.
+      await Promise.all(pins.map((pin) => readBuild(pin as string)));
+      const requesterPin = await readPin(requester);
+      if (requesterPin !== undefined) {
+        await readBuild(requesterPin);
+      }
+      const { deadline } = event.data as { deadline: number };
+      if (
+        !Number.isFinite(deadline) ||
+        Date.now() >= deadline ||
+        !(await outgoingCanPin(deadline))
+      ) {
+        port.postMessage("blocked");
+        return;
+      }
+      if (!(await completeBuild(cacheName, currentBuild)) || Date.now() >= deadline) {
+        port.postMessage("blocked");
+        return;
+      }
+      // No asynchronous work may intervene between the deadline check and activation.
+      await worker.skipWaiting();
+      port.postMessage("activating");
+    } catch {
+      port.postMessage("blocked");
+    }
   };
 
   worker.addEventListener("install", (event) => event.waitUntil(precache()));
-  worker.addEventListener("activate", (event) => event.waitUntil(deleteStaleCaches()));
+  worker.addEventListener("activate", (event) =>
+    event.waitUntil(
+      (async () => {
+        if (await selectCompleteBuild()) {
+          await deleteStaleCaches();
+        }
+      })().catch(() => undefined),
+    ),
+  );
   worker.addEventListener("message", (event) => {
-    if (event.data === SKIP_WAITING) {
-      void worker.skipWaiting();
+    if (event.data === ROUTING_CAPABILITY) {
+      event.waitUntil(
+        routing()
+          .then(() => event.ports[0]?.postMessage(true))
+          .catch(() => event.ports[0]?.postMessage(false)),
+      );
+      return;
+    }
+    if ((event.data as { type?: unknown } | null)?.type === SKIP_WAITING) {
+      event.waitUntil(requestActivation(event));
     }
   });
 
@@ -294,12 +583,6 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     if (request.method !== "GET" || url.origin !== worker.location.origin) {
       return;
     }
-    const strategy = strategyFor(policy, cachedUrls, {
-      isNavigation: request.mode === "navigate",
-      pathname: url.pathname,
-    });
-    if (strategy === "cache-first") {
-      event.respondWith(cacheFirst(request, cacheKeyFor(url.pathname)));
-    }
+    event.respondWith(cacheFirst(event));
   });
 }

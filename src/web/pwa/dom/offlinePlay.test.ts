@@ -14,6 +14,7 @@ import {
   type RegistrationLike,
   type ServiceWorkerLike,
   type SessionLike,
+  SWITCH_TIMEOUT_MS,
 } from "./updateReady.ts";
 import type { VisibilitySource } from "./visibility.ts";
 
@@ -32,8 +33,9 @@ class FakeWorker extends EventTarget implements ServiceWorkerLike {
   readonly messages: unknown[] = [];
   state = "installed";
 
-  postMessage(message: unknown): void {
-    this.messages.push(message);
+  postMessage(message: unknown, transfer?: Transferable[]): void {
+    this.messages.push((message as { type?: unknown })?.type ?? message);
+    (transfer?.[0] as MessagePort | undefined)?.postMessage("activating");
   }
 }
 
@@ -93,8 +95,23 @@ class FakeContainer extends EventTarget implements RegisteringContainer {
   constructor(
     readonly controller: unknown,
     private readonly registration: Promise<RegistrationLike>,
+    private readonly controllerOnChange: () => ServiceWorkerLike | null,
   ) {
     super();
+  }
+
+  getRegistration(): Promise<RegistrationLike | undefined> {
+    return Promise.resolve(undefined);
+  }
+
+  override dispatchEvent(event: Event): boolean {
+    if (event.type === "controllerchange") {
+      Object.defineProperty(this, "controller", {
+        configurable: true,
+        value: this.controllerOnChange(),
+      });
+    }
+    return super.dispatchEvent(event);
   }
 
   register(url: string, options: { scope: string }): Promise<RegistrationLike> {
@@ -114,7 +131,11 @@ function openPage(
   controlled: boolean,
   deployed: Deployed | "fails",
   onOfflineActivity?: (activity: OfflineActivity) => void,
-  { offline = false, session }: { offline?: boolean; session?: SessionLike | undefined } = {},
+  {
+    autoLaunch = true,
+    offline = false,
+    session,
+  }: { offline?: boolean; session?: SessionLike | undefined; autoLaunch?: boolean } = {},
 ) {
   const registration = deployed === "fails" ? undefined : new FakeRegistration(deployed);
   const container = new FakeContainer(
@@ -122,6 +143,7 @@ function openPage(
     registration === undefined
       ? Promise.reject(new Error("no worker"))
       : Promise.resolve(registration),
+    () => registration?.waiting ?? registration?.active ?? null,
   );
   const clock = { now: 0, online: !offline, reloads: 0 };
   const required: RequiredUpdateState[] = [];
@@ -147,6 +169,9 @@ function openPage(
     },
     page,
   );
+  if (autoLaunch) {
+    void play.launchReady();
+  }
   return { clock, container, page, play, registration, required, shown, visibilitySource };
 }
 
@@ -220,6 +245,170 @@ afterEach(() => {
 });
 
 describe("startOfflinePlay", () => {
+  it("snapshots launch before registering and never arms a later installed worker", async () => {
+    const { container, play, registration } = openPage(true, "installing", undefined, {
+      autoLaunch: false,
+    });
+    const found = requireRegistration(registration);
+    const worker = startInstall(found);
+    const lookup = vi.spyOn(container, "getRegistration").mockResolvedValue(found);
+    expect(container.registered).toEqual([]);
+    play.registrationReady();
+    expect(container.registered).toEqual([]);
+    expect(await play.launchReady()).toBe("continue");
+    expect(container.registered).toHaveLength(1);
+    endInstall(found, worker, "installed");
+    play.flow.arriveHome();
+    play.flow.setVisible(true);
+    expect(await play.launchReady()).toBe("continue");
+    expect(lookup).toHaveBeenCalledOnce();
+    expect(worker.messages).toEqual([]);
+  });
+
+  it("activates only a complete waiting launch snapshot before game startup", async () => {
+    const { clock, container, play, registration } = openPage(true, "waiting", undefined, {
+      autoLaunch: false,
+    });
+    vi.spyOn(container, "getRegistration").mockResolvedValue(requireRegistration(registration));
+    const launch = play.launchReady();
+    await settle();
+    expect(container.registered).toEqual([]);
+    expect(registration?.waiting?.messages).toEqual([SKIP_WAITING_MESSAGE]);
+    container.dispatchEvent(new Event("controllerchange"));
+    expect(await launch).toBe("reloading");
+    expect(clock.reloads).toBe(1);
+  });
+
+  it("never substitutes a later worker for a redundant launch candidate", async () => {
+    const { clock, container, play, registration } = openPage(true, "waiting", undefined, {
+      autoLaunch: false,
+    });
+    const found = requireRegistration(registration);
+    const candidate = found.waiting;
+    if (candidate === null) {
+      throw new Error("Missing candidate");
+    }
+    vi.spyOn(candidate, "postMessage").mockImplementation(() => {
+      candidate.state = "redundant";
+      found.waiting = new FakeWorker();
+      candidate.dispatchEvent(new Event("statechange"));
+    });
+    vi.spyOn(container, "getRegistration").mockResolvedValue(found);
+    expect(await play.launchReady()).toBe("blocked");
+    expect(await play.launchReady()).toBe("blocked");
+    expect(found.waiting?.messages).toEqual([]);
+    container.dispatchEvent(new Event("controllerchange"));
+    expect(clock.reloads).toBe(0);
+  });
+
+  it("resets a blocked Update now so the offer can retry without reload listener leaks", async () => {
+    const { clock, container, play, registration, shown } = openPage(true, "waiting");
+    await settle();
+    showHome(play, true);
+    const worker = requireRegistration(registration).waiting;
+    if (worker === null) {
+      throw new Error("Missing candidate");
+    }
+    const post = vi.spyOn(worker, "postMessage").mockImplementation((_, transfer) => {
+      (transfer?.[0] as MessagePort).postMessage("blocked");
+    });
+    expect(await play.flow.accept()).toBe("blocked");
+    expect(shown).toEqual([true, false, true]);
+    container.dispatchEvent(new Event("controllerchange"));
+    expect(clock.reloads).toBe(0);
+    post.mockRestore();
+    const retry = play.flow.accept();
+    container.dispatchEvent(new Event("controllerchange"));
+    expect(await retry).toBe("reloading");
+    expect(clock.reloads).toBe(1);
+  });
+
+  it("bounds an unanswered activation handshake and removes the reload listener", async () => {
+    vi.useFakeTimers();
+    const { clock, container, play, registration } = openPage(true, "waiting", undefined, {
+      autoLaunch: false,
+    });
+    const found = requireRegistration(registration);
+    vi.spyOn(container, "getRegistration").mockResolvedValue(found);
+    if (found.waiting === null) {
+      throw new Error("Missing candidate");
+    }
+    vi.spyOn(found.waiting, "postMessage").mockImplementation(() => undefined);
+    const launch = play.launchReady();
+    await vi.advanceTimersByTimeAsync(SWITCH_TIMEOUT_MS);
+    expect(await launch).toBe("blocked");
+    container.dispatchEvent(new Event("controllerchange"));
+    expect(clock.reloads).toBe(0);
+  });
+
+  it("does not report reloading on acceptance without control and safely bounds the wait", async () => {
+    vi.useFakeTimers();
+    const { clock, container, play, registration } = openPage(true, "waiting", undefined, {
+      autoLaunch: false,
+    });
+    vi.spyOn(container, "getRegistration").mockResolvedValue(requireRegistration(registration));
+    const launch = play.launchReady();
+    let result: unknown;
+    void launch.then((value) => {
+      result = value;
+    });
+    await vi.advanceTimersByTimeAsync(SWITCH_TIMEOUT_MS - 1);
+    expect(result).toBeUndefined();
+    expect(clock.reloads).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await launch).toBe("blocked");
+    container.dispatchEvent(new Event("controllerchange"));
+    expect(clock.reloads).toBe(0);
+  });
+
+  it("resolves first-visit launch without lookup or registration", async () => {
+    const { container, play } = openPage(false, "installing", undefined, { autoLaunch: false });
+    const lookup = vi.spyOn(container, "getRegistration");
+    expect(await play.launchReady()).toBe("continue");
+    expect(lookup).not.toHaveBeenCalled();
+    expect(container.registered).toEqual([]);
+    play.registrationReady();
+    expect(container.registered).toHaveLength(1);
+  });
+
+  it("bounds registration lookup and ignores a waiting candidate returned after startup continues", async () => {
+    vi.useFakeTimers();
+    const { clock, container, play, registration } = openPage(true, "waiting", undefined, {
+      autoLaunch: false,
+    });
+    let finishLookup: ((registration: RegistrationLike) => void) | undefined;
+    vi.spyOn(container, "getRegistration").mockReturnValue(
+      new Promise((resolve) => {
+        finishLookup = resolve;
+      }),
+    );
+    const launch = play.launchReady();
+    await vi.advanceTimersByTimeAsync(SWITCH_TIMEOUT_MS);
+    expect(await launch).toBe("blocked");
+    expect(container.registered).toHaveLength(1);
+    finishLookup?.(requireRegistration(registration));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(registration?.waiting?.messages).toEqual([]);
+    expect(clock.reloads).toBe(0);
+  });
+
+  it("reloads on explicit acceptance after another document already activated the offered worker", async () => {
+    const { clock, container, play, registration } = openPage(true, "waiting");
+    await settle();
+    const found = requireRegistration(registration);
+    const worker = found.waiting;
+    if (worker === null) {
+      throw new Error("Missing worker");
+    }
+    worker.state = "activated";
+    found.waiting = null;
+    found.active = worker;
+    container.dispatchEvent(new Event("controllerchange"));
+    expect(clock.reloads).toBe(0);
+    expect(await play.flow.accept()).toBe("reloading");
+    expect(clock.reloads).toBe(1);
+    expect(worker.messages).toEqual([]);
+  });
   it("defers first registration until client readiness after its prepared frame independently of offers", async () => {
     const { container, play } = openPage(false, "none");
     play.flow.setOfferVisible(true);
@@ -318,7 +507,7 @@ describe("startOfflinePlay", () => {
       activities.push(activity),
     );
     const worker = startInstall(registration);
-    expect(container.registered).toHaveLength(1);
+    expect(container.registered).toHaveLength(0);
     expect(activities).toEqual(["idle"]);
     await settle();
     expect(activities).toEqual(["idle", "updating"]);
@@ -331,8 +520,9 @@ describe("startOfflinePlay", () => {
   it("keeps a controlled page idle when its registration finds no worker installing", async () => {
     const activities: OfflineActivity[] = [];
     const { container } = openPage(true, "none", (activity) => activities.push(activity));
-    expect(container.registered).toHaveLength(1);
+    expect(container.registered).toHaveLength(0);
     await settle();
+    expect(container.registered).toHaveLength(1);
     expect(activities).toEqual(["idle"]);
   });
 
@@ -372,7 +562,7 @@ describe("startOfflinePlay", () => {
     showHome(play, true);
     await vi.advanceTimersByTimeAsync(10 * RESUME_CHECK_MS);
     endInstall(registration, installing, "redundant");
-    expect(Object.keys(play).sort()).toEqual(["flow", "registrationReady"]);
+    expect(Object.keys(play).sort()).toEqual(["flow", "launchReady", "registrationReady"]);
     expect(Object.keys(play.flow).sort()).toEqual([
       "accept",
       "arriveHome",
