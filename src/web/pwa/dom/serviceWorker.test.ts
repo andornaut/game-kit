@@ -236,6 +236,16 @@ function startWorker(
       return replies;
     },
     respond,
+    sendLegacyAccept: () => {
+      const reply = vi.fn();
+      listeners.get("message")?.({
+        data: "skip-waiting",
+        ports: [],
+        source: { id: "legacy-requester", postMessage: reply },
+        waitUntil: () => undefined,
+      });
+      return reply;
+    },
     skipWaiting,
     storage,
   };
@@ -711,6 +721,14 @@ describe("document build pins", () => {
     expect(worker.skipWaiting).not.toHaveBeenCalled();
     await worker.activate();
     expect(worker.storage.named.has(OLD)).toBe(true);
+  });
+
+  it("ignores a legacy string accept without activating or replying to immutable old code", async () => {
+    const worker = startWorker(new FakeServer(secondFiles), {}, manifestFor("b", secondFiles));
+    await worker.install();
+    const reply = worker.sendLegacyAccept();
+    expect(worker.skipWaiting).not.toHaveBeenCalled();
+    expect(reply).not.toHaveBeenCalled();
   });
 
   it("allows a lone unpinned requester behind a capable worker, but rejects incomplete stages and expiry", async () => {
