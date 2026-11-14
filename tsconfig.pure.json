@@ -55,6 +55,7 @@
     "src/ui/controlPresentation.ts",
     "src/ui/focusKeys.ts",
     "src/ui/hitAreas.ts",
+    "src/ui/layoutTree.ts",
     "src/ui/spacing.ts",
     "src/units.ts",
     "src/view/fitCheck.ts",

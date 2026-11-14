@@ -34,7 +34,7 @@
     "vite": "^8.3.5",
     "vitest": "^5.0.5"
   },
-  "version": "0.40.0",
+  "version": "0.41.0",
   "peerDependencies": {
     "phaser": "^4.2.1",
     "typescript": "^6.0.3",
@@ -112,6 +112,7 @@
     "./ui/controlPresentation": "./src/ui/controlPresentation.ts",
     "./ui/focusKeys": "./src/ui/focusKeys.ts",
     "./ui/hitAreas": "./src/ui/hitAreas.ts",
+    "./ui/layoutTree": "./src/ui/layoutTree.ts",
     "./ui/spacing": "./src/ui/spacing.ts",
     "./units": "./src/units.ts",
     "./view/fitCheck": "./src/view/fitCheck.ts",
@@ -181,6 +182,8 @@
     "./web/ui/dom/focusModality": "./src/web/ui/dom/focusModality.ts",
     "./web/ui/dom/imageReady": "./src/web/ui/dom/imageReady.ts",
     "./web/ui/dom/layoutProperties": "./src/web/ui/dom/layoutProperties.ts",
+    "./web/ui/dom/layoutTree": "./src/web/ui/dom/layoutTree.ts",
+    "./web/ui/dom/layoutTree.css": "./src/web/ui/dom/layoutTree.css",
     "./web/ui/dom/modalLayer": "./src/web/ui/dom/modalLayer.ts",
     "./web/ui/dom/refusalCue": "./src/web/ui/dom/refusalCue.ts",
     "./web/ui/dom/sheetFrames": "./src/web/ui/dom/sheetFrames.ts",

@@ -28,6 +28,7 @@
     "src/web/ui/dom/focusModality.ts",
     "src/web/ui/dom/imageReady.ts",
     "src/web/ui/dom/layoutProperties.ts",
+    "src/web/ui/dom/layoutTree.ts",
     "src/web/ui/dom/modalLayer.ts",
     "src/web/ui/dom/refusalCue.ts",
     "src/web/ui/dom/sheetFrames.ts",
