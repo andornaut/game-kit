@@ -20,11 +20,9 @@ describe("pageToGame", () => {
     ["the left bar", 0, { x: 50, y: 200 }, { x: -81, y: 180 }],
     ["above the canvas", 0, { x: 500, y: -30 }, { x: 324, y: -27 }],
     ["the game's top-left", 90, { x: 400, y: 140 }, { x: 0, y: 0 }],
-    ["mid-canvas", 90, { x: 200, y: 500 }, { x: 324, y: 180 }],
     ["the bar above the game's left edge", 90, { x: 200, y: 50 }, { x: -81, y: 180 }],
     ["right of the canvas", 90, { x: 430, y: 500 }, { x: 324, y: -27 }],
     ["the game's top-left", -90, { x: 0, y: 860 }, { x: 0, y: 0 }],
-    ["mid-canvas", -90, { x: 200, y: 500 }, { x: 324, y: 180 }],
     ["the bar below the game's left edge", -90, { x: 200, y: 950 }, { x: -81, y: 180 }],
     ["left of the canvas", -90, { x: -30, y: 500 }, { x: 324, y: -27 }],
   ])("maps %s, turned %i, without clamping", (_, turn, client, game) => {

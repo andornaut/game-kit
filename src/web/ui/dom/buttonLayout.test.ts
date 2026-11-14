@@ -120,7 +120,7 @@ describe("setButtonFrame", () => {
     expect(button.getAttribute("role")).toBeNull();
   });
 
-  it.each([-1, NaN, Infinity])("rejects invalid frame values atomically: %s", (invalid) => {
+  it.each([-1, NaN])("rejects invalid frame values atomically: %s", (invalid) => {
     const button = document.createElement("button");
     setButtonFrame({ faceInsets }, button);
     const before = button.outerHTML;

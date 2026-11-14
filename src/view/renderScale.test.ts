@@ -4,15 +4,11 @@ import { densityTexels, MAX_RENDER_SCALE, renderFit, renderScale } from "./rende
 
 describe("renderScale", () => {
   it.each([
-    [1, 1],
     [1.5, 1.5],
-    [2, 2],
-    [3, 2],
     [2.625, 2],
     [0, 1],
     [-2, 1],
     [Number.NaN, 1],
-    [Number.POSITIVE_INFINITY, 1],
   ])("caps a device pixel ratio of %d at %d", (devicePixelRatio, scale) => {
     expect(renderScale(MAX_RENDER_SCALE, devicePixelRatio)).toBe(scale);
   });

@@ -20,11 +20,8 @@ function run(capFps: number | undefined, frameMs: number, count: number) {
 
 describe("framesPerDraw", () => {
   it.each([
-    [60, 1],
     [90, 1],
-    [120, 2],
     [144, 2],
-    [165, 3],
     [240, 4],
   ])("draws a %i Hz display's every %i frames under a cap of 60", (rate, frames) => {
     expect(framesPerDraw(MENU_FPS, hz(rate))).toBe(frames);

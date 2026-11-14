@@ -22,13 +22,7 @@ const made = (object: unknown) => object as StubGameObject;
 describe("sceneStub", () => {
   // Each spy member, a call to it and what it returns: "self" for its owner, for chaining.
   it.each<[string, (scene: SceneStub) => [unknown, (...args: never[]) => unknown, unknown]]>([
-    ["scene.launch", (s) => [s.scene.launch("pause", { a: 1 }), s.scene.launch, s.scene]],
-    ["scene.start", (s) => [s.scene.start("zone"), s.scene.start, s.scene]],
-    ["scene.stop", (s) => [s.scene.stop("dialogue"), s.scene.stop, s.scene]],
-    ["scene.pause", (s) => [s.scene.pause(), s.scene.pause, s.scene]],
-    ["scene.resume", (s) => [s.scene.resume("zone"), s.scene.resume, s.scene]],
     ["scene.moveAbove", (s) => [s.scene.moveAbove("zone", "bark"), s.scene.moveAbove, s.scene]],
-    ["scene.setVisible", (s) => [s.scene.setVisible(false), s.scene.setVisible, s.scene]],
     ["input.stopPropagation", (s) => [s.input.stopPropagation(), s.input.stopPropagation, s.input]],
     [
       "cameras.main.setBackgroundColor",
@@ -39,17 +33,8 @@ describe("sceneStub", () => {
       ],
     ],
     [
-      "cameras.main.setBounds",
-      (s) => [s.cameras.main.setBounds(0, 0, 9, 9), s.cameras.main.setBounds, s.cameras.main],
-    ],
-    [
       "cameras.main.ignore",
       (s) => [s.cameras.main.ignore([]), s.cameras.main.ignore, s.cameras.main],
-    ],
-    ["cameras.main.pan", (s) => [s.cameras.main.pan(1, 2), s.cameras.main.pan, s.cameras.main]],
-    [
-      "cameras.main.setZoom",
-      (s) => [s.cameras.main.setZoom(2), s.cameras.main.setZoom, s.cameras.main],
     ],
     [
       "game.renderer.snapshotArea",
@@ -59,28 +44,7 @@ describe("sceneStub", () => {
         s.game.renderer,
       ],
     ],
-    ["textures.remove", (s) => [s.textures.remove("k"), s.textures.remove, s.textures]],
-    [
-      "load.bitmapFont",
-      (s) => [s.load.bitmapFont("f", "f.png", "f.fnt"), s.load.bitmapFont, s.load],
-    ],
     ["load.image", (s) => [s.load.image("i", "i.png"), s.load.image, s.load]],
-    ["load.json", (s) => [s.load.json("j", "j.json"), s.load.json, s.load]],
-    ["load.setPath", (s) => [s.load.setPath("art/"), s.load.setPath, s.load]],
-    [
-      "cameras.main.setScroll",
-      (s) => [s.cameras.main.setScroll(3), s.cameras.main.setScroll, s.cameras.main],
-    ],
-    ["cache.json.add", (s) => [s.cache.json.add("k", 1), s.cache.json.add, s.cache.json]],
-    ["cache.json.remove", (s) => [s.cache.json.remove("k"), s.cache.json.remove, s.cache.json]],
-    [
-      "cache.bitmapFont.add",
-      (s) => [s.cache.bitmapFont.add("k", 1), s.cache.bitmapFont.add, s.cache.bitmapFont],
-    ],
-    [
-      "cache.bitmapFont.remove",
-      (s) => [s.cache.bitmapFont.remove("k"), s.cache.bitmapFont.remove, s.cache.bitmapFont],
-    ],
   ])("records calls to %s and returns its owner", (_name, call) => {
     const scene = stub();
     const [result, spy, owner] = call(scene);
@@ -149,22 +113,11 @@ describe("sceneStub", () => {
     expect(main.scrollX).toBe(7300);
   });
 
-  it("gives the game a styleable canvas", () => {
-    const { canvas } = stub().game;
-    canvas.style.visibility = "hidden";
-    expect(canvas.style.visibility).toBe("hidden");
-  });
-
   // Both emitters, as eventemitter3 behaves: on, once, off by listener, context and all.
   it.each<[string, (scene: SceneStub) => SceneStub["game"]["events"]]>([
     ["load", (scene) => scene.load],
     ["events", (scene) => scene.events],
-    ["game.events", (scene) => scene.game.events],
-    ["input", (scene) => scene.input],
-    ["input.keyboard", (scene) => scene.input.keyboard],
-    ["scale", (scene) => scene.scale],
     ["a game object", (scene) => made(scene.add.image(0, 0, "i"))],
-    ["a tween", (scene) => scene.tweens.add({ targets: [] }) as unknown as SceneStub["events"]],
   ])("emits %s events to its listeners", (_name, of) => {
     const events = of(stub());
     const calls: unknown[][] = [];

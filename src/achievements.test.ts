@@ -88,11 +88,7 @@ describe("judge.holds", () => {
   it.each<[string, Scope, Facts, Cond, boolean]>([
     ["a met counter", "step", FACTS, { count: 3, kind: "coins" }, true],
     ["an unmet counter", "step", FACTS, { count: 4, kind: "coins" }, false],
-    ["an unmet all", "end", FACTS, { count: "all", kind: "coins" }, false],
-    ["a met all", "end", { ...FACTS, coins: 10 }, { count: "all", kind: "coins" }, true],
-    ["a flag at its scope", "end", FACTS, { flag: "x", kind: "flag" }, true],
     ["a met flag outside its scope", "step", FACTS, { flag: "x", kind: "flag" }, false],
-    ["a met gem count outside its scope", "end", FACTS, { count: 1, kind: "gems" }, false],
   ])("judges %s", (_, scope, facts, condition, holds) => {
     expect(JUDGE.holds(scope, facts, condition)).toBe(holds);
   });

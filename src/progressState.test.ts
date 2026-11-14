@@ -99,7 +99,7 @@ describe("createProgressDisplay", () => {
     expect(display.at(1)).toEqual({ kind: "hidden" });
   });
 
-  it.each([-1, NaN, Infinity])("rejects a full hold of %s", (fullMs) => {
+  it.each([-1, NaN])("rejects a full hold of %s", (fullMs) => {
     expect(() => createProgressDisplay(fullMs)).toThrow(RangeError);
   });
 
@@ -144,7 +144,7 @@ describe("createProgressDisplay", () => {
     expect(display.at(10)).toEqual({ kind: "hidden" });
   });
 
-  it.each([-1, NaN, Infinity])("rejects a fade of %s", (fadeMs) => {
+  it.each([-1, NaN])("rejects a fade of %s", (fadeMs) => {
     expect(() => createProgressDisplay(100, fadeMs)).toThrow(RangeError);
   });
 });

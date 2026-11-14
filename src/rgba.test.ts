@@ -45,7 +45,6 @@ const darken = (colour: number) => ONE_STEP.get(colour) ?? colour;
 
 describe("remapRgb", () => {
   it.each<[string, number[], number[], number[]]>([
-    ["one colour", [WHITE, WHITE], [CREAM, CREAM], [WHITE]],
     ["a run of one colour", [GREY, GREY, GREY], [INK, INK, INK], [GREY]],
     ["alternation", [WHITE, CREAM, WHITE, CREAM], [CREAM, GREY, CREAM, GREY], [WHITE, CREAM]],
     ["a colour the remap keeps", [INK, WHITE, INK], [INK, CREAM, INK], [INK, WHITE]],

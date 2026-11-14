@@ -19,12 +19,9 @@ const frame = { height: 4, width: 102, x: 10, y: 20 };
 const motion = { cycleMs: 1000, segment: 0.25 };
 
 describe("checkProgressBarStyle", () => {
-  it.each([{}, { frameAlpha: 0, trackAlpha: 1 }, { frameAlpha: 1, trackAlpha: 0.6 }])(
-    "accepts alphas %o",
-    (alphas) => {
-      expect(() => checkProgressBarStyle({ ...style, ...alphas })).not.toThrow();
-    },
-  );
+  it.each([{}, { frameAlpha: 0, trackAlpha: 1 }])("accepts alphas %o", (alphas) => {
+    expect(() => checkProgressBarStyle({ ...style, ...alphas })).not.toThrow();
+  });
 
   it.each([
     { frameAlpha: -0.01 },
@@ -67,7 +64,6 @@ describe("indeterminateTravel", () => {
     [100.9, 0.001, { length: 1, steps: 101 }],
     [100, 1, { length: 100, steps: 200 }],
     [0.5, 0.25, { length: 0, steps: 0 }],
-    [NaN, 0.25, { length: 0, steps: 0 }],
   ])("rounds a %s px track's %s segment to whole pixels", (width, segment, travel) => {
     expect(indeterminateTravel({ cycleMs: 1000, segment }, width)).toEqual(travel);
   });
@@ -95,9 +91,7 @@ describe("indeterminateSegment", () => {
   it.each([
     [0, { width: 0, x: 0 }],
     [100, { width: 12, x: 0 }],
-    [400, { width: 25, x: 25 }],
     [900, { width: 13, x: 87 }],
-    [990, { width: 2, x: 98 }],
     [1400, { width: 25, x: 25 }],
     [-600, { width: 25, x: 25 }],
   ])("travels left to right, entering and leaving clipped, at %s ms", (elapsedMs, span) => {

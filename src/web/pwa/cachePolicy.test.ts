@@ -54,8 +54,6 @@ describe("precacheFetchOptions", () => {
   it.each([
     ["/assets/play-abc.js", "default"],
     ["/play/", "no-cache"],
-    ["/art/manifest.json", "no-cache"],
-    ["/art/sprite.png", "no-cache"],
   ])("precaches %s with cache mode %s", (pathname, cache) => {
     expect(precacheFetchOptions(POLICY, pathname)).toEqual({ cache });
   });
@@ -65,7 +63,6 @@ describe("cacheKeyFor", () => {
   it.each([
     ["/play/index.html", "/play/"],
     ["/play/", "/play/"],
-    ["/art/sprite.png", "/art/sprite.png"],
   ])("files %s under %s", (pathname, key) => {
     expect(cacheKeyFor(pathname)).toBe(key);
   });

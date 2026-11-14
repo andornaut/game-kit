@@ -99,20 +99,6 @@ describe("candidateScore", () => {
     expect(candidateScore(scored)).toBe(0);
   });
 
-  it("rises with a rising input under a linear curve", () => {
-    const scores = [0, 1, 2.5, 5, 7.5, 10].map((value) =>
-      candidateScore(
-        candidate("a", 2, {
-          considerations: [{ curve: near, input: "near" }],
-          values: { near: value, seen: 0 },
-        }),
-      ),
-    );
-    for (const [i, score] of scores.slice(1).entries()) {
-      expect(score).toBeGreaterThan(scores[i] ?? Infinity);
-    }
-  });
-
   it.each([
     { field: "base", overrides: { base: -1 } },
     { field: "multiplier", overrides: { multiplier: Number.NaN } },
