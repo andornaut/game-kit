@@ -110,6 +110,7 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
     }
   };
   reportActivity("idle");
+  let readInstallation: (() => void) | undefined;
   const watchInstallation = (registration: RegistrationLike) => {
     const watched = new WeakSet<ServiceWorkerLike>();
     const read = () => {
@@ -127,6 +128,7 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
         reportActivity("idle");
       }
     };
+    readInstallation = read;
     registration.addEventListener("updatefound", read);
     read();
     return registration;
@@ -163,7 +165,12 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
   };
   const flow = createUpdateFlow(page, register, options);
   eventTarget.addEventListener("online", () => flow.noteOnline());
-  watchVisibility(eventTarget, page.visibilitySource, (visible) => flow.setVisible(visible));
+  watchVisibility(eventTarget, page.visibilitySource, (visible) => {
+    if (visible) {
+      readInstallation?.();
+    }
+    flow.setVisible(visible);
+  });
   const registrationReady = () => {
     if (firstVisit && !registered) {
       void register();

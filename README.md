@@ -28,6 +28,10 @@ The kit's own tests define each module's contract. A release is also proven agai
 
 `testing/phaser/sceneStub` covers the scene members both games' tests use as of 0.19.0 and is otherwise frozen: a test that needs more extends the stub through its overrides.
 
+## Migration to 0.39.1
+
+- `web/pwa/dom/offlinePlay`: visible resumes reread the current registration's waiting and installing workers even when worker callbacks were missed. Update offers and installation activity converge without changing registration readiness, resume-check throttling or activation rules. No consumer API changes are needed.
+
 ## Migration to 0.39.0
 
 - `save/versionedSave`: any finite numeric header above `format.version` returns `"newer"` before integer validation, migration or decoding, including higher fractional and unsafe integer values. Lower malformed headers remain `"corrupt"`. The fresh save returned for `"newer"` is only a placeholder: keep play blocked and preserve the stored save until a compatible version can load it.

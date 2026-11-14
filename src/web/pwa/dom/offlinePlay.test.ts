@@ -703,6 +703,173 @@ describe("startOfflinePlay", () => {
     expect({ checks: checks(), shown }).toEqual({ checks: 0, shown: [true, false] });
   });
 
+  it.each([
+    ["visibilitychange", false],
+    ["pageshow", false],
+    ["visibilitychange", true],
+  ] as const)(
+    "rereads a silently waiting worker on %s (offline: %s) without another check or activation",
+    async (event, offline) => {
+      const { clock, container, page, play, registration, shown, visibilitySource } = openPage(
+        true,
+        "none",
+        undefined,
+        { offline },
+      );
+      await settle();
+      showHome(play, true);
+      const found = requireRegistration(registration);
+      expect(found.updates).toBe(offline ? 0 : 1);
+      if (event === "visibilitychange") {
+        visibilitySource.setVisibility("hidden");
+      } else {
+        page.eventTarget.dispatchEvent(new Event("pagehide"));
+      }
+      // Change only the registration snapshot: no updatefound or worker statechange callback.
+      const worker = new FakeWorker();
+      found.waiting = worker;
+      clock.now = RESUME_CHECK_MS - 1;
+      expect(shown).toEqual([]);
+      if (event === "visibilitychange") {
+        visibilitySource.setVisibility("visible");
+      } else {
+        page.eventTarget.dispatchEvent(new Event("pageshow"));
+      }
+      expect(shown).toEqual([true]);
+      expect(found.updates).toBe(offline ? 0 : 1);
+      expect(container.registered).toHaveLength(1);
+      expect({ messages: worker.messages, reloads: clock.reloads }).toEqual({
+        messages: [],
+        reloads: 0,
+      });
+    },
+  );
+
+  it.each([false, true])(
+    "defers a silently waiting worker under a cover while preserving dismissal %s",
+    async (dismissed) => {
+      const { clock, play, registration, shown, visibilitySource } = openPage(true, "none");
+      await settle();
+      showHome(play, true);
+      if (dismissed) {
+        play.flow.dismissOffer();
+      }
+      showHome(play, false);
+      visibilitySource.setVisibility("hidden");
+      const found = requireRegistration(registration);
+      const worker = new FakeWorker();
+      found.waiting = worker;
+      clock.now = RESUME_CHECK_MS;
+      visibilitySource.setVisibility("visible");
+      expect(shown).toEqual([]);
+      showHome(play, true);
+      expect(shown).toEqual(dismissed ? [] : [true]);
+      expect(found.updates).toBe(1);
+      expect({ messages: worker.messages, reloads: clock.reloads }).toEqual({
+        messages: [],
+        reloads: 0,
+      });
+    },
+  );
+
+  it("rereads silent installation starts and finishes on resume, clearing stale activity", async () => {
+    const activities: OfflineActivity[] = [];
+    const { clock, play, registration, shown, visibilitySource } = openPage(true, "none", (next) =>
+      activities.push(next),
+    );
+    await settle();
+    showHome(play, true);
+    const found = requireRegistration(registration);
+    visibilitySource.setVisibility("hidden");
+    const worker = new FakeWorker();
+    worker.state = "installing";
+    found.installing = worker;
+    expect(activities).toEqual(["idle"]);
+    visibilitySource.setVisibility("visible");
+    expect(activities).toEqual(["idle", "updating"]);
+    visibilitySource.setVisibility("hidden");
+    found.installing = null;
+    found.waiting = worker;
+    worker.state = "installed";
+    expect(shown).toEqual([]);
+    visibilitySource.setVisibility("visible");
+    expect(activities).toEqual(["idle", "updating", "idle"]);
+    expect(shown).toEqual([true]);
+    expect(found.updates).toBe(1);
+    expect({ messages: worker.messages, reloads: clock.reloads }).toEqual({
+      messages: [],
+      reloads: 0,
+    });
+  });
+
+  it("subscribes to a silently discovered install so later worker callbacks update activity", async () => {
+    const activities: OfflineActivity[] = [];
+    const { clock, registration, visibilitySource } = openPage(true, "none", (next) =>
+      activities.push(next),
+    );
+    await settle();
+    const found = requireRegistration(registration);
+    visibilitySource.setVisibility("hidden");
+    const worker = new FakeWorker();
+    worker.state = "installing";
+    found.installing = worker;
+    visibilitySource.setVisibility("visible");
+    expect(activities).toEqual(["idle", "updating"]);
+    // Only this completion dispatches statechange; the missed start dispatched no event.
+    endInstall(found, worker, "installed");
+    expect(activities).toEqual(["idle", "updating", "idle"]);
+    expect(found.updates).toBe(1);
+    expect({ messages: worker.messages, reloads: clock.reloads }).toEqual({
+      messages: [],
+      reloads: 0,
+    });
+  });
+
+  it("ends a silently completed first precache on resume without rearming it", async () => {
+    const activities: OfflineActivity[] = [];
+    const { clock, play, registration, shown, visibilitySource } = openPage(
+      false,
+      "installing",
+      (next) => activities.push(next),
+    );
+    const worker = startInstall(registration);
+    play.registrationReady();
+    await settle();
+    expect(activities).toEqual(["idle", "precaching"]);
+    visibilitySource.setVisibility("hidden");
+    const found = requireRegistration(registration);
+    found.installing = null;
+    found.waiting = worker;
+    worker.state = "installed";
+    visibilitySource.setVisibility("visible");
+    expect(activities).toEqual(["idle", "precaching", "idle"]);
+    visibilitySource.setVisibility("hidden");
+    const later = new FakeWorker();
+    later.state = "installing";
+    found.installing = later;
+    visibilitySource.setVisibility("visible");
+    expect(activities).toEqual(["idle", "precaching", "idle", "updating"]);
+    expect(found.updates).toBe(0);
+    expect(shown).toEqual([]);
+    expect({ messages: worker.messages, reloads: clock.reloads }).toEqual({
+      messages: [],
+      reloads: 0,
+    });
+  });
+
+  it("does not register an unprepared first visit on visible resume", async () => {
+    const activities: OfflineActivity[] = [];
+    const { container, registration, visibilitySource } = openPage(false, "waiting", (next) =>
+      activities.push(next),
+    );
+    visibilitySource.setVisibility("hidden");
+    visibilitySource.setVisibility("visible");
+    await settle();
+    expect(container.registered).toEqual([]);
+    expect(registration?.updates).toBe(0);
+    expect(activities).toEqual(["idle"]);
+  });
+
   // The game arrives home on its first launch, before or after watch's first check starts.
   it.each<[string, boolean]>([
     ["before the registration is watched", false],

@@ -384,6 +384,11 @@ export function createUpdateFlow(
     },
     setOfferVisible: (offerVisible) => update({ offerVisible }),
     setVisible(visible) {
+      // Worker callbacks may not have run while hidden. Read the current snapshot independently
+      // of the network-check throttle and offer eligibility.
+      if (visible) {
+        read();
+      }
       const due = resumeCheckDue({
         lastCheck,
         now: page.now(),
