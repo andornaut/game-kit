@@ -1,0 +1,18 @@
+/* Page and modal content share one inherited divider token. HUD separators are independent. */
+.ui-page-divider {
+  box-sizing: border-box;
+  flex: none;
+  width: 100%;
+  height: calc(var(--ui-page-divider-thickness) * var(--ui-unit, 1) * 1px);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: var(--ui-page-divider-colour);
+}
+
+.ui-disclosure-icon {
+  flex: none;
+  width: calc(var(--ui-disclosure-width) * var(--ui-unit, 1) * 1px);
+  height: calc(var(--ui-disclosure-height) * var(--ui-unit, 1) * 1px);
+  pointer-events: none;
+}

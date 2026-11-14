@@ -21,6 +21,8 @@
     "src/web/pwa/dom/wakeLock.ts",
     "src/web/save/dom/localSaveStorage.ts",
     "src/web/save/dom/pageSessionStore.ts",
+    "src/web/ui/dom/buttonLayout.ts",
+    "src/web/ui/dom/controlPresentation.ts",
     "src/web/ui/dom/buttonSkin.ts",
     "src/web/ui/dom/domPress.ts",
     "src/web/ui/dom/focusModality.ts",
