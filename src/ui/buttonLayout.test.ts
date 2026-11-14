@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  type ButtonFaceInsets,
   buttonGroupSize,
   type ButtonLayoutContext,
   type ButtonMetrics,
@@ -60,10 +61,10 @@ describe("buttonGroupSize", () => {
     expect(() => buttonGroupSize(tokens, { labels, size: name })).toThrow(RangeError);
   });
 
-  it("rejects a measured multiline label that cannot fit the padded height", () => {
-    expect(() =>
+  it("grows the shared height for a caller-measured wrapped label", () => {
+    expect(
       buttonGroupSize(tokens, { labels: [{ height: 31, width: 20 }], size: "standard" }),
-    ).toThrow(RangeError);
+    ).toEqual({ height: 41, width: 60 });
   });
 
   it.each<keyof ButtonMetrics>(["height", "minWidth", "paddingX", "paddingY"])(
@@ -80,13 +81,13 @@ describe("buttonGroupSize", () => {
     },
   );
 
-  it("rejects padding that overflows even an empty face", () => {
-    expect(() =>
+  it("grows beyond the minimum height when padding requires it", () => {
+    expect(
       buttonGroupSize(
         { invalid: { ...tokens.standard, paddingY: 21 } },
         { labels: [], size: "invalid" },
       ),
-    ).toThrow(RangeError);
+    ).toEqual({ height: 42, width: 60 });
   });
 
   it("rejects arithmetic overflow from finite horizontal metrics", () => {
@@ -115,6 +116,7 @@ describe("layoutButton", () => {
     expect(layoutButton(context, button)).toEqual({
       face: { height: 40, width: 95, x: 62.5, y: 20 },
       label: { height: 10, width: 20, x: 100, y: 35 },
+      outer: { height: 40, width: 95, x: 62.5, y: 20 },
       role: "primary",
     });
   });
@@ -298,10 +300,140 @@ describe("layoutButton", () => {
     ).toThrow(RangeError);
   });
 
-  it("rejects an arbitrary face height that differs from the named token", () => {
-    expect(() => layoutButton({ ...context, size: { ...size, height: 41 } }, button)).toThrow(
+  it("accepts caller dimensions above the named token minimums", () => {
+    const placed = layoutButton({ ...context, size: { height: 50, width: 110 } }, button);
+    expect(placed.outer).toEqual({ height: 50, width: 110, x: 55, y: 20 });
+    expect(placed.face).toEqual(placed.outer);
+    expect(placed.label).toEqual({ height: 10, width: 20, x: 100, y: 40 });
+  });
+
+  it("rejects a size below the token minimum height", () => {
+    expect(() => layoutButton({ ...context, size: { ...size, height: 39 } }, button)).toThrow(
       RangeError,
     );
+  });
+});
+
+describe("face insets", () => {
+  const faceInsets: ButtonFaceInsets = { bottom: 8, left: 3, right: 7, top: 2 };
+  const insetSize = buttonGroupSize(tokens, { faceInsets, labels, size: "standard" });
+  const insetContext = { ...context, faceInsets, size: insetSize };
+
+  it("includes authored face insets in both shared outer dimensions", () => {
+    expect(insetSize).toEqual({ height: 50, width: 105 });
+    expect(
+      buttonGroupSize(tokens, {
+        faceInsets,
+        labels: [
+          { height: 60, width: 15 },
+          { height: 10, width: 100 },
+        ],
+        size: "standard",
+      }),
+    ).toEqual({ height: 80, width: 130 });
+  });
+
+  it("centres the measured label in the face rather than the outer artwork", () => {
+    expect(layoutButton(insetContext, { label: labels[1]!, role: "primary" })).toEqual({
+      face: { height: 40, width: 95, x: 60.5, y: 22 },
+      label: { height: 30, width: 75, x: 70.5, y: 27 },
+      outer: { height: 50, width: 105, x: 57.5, y: 20 },
+      role: "primary",
+    });
+  });
+
+  it("centres the outer artwork in a taller region when explicitly requested", () => {
+    const placed = layoutButton({ ...insetContext, placement: "center" }, button);
+    expect(placed.outer.y).toBe(45);
+    expect(placed.face.y).toBe(47);
+    expect(placed.label.y).toBe(62);
+  });
+
+  it("calculates the footer baseline from the inset face", () => {
+    const placed = layoutButton(
+      { ...insetContext, footerBaseline: 90, placement: "footer" },
+      { label: labels[1]!, labelBaselineOffset: 20, role: "navigation" },
+    );
+    expect(placed.outer).toEqual({ height: 50, width: 105, x: 57.5, y: 63 });
+    expect(placed.face.y).toBe(65);
+    expect(placed.label.y + 20).toBe(90);
+  });
+
+  it("rejects footer placement when the face fits but the outer lip escapes", () => {
+    expect(() =>
+      layoutButton(
+        { ...insetContext, footerBaseline: 99, placement: "footer" },
+        { label: labels[1]!, labelBaselineOffset: 20, role: "navigation" },
+      ),
+    ).toThrow(RangeError);
+  });
+
+  it("allows caller-authored face shifts while keeping the same outer artwork", () => {
+    const resting = layoutButton(insetContext, button);
+    const shifted = layoutButton(
+      {
+        ...insetContext,
+        faceInsets: { ...faceInsets, bottom: 4, top: 6 },
+      },
+      button,
+    );
+    expect(shifted.outer).toEqual(resting.outer);
+    expect(shifted.face.y).toBe(resting.face.y + 4);
+    expect(shifted.label.y).toBe(resting.label.y + 4);
+    expect(shifted.label.x).toBe(resting.label.x);
+  });
+
+  it("rejects stale sizes that cannot contain the wrapped label, padding and insets", () => {
+    expect(() =>
+      layoutButton({ ...insetContext, size }, { label: labels[1]!, role: "primary" }),
+    ).toThrow(RangeError);
+    expect(() =>
+      layoutButton(insetContext, { label: { height: 31, width: 75 }, role: "primary" }),
+    ).toThrow(RangeError);
+  });
+
+  it.each<keyof ButtonFaceInsets>(["top", "right", "bottom", "left"])(
+    "rejects invalid %s insets",
+    (side) => {
+      for (const value of [-1, NaN, Infinity, -Infinity]) {
+        const invalid = { ...faceInsets, [side]: value };
+        expect(() =>
+          buttonGroupSize(tokens, { faceInsets: invalid, labels, size: "standard" }),
+        ).toThrow(RangeError);
+        expect(() => layoutButton({ ...context, faceInsets: invalid }, button)).toThrow(RangeError);
+      }
+    },
+  );
+
+  it("rejects arithmetic overflow in insets, padding and measured height", () => {
+    const invalid = { ...faceInsets, bottom: Number.MAX_VALUE, top: Number.MAX_VALUE };
+    expect(() =>
+      buttonGroupSize(tokens, { faceInsets: invalid, labels, size: "standard" }),
+    ).toThrow(RangeError);
+    expect(() => layoutButton({ ...context, faceInsets: invalid }, button)).toThrow(RangeError);
+    expect(() =>
+      buttonGroupSize(
+        { invalid: { ...tokens.standard, paddingY: Number.MAX_VALUE } },
+        { labels: [], size: "invalid" },
+      ),
+    ).toThrow(RangeError);
+  });
+
+  it.each([
+    { bottom: 20, left: 0, right: 0, top: 20 },
+    { bottom: 0, left: 50, right: 50, top: 0 },
+    { bottom: 30, left: 0, right: 0, top: 20 },
+  ])("rejects outer bounds without a positive face: %j", (insets) => {
+    expect(() => layoutButton({ ...context, faceInsets: insets }, button)).toThrow(RangeError);
+  });
+
+  it("rejects a token group with no usable face", () => {
+    expect(() =>
+      buttonGroupSize(
+        { empty: { height: 0, minWidth: 0, paddingX: 0, paddingY: 0 } },
+        { faceInsets, labels: [], size: "empty" },
+      ),
+    ).toThrow(RangeError);
   });
 });
 

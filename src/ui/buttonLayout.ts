@@ -12,8 +12,19 @@ export interface ButtonMetrics {
   readonly paddingY: number;
 }
 
+// Insets from the outer artwork bounds to its label-bearing face, in caller units.
+export interface ButtonFaceInsets {
+  readonly bottom: number;
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+}
+
+const NO_FACE_INSETS: ButtonFaceInsets = { bottom: 0, left: 0, right: 0, top: 0 };
+
 export interface ButtonLayoutContext {
   readonly bounds: Rect;
+  readonly faceInsets?: ButtonFaceInsets;
   readonly footerBaseline?: number;
   readonly metrics: ButtonMetrics;
   readonly placement?: ButtonPlacement;
@@ -23,6 +34,7 @@ export interface ButtonLayoutContext {
 export interface ButtonLayout {
   readonly face: Rect;
   readonly label: Rect;
+  readonly outer: Rect;
   readonly role: ButtonRole;
 }
 
@@ -64,42 +76,80 @@ function validateMetrics(metrics: ButtonMetrics): void {
   nonnegative("metrics.minWidth", metrics.minWidth);
   nonnegative("metrics.paddingX", metrics.paddingX);
   nonnegative("metrics.paddingY", metrics.paddingY);
-  if (2 * metrics.paddingY > metrics.height) {
-    throw new RangeError("Vertical padding exceeds button height");
-  }
 }
 
-function paddedWidth(metrics: ButtonMetrics, label: ButtonSize): number {
-  validateSize("label", label);
-  if (label.height + 2 * metrics.paddingY > metrics.height) {
-    throw new RangeError("Label and padding exceed button height");
+function validateInsets(insets: ButtonFaceInsets): void {
+  for (const side of ["top", "right", "bottom", "left"] as const) {
+    nonnegative(`faceInsets.${side}`, insets[side]);
   }
-  const width = Math.max(metrics.minWidth, label.width + 2 * metrics.paddingX);
-  nonnegative("padded width", width);
-  return width;
+  nonnegative("horizontal face insets", insets.left + insets.right);
+  nonnegative("vertical face insets", insets.top + insets.bottom);
+}
+
+function requiredSize(
+  metrics: ButtonMetrics,
+  insets: ButtonFaceInsets,
+  label: ButtonSize,
+): ButtonSize {
+  validateSize("label", label);
+  const size = {
+    height: Math.max(
+      metrics.height,
+      label.height + 2 * metrics.paddingY + insets.top + insets.bottom,
+    ),
+    width: Math.max(
+      metrics.minWidth,
+      label.width + 2 * metrics.paddingX + insets.left + insets.right,
+    ),
+  };
+  validateSize("required size", size);
+  return size;
+}
+
+function faceSize(insets: ButtonFaceInsets, size: ButtonSize): ButtonSize {
+  const face = {
+    height: size.height - insets.top - insets.bottom,
+    width: size.width - insets.left - insets.right,
+  };
+  if (face.height <= 0 || face.width <= 0) {
+    throw new RangeError("Button must have a usable face inside its outer bounds");
+  }
+  return face;
 }
 
 // Use the returned size for every member of a repeated group. Empty groups still return the
-// token's minimum padded face size. Labels never wrap, shrink or clip here.
+// token's minimum padded outer size. Measured wrapped labels grow the shared height beyond the
+// token minimum. Labels never wrap, shrink or clip here; wrapping belongs to the caller.
 export function buttonGroupSize(
   tokens: Readonly<Record<string, ButtonMetrics>>,
-  group: { readonly size: string; readonly labels: readonly ButtonSize[] },
+  group: {
+    readonly faceInsets?: ButtonFaceInsets;
+    readonly labels: readonly ButtonSize[];
+    readonly size: string;
+  },
 ): ButtonSize {
   if (!Object.hasOwn(tokens, group.size)) {
     throw new RangeError(`Unknown button size: ${group.size}`);
   }
   const metrics = tokens[group.size]!;
   validateMetrics(metrics);
-  let width = paddedWidth(metrics, { height: 0, width: 0 });
+  const insets = group.faceInsets ?? NO_FACE_INSETS;
+  validateInsets(insets);
+  let { height, width } = requiredSize(metrics, insets, { height: 0, width: 0 });
   for (const label of group.labels) {
-    width = Math.max(width, paddedWidth(metrics, label));
+    const required = requiredSize(metrics, insets, label);
+    height = Math.max(height, required.height);
+    width = Math.max(width, required.width);
   }
-  return { height: metrics.height, width };
+  const size = { height, width };
+  faceSize(insets, size);
+  return size;
 }
 
 // Bounds are the caller's control region within a row pill or footer, already excluding related
-// text and insets. The label is a measured line box, centred on both axes inside the face.
-// Top aligns with the region's text top. Footer requires an explicit target baseline in caller
+// text and row padding. Face insets exclude artwork such as a bottom lip from label centering.
+// The label is a measured line box, centred on both axes inside the face. Top aligns the outer
+// bounds with the region's text top. Footer requires an explicit target baseline in caller
 // coordinates and a font-measured baseline offset from the label's top. Invalid input or overflow
 // throws RangeError instead of escaping the region. Negative coordinate origins are valid.
 export function layoutButton(
@@ -115,13 +165,19 @@ export function layoutButton(
   validateMetrics(metrics);
   validateSize("bounds", bounds);
   validateSize("size", size);
+  const insets = context.faceInsets ?? NO_FACE_INSETS;
+  validateInsets(insets);
+  const faceDimensions = faceSize(insets, size);
   for (const edge of [bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height]) {
     if (!Number.isFinite(edge)) {
       throw new RangeError("Bounds edges must be finite");
     }
   }
-  if (size.height !== metrics.height || size.width < paddedWidth(metrics, button.label)) {
-    throw new RangeError("Button size must preserve token height and contain the padded label");
+  const required = requiredSize(metrics, insets, button.label);
+  if (size.height < required.height || size.width < required.width) {
+    throw new RangeError(
+      "Button size must meet token minimums and contain the padded label and insets",
+    );
   }
   if (size.width > bounds.width || size.height > bounds.height) {
     throw new RangeError("Button exceeds its control region");
@@ -148,16 +204,25 @@ export function layoutButton(
         "Footer requires a finite target baseline and measured label baseline offset",
       );
     }
-    y = footerBaseline - labelBaselineOffset - (size.height - button.label.height) / 2;
-    if (!Number.isFinite(y) || y < bounds.y || y + size.height > bounds.y + bounds.height) {
-      throw new RangeError("Baseline-aligned button exceeds its control region");
-    }
+    y =
+      footerBaseline -
+      labelBaselineOffset -
+      (faceDimensions.height - button.label.height) / 2 -
+      insets.top;
   }
-  const face: Rect = {
+  if (!Number.isFinite(y) || y < bounds.y || y + size.height > bounds.y + bounds.height) {
+    throw new RangeError("Button outer bounds exceed its control region");
+  }
+  const outer: Rect = {
     height: size.height,
     width: size.width,
     x: bounds.x + (bounds.width - size.width) / 2,
     y,
+  };
+  const face: Rect = {
+    ...faceDimensions,
+    x: outer.x + insets.left,
+    y: outer.y + insets.top,
   };
   return {
     face,
@@ -167,6 +232,7 @@ export function layoutButton(
       x: face.x + (face.width - button.label.width) / 2,
       y: face.y + (face.height - button.label.height) / 2,
     },
+    outer,
     role: button.role,
   };
 }
