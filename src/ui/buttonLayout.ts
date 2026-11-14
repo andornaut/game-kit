@@ -14,6 +14,7 @@ export interface ButtonMetrics {
 
 export interface ButtonLayoutContext {
   readonly bounds: Rect;
+  readonly footerBaseline?: number;
   readonly metrics: ButtonMetrics;
   readonly placement?: ButtonPlacement;
   readonly size: ButtonSize;
@@ -29,6 +30,28 @@ function nonnegative(name: string, value: number): void {
   if (!Number.isFinite(value) || value < 0) {
     throw new RangeError(`${name} must be finite and nonnegative`);
   }
+}
+
+function validateRole(role: ButtonRole): void {
+  if (role !== "primary" && role !== "secondary" && role !== "navigation") {
+    throw new RangeError("Unknown button role");
+  }
+}
+
+// Retain actions and navigation without a section, including caller metadata and ordering.
+export function withoutCurrentNavigation<
+  Section,
+  Button extends {
+    readonly role: ButtonRole;
+    readonly section?: Section;
+  },
+>(current: Section, buttons: readonly Button[]): Button[] {
+  return buttons.filter((button) => {
+    validateRole(button.role);
+    return (
+      button.role !== "navigation" || button.section === undefined || button.section !== current
+    );
+  });
 }
 
 function validateSize(name: string, size: ButtonSize): void {
@@ -75,14 +98,20 @@ export function buttonGroupSize(
 }
 
 // Bounds are the caller's control region within a row pill or footer, already excluding related
-// text and insets. Top aligns with that region's text top; footer aligns equal-height faces at
-// its bottom. Font baselines remain caller-owned. Invalid input or overflow throws RangeError
-// rather than returning a face or padded label outside its region. Negative origins are valid.
+// text and insets. The label is a measured line box, centred on both axes inside the face.
+// Top aligns with the region's text top. Footer requires an explicit target baseline in caller
+// coordinates and a font-measured baseline offset from the label's top. Invalid input or overflow
+// throws RangeError instead of escaping the region. Negative coordinate origins are valid.
 export function layoutButton(
   context: ButtonLayoutContext,
-  button: { readonly label: ButtonSize; readonly role: ButtonRole },
+  button: {
+    readonly label: ButtonSize;
+    readonly labelBaselineOffset?: number;
+    readonly role: ButtonRole;
+  },
 ): ButtonLayout {
   const { bounds, metrics, placement = "top", size } = context;
+  validateRole(button.role);
   validateMetrics(metrics);
   validateSize("bounds", bounds);
   validateSize("size", size);
@@ -100,17 +129,35 @@ export function layoutButton(
   if (placement !== "top" && placement !== "center" && placement !== "footer") {
     throw new RangeError("Unknown button placement");
   }
+  const { labelBaselineOffset } = button;
+  if (labelBaselineOffset !== undefined) {
+    nonnegative("labelBaselineOffset", labelBaselineOffset);
+    if (labelBaselineOffset > button.label.height) {
+      throw new RangeError("Label baseline offset exceeds its measured line box");
+    }
+  }
+  let y = bounds.y + (placement === "center" ? (bounds.height - size.height) / 2 : 0);
+  if (placement === "footer") {
+    const { footerBaseline } = context;
+    if (
+      footerBaseline === undefined ||
+      !Number.isFinite(footerBaseline) ||
+      labelBaselineOffset === undefined
+    ) {
+      throw new RangeError(
+        "Footer requires a finite target baseline and measured label baseline offset",
+      );
+    }
+    y = footerBaseline - labelBaselineOffset - (size.height - button.label.height) / 2;
+    if (!Number.isFinite(y) || y < bounds.y || y + size.height > bounds.y + bounds.height) {
+      throw new RangeError("Baseline-aligned button exceeds its control region");
+    }
+  }
   const face: Rect = {
     height: size.height,
     width: size.width,
     x: bounds.x + (bounds.width - size.width) / 2,
-    y:
-      bounds.y +
-      (placement === "top"
-        ? 0
-        : placement === "center"
-          ? (bounds.height - size.height) / 2
-          : bounds.height - size.height),
+    y,
   };
   return {
     face,

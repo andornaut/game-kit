@@ -8,6 +8,7 @@ import {
   type ButtonRole,
   type ButtonSize,
   layoutButton,
+  withoutCurrentNavigation,
 } from "./buttonLayout.ts";
 
 // Synthetic measurements exercise geometry without prescribing product metrics or labels.
@@ -124,8 +125,8 @@ describe("layoutButton", () => {
     ["footer", 80],
   ])("places the face at %s while centering a multiline label on both axes", (placement, y) => {
     const placed = layoutButton(
-      { ...context, placement },
-      { label: labels[1]!, role: "secondary" },
+      { ...context, footerBaseline: 105, placement },
+      { label: labels[1]!, labelBaselineOffset: 20, role: "secondary" },
     );
     expect(placed.face).toEqual({ height: 40, width: 95, x: 62.5, y });
     expect(placed.label).toEqual({ height: 30, width: 75, x: 72.5, y: y + 5 });
@@ -146,22 +147,112 @@ describe("layoutButton", () => {
     expect(placed.label).toEqual({ height: 12, width: 8, x: 106, y: 64 });
   });
 
-  it("keeps repeated footer faces equal and equal-height labels on the same baseline", () => {
-    const placed = [20, 75].map((width, index) =>
+  it("aligns different measured line boxes to the same explicit footer baseline", () => {
+    const measurements = [
+      { label: { height: 10, width: 20 }, labelBaselineOffset: 7 },
+      { label: { height: 30, width: 75 }, labelBaselineOffset: 22 },
+    ];
+    const placed = measurements.map((measurement, index) =>
       layoutButton(
         {
           ...context,
           bounds: { ...context.bounds, x: index * 200 },
+          footerBaseline: 90,
           placement: "footer",
         },
-        { label: { height: 10, width }, role: "navigation" },
+        { ...measurement, role: "navigation" },
       ),
     );
-    expect(placed.map(({ face }) => [face.width, face.height, face.y + face.height])).toEqual([
-      [95, 40, 120],
-      [95, 40, 120],
+    expect(placed.map(({ face }) => [face.width, face.height, face.y])).toEqual([
+      [95, 40, 68],
+      [95, 40, 63],
     ]);
-    expect(placed.map(({ label }) => label.y + label.height)).toEqual([105, 105]);
+    expect(
+      placed.map(({ label }, index) => label.y + measurements[index]!.labelBaselineOffset),
+    ).toEqual([90, 90]);
+    for (const { face, label } of placed) {
+      expect(label.y + label.height / 2).toBe(face.y + face.height / 2);
+      expect(label.x + label.width / 2).toBe(face.x + face.width / 2);
+      expect(face.y).toBeGreaterThanOrEqual(context.bounds.y);
+      expect(face.y + face.height).toBeLessThanOrEqual(context.bounds.y + context.bounds.height);
+    }
+  });
+
+  it("requires both footer target and measured label baseline offset", () => {
+    expect(() => layoutButton({ ...context, placement: "footer" }, button)).toThrow(RangeError);
+    expect(() =>
+      layoutButton({ ...context, footerBaseline: 90, placement: "footer" }, button),
+    ).toThrow(RangeError);
+    expect(() =>
+      layoutButton({ ...context, placement: "footer" }, { ...button, labelBaselineOffset: 7 }),
+    ).toThrow(RangeError);
+  });
+
+  it.each([NaN, Infinity, -Infinity, 41, 103])(
+    "rejects invalid or uncontainable footer baseline %s",
+    (footerBaseline) => {
+      expect(() =>
+        layoutButton(
+          { ...context, footerBaseline, placement: "footer" },
+          { ...button, labelBaselineOffset: 7 },
+        ),
+      ).toThrow(RangeError);
+    },
+  );
+
+  it.each([-1, 11, NaN, Infinity, -Infinity])(
+    "rejects a baseline offset outside the label line box: %s",
+    (labelBaselineOffset) => {
+      expect(() =>
+        layoutButton(
+          { ...context, footerBaseline: 90, placement: "footer" },
+          { ...button, labelBaselineOffset },
+        ),
+      ).toThrow(RangeError);
+    },
+  );
+
+  it.each([42, 102])(
+    "accepts a footer face exactly on a region edge at baseline %s",
+    (footerBaseline) => {
+      const placed = layoutButton(
+        { ...context, footerBaseline, placement: "footer" },
+        { ...button, labelBaselineOffset: 7 },
+      );
+      expect(placed.label.y + 7).toBe(footerBaseline);
+      expect(placed.face.height).toBe(tokens.standard.height);
+    },
+  );
+
+  it.each([0, 10])("accepts a measured baseline at line box offset %s", (labelBaselineOffset) => {
+    const placed = layoutButton(
+      { ...context, footerBaseline: 60, placement: "footer" },
+      { ...button, labelBaselineOffset },
+    );
+    expect(placed.label.y + labelBaselineOffset).toBe(60);
+  });
+
+  it("accepts a finite negative footer target within a negative-origin region", () => {
+    const placed = layoutButton(
+      {
+        ...context,
+        bounds: { ...context.bounds, y: -100 },
+        footerBaseline: -20,
+        placement: "footer",
+      },
+      { ...button, labelBaselineOffset: 7 },
+    );
+    expect(placed.face.y).toBe(-42);
+    expect(placed.label.y + 7).toBe(-20);
+  });
+
+  it("rejects an unknown role or placement", () => {
+    expect(() => layoutButton(context, { ...button, role: "unknown" as ButtonRole })).toThrow(
+      RangeError,
+    );
+    expect(() =>
+      layoutButton({ ...context, placement: "unknown" as ButtonPlacement }, button),
+    ).toThrow(RangeError);
   });
 
   it.each<ButtonRole>(["primary", "secondary", "navigation"])("preserves the %s role", (role) => {
@@ -209,6 +300,48 @@ describe("layoutButton", () => {
 
   it("rejects an arbitrary face height that differs from the named token", () => {
     expect(() => layoutButton({ ...context, size: { ...size, height: 41 } }, button)).toThrow(
+      RangeError,
+    );
+  });
+});
+
+describe("withoutCurrentNavigation", () => {
+  it("omits only navigation for the current section and preserves caller objects without mutation", () => {
+    const metadata = Object.freeze({ value: 3 });
+    const buttons = Object.freeze([
+      Object.freeze({ key: "a", role: "navigation" as const, section: "a" }),
+      Object.freeze({ key: "a", role: "primary" as const, section: "a" }),
+      Object.freeze({ key: "a", role: "secondary" as const, section: "a" }),
+      Object.freeze({
+        key: "b",
+        metadata,
+        role: "navigation" as const,
+        section: "b",
+      }),
+      Object.freeze({ key: "back", role: "navigation" as const }),
+    ]);
+    const before = [...buttons];
+    const retained = withoutCurrentNavigation("a", buttons);
+    expect(retained).toEqual(before.slice(1));
+    expect(buttons).toEqual(before);
+    retained.forEach((entry, index) => expect(entry).toBe(buttons[index + 1]));
+    expect(retained[2]).toHaveProperty("metadata", metadata);
+  });
+
+  it("accepts caller-owned numeric section IDs and an empty list", () => {
+    const buttons = [{ role: "navigation" as const, section: 4 }];
+    expect(withoutCurrentNavigation(4, buttons)).toEqual([]);
+    expect(withoutCurrentNavigation(5, buttons)[0]).toBe(buttons[0]);
+    expect(withoutCurrentNavigation(4, [])).toEqual([]);
+  });
+
+  it("retains unsectioned navigation when the current section is undefined", () => {
+    const buttons = [{ role: "navigation" as const }];
+    expect(withoutCurrentNavigation(undefined, buttons)).toEqual(buttons);
+  });
+
+  it("rejects an unknown role", () => {
+    expect(() => withoutCurrentNavigation("a", [{ role: "unknown" as ButtonRole }])).toThrow(
       RangeError,
     );
   });
