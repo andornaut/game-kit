@@ -1,0 +1,45 @@
+/* Opt-in structural layout only. The caller supplies metrics, components and their styling. */
+.ui-layout-row,
+.ui-layout-stack,
+.ui-layout-columns {
+  display: grid;
+  box-sizing: border-box;
+  gap: calc(var(--ui-layout-gap) * var(--ui-unit, 1) * 1px);
+  padding: calc(var(--ui-layout-padding) * var(--ui-unit, 1) * 1px);
+  align-items: start;
+}
+
+.ui-layout-row,
+.ui-layout-columns {
+  width: max-content;
+  min-width: 100%;
+}
+
+.ui-layout-row {
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(max-content, 1fr);
+}
+
+.ui-layout-columns {
+  grid-template-columns: repeat(var(--ui-layout-columns), minmax(max-content, 1fr));
+}
+
+.ui-layout-stack {
+  grid-template-columns: minmax(max-content, 1fr);
+}
+
+.ui-layout-stack > * {
+  justify-self: stretch;
+}
+
+.ui-layout-row[data-ui-layout-align="center"],
+.ui-layout-stack[data-ui-layout-align="center"],
+.ui-layout-columns[data-ui-layout-align="center"] {
+  align-items: center;
+}
+
+.ui-layout-row[data-ui-layout-align="baseline"],
+.ui-layout-stack[data-ui-layout-align="baseline"],
+.ui-layout-columns[data-ui-layout-align="baseline"] {
+  align-items: baseline;
+}
