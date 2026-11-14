@@ -1,0 +1,82 @@
+/* Opt-in control geometry. Named size tokens are unitless base pixels, resolved at --ui-unit.
+   Games supply fonts, colours, faces, labels and actions. */
+.ui-control-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: calc(var(--ui-button-height) * var(--ui-unit, 1) * 1px);
+  min-width: calc(var(--ui-button-min-width) * var(--ui-unit, 1) * 1px);
+  padding-top: calc(
+    (var(--ui-button-padding-y) + var(--ui-button-face-top, 0)) * var(--ui-unit, 1) * 1px -
+      var(--ui-button-border-top, 0px)
+  );
+  padding-right: calc(
+    (var(--ui-button-padding-x) + var(--ui-button-face-right, 0)) * var(--ui-unit, 1) * 1px -
+      var(--ui-button-border-right, 0px)
+  );
+  padding-bottom: calc(
+    (var(--ui-button-padding-y) + var(--ui-button-face-bottom, 0)) * var(--ui-unit, 1) * 1px -
+      var(--ui-button-border-bottom, 0px)
+  );
+  padding-left: calc(
+    (var(--ui-button-padding-x) + var(--ui-button-face-left, 0)) * var(--ui-unit, 1) * 1px -
+      var(--ui-button-border-left, 0px)
+  );
+  font: inherit;
+  text-align: center;
+  pointer-events: auto;
+}
+
+.ui-control-label {
+  display: block;
+  min-width: 0;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* Equal fractional tracks give repeated controls one width, including intrinsic-size groups. */
+.ui-control-group {
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  grid-auto-rows: 1fr;
+  align-items: stretch;
+  gap: var(--ui-control-gap, var(--ui-button-gap));
+}
+
+.ui-control-group > .ui-control-button {
+  width: 100%;
+}
+
+.ui-control-group[data-ui-axis="stack"] {
+  grid-auto-flow: row;
+  gap: var(--ui-control-gap, var(--ui-stack-button-gap));
+}
+
+/* External placement is independent of the label's alignment inside its button. */
+.ui-control-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ui-control-gap, var(--ui-button-gap));
+}
+
+.ui-control-row[data-ui-placement="center"] {
+  align-items: center;
+}
+
+.ui-control-row[data-ui-placement="footer"],
+.ui-control-row[data-ui-placement="footer"] > .ui-control-group {
+  align-items: baseline;
+}
+
+.ui-control-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ui-control-row[hidden],
+.ui-control-group[hidden],
+.ui-control-button[hidden] {
+  display: none;
+}
