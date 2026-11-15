@@ -253,6 +253,10 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
       }
       const worker = registration.installing;
       if (worker !== null && !watched.has(worker)) {
+        for (const [previous, changed] of watched) {
+          previous.removeEventListener("statechange", changed);
+        }
+        watched.clear();
         if (
           current !== undefined &&
           !current.done &&
@@ -353,6 +357,7 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
       if (pending === flight) {
         pending = undefined;
       }
+      precaching = false;
       reportActivity("idle");
       fail(attempt, "registration", error);
       console.warn("Service worker registration failed; the game will not work offline.", error);

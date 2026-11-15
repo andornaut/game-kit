@@ -278,8 +278,9 @@ describe("startOfflinePlay", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const states: InstallationState[] = [];
+    const activities: OfflineActivity[] = [];
     const reentered: Promise<InstallationState>[] = [];
-    const opened = openPage(false, "none", undefined, {
+    const opened = openPage(false, "none", (activity) => activities.push(activity), {
       autoLaunch: false,
       onInstallationState: (state) => {
         states.push(state);
@@ -303,6 +304,7 @@ describe("startOfflinePlay", () => {
       stage: "registration",
     });
     await settle();
+    expect(activities).toEqual(["idle", "precaching", "idle"]);
     const worker = foundInstall(found);
     const retry = opened.play.retryInstallation();
     expect(opened.play.retryInstallation()).toBe(retry);
@@ -310,6 +312,7 @@ describe("startOfflinePlay", () => {
     await settle();
     expect(register).toHaveBeenCalledTimes(2);
     expect(states.at(-1)).toMatchObject({ attempt: 2, kind: "loading", stage: "installing" });
+    expect(activities).toEqual(["idle", "precaching", "idle", "updating"]);
     endInstall(found, worker, "installed");
     await expect(retry).resolves.toMatchObject({
       attempt: 2,
