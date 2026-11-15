@@ -83,6 +83,7 @@ interface MultiEntry {
 
 interface XMLLoad {
   readonly baseURL: string;
+  readonly rounds: number;
   readonly xhrSettings: Types.Loader.XHRSettingsObject;
 }
 
@@ -190,6 +191,7 @@ export function watchLoader<Label extends string = string>(
   const queued = new Set<string>();
   let xmlLoads = new WeakMap<Loader.File, XMLLoad>();
   const xmlDispatch = new Map<Loader.File, () => void>();
+  const xmlProcessing = new Map<Loader.File, () => void>();
   let disposed = false;
   let retryFlight: Promise<void> | undefined;
   let finishRetry: (() => void) | undefined;
@@ -336,8 +338,40 @@ export function watchLoader<Label extends string = string>(
       const { headers, ...settings } = file.xhrSettings;
       xmlLoads.set(file, {
         baseURL: loader.baseURL,
+        rounds: retrying.get(fileId(file.type, file.key)) ?? 0,
         xhrSettings: { ...settings, ...(headers === undefined ? {} : { headers: { ...headers } }) },
       });
+      const processError = file.onProcessError;
+      const processComplete = file.onProcessComplete;
+      const ownError = Object.getOwnPropertyDescriptor(file, "onProcessError");
+      const ownComplete = Object.getOwnPropertyDescriptor(file, "onProcessComplete");
+      const restoreProcessing = () => {
+        for (const [method, own] of [
+          ["onProcessError", ownError],
+          ["onProcessComplete", ownComplete],
+        ] as const) {
+          if (own === undefined) {
+            Reflect.deleteProperty(file, method);
+          } else {
+            Object.defineProperty(file, method, own);
+          }
+        }
+        xmlProcessing.delete(file);
+      };
+      xmlProcessing.set(file, restoreProcessing);
+      file.onProcessError = function () {
+        restoreProcessing();
+        if (!disposed) {
+          // FILE_LOAD already counted network settlement. Record before native COMPLETE.
+          const verdict = singleVerdict(file);
+          console.warn(`Processing ${String(file.url)} failed${verdict}`);
+        }
+        return processError.call(this);
+      };
+      file.onProcessComplete = function () {
+        restoreProcessing();
+        return processComplete.call(this);
+      };
       if (retrying.has(fileId(file.type, file.key))) {
         // File.load reads the shared baseURL at dispatch, including native XHR retries.
         const base = loader.baseURL;
@@ -418,7 +452,7 @@ export function watchLoader<Label extends string = string>(
   };
   const singleVerdict = (file: Loader.File) => {
     const id = fileId(file.type, file.key);
-    const rounds = retrying.get(id) ?? 0;
+    const rounds = xmlLoads.get(file)?.rounds ?? retrying.get(id) ?? 0;
     retrying.delete(id);
     const type = retryableType(file);
     const xml = type === "xml" ? xmlLoads.get(file) : undefined;
@@ -438,6 +472,7 @@ export function watchLoader<Label extends string = string>(
       return;
     }
     xmlDispatch.get(file)?.();
+    xmlProcessing.get(file)?.();
     if (run !== undefined) {
       run.done += 1;
       report();
@@ -457,6 +492,12 @@ export function watchLoader<Label extends string = string>(
   const onComplete = () => {
     if (disposed) {
       return;
+    }
+    for (const restore of xmlDispatch.values()) {
+      restore();
+    }
+    for (const restore of xmlProcessing.values()) {
+      restore();
     }
     run = undefined;
     queued.clear();
@@ -531,6 +572,9 @@ export function watchLoader<Label extends string = string>(
     multiLoads = new WeakMap();
     xmlLoads = new WeakMap();
     for (const restore of xmlDispatch.values()) {
+      restore();
+    }
+    for (const restore of xmlProcessing.values()) {
       restore();
     }
     recorded.clear();

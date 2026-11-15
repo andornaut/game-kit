@@ -244,6 +244,65 @@ describe("LOADER_CONFIG", () => {
 });
 
 describe("watchLoader", () => {
+  it("records native XML processing failures before COMPLETE without counting FILE_LOAD twice", async () => {
+    const { clock, loader, values, watch } = setup();
+    const order: string[] = [];
+    Object.assign(loader, {
+      fileProcessComplete: (file: Loader.File) => {
+        order.push("processed");
+        expect(Object.hasOwn(file, "onProcessError")).toBe(false);
+        expect(Object.hasOwn(file, "onProcessComplete")).toBe(false);
+        if (loader.list.size === 0) {
+          loader.complete();
+        }
+      },
+    });
+    const roundsAtComplete: (number | undefined)[] = [];
+    loader.on(Loader.Events.COMPLETE, () => {
+      order.push("complete");
+      roundsAtComplete.push(watch.failures()[0]?.rounds);
+    });
+    loader.xml("font", "font.xml");
+    const other = loader.add("json", "other", "other.json");
+    const first = [...loader.list][0] as unknown as Loader.File;
+    expect(first).toBeInstanceOf(XMLFile);
+    watch.waitFor("boot");
+    loader.start();
+    loader.settle(first as unknown as FakeFile, true);
+    expect(Object.hasOwn(first, "onProcessError")).toBe(true);
+    first.onProcessError();
+    expect(watch.failures()).toEqual([
+      expect.objectContaining({ key: "font", rounds: 0, type: "xml" }),
+    ]);
+    expect(values().at(-1)).toBe(0.5);
+    expect(order).toEqual(["processed"]);
+    loader.settle(other, true);
+    loader.complete();
+    expect(clock.pending()).toEqual([RETRY_ROUNDS_MS[0]]);
+    clock.fire();
+    const automatic = [...loader.list][0] as unknown as Loader.File;
+    loader.settle(automatic as unknown as FakeFile, true);
+    expect(Object.hasOwn(automatic, "load")).toBe(false);
+    expect(Object.hasOwn(automatic, "onProcessError")).toBe(true);
+    automatic.onProcessError();
+    expect(roundsAtComplete).toEqual([0, 1]);
+    expect(order).toEqual(["processed", "complete", "processed", "complete"]);
+    const explicit = watch.retryFailures(() => true);
+    const again = [...loader.list][0] as unknown as Loader.File;
+    loader.settle(again as unknown as FakeFile, true);
+    again.onProcessError();
+    await explicit;
+    expect(watch.failures()[0]?.rounds).toBe(1);
+    const success = watch.retryFailures(() => true);
+    const ready = [...loader.list][0] as unknown as Loader.File;
+    loader.settle(ready as unknown as FakeFile, true);
+    ready.onProcessComplete();
+    await success;
+    expect(watch.failures()).toEqual([]);
+    watch.dispose();
+    expect(clock.pending()).toEqual([]);
+  });
+
   it("retries native XML with its captured context while optional rounds continue", async () => {
     const classify = vi.fn((failure: LoadFailure) =>
       failure.key === "font.required" ? ("manual" as const) : ("automatic" as const),
@@ -336,6 +395,8 @@ describe("watchLoader", () => {
     expect(xml.mock.calls.some(([key]) => key === "font.success")).toBe(false);
     watch.dispose();
     expect(Object.hasOwn(disposedFile, "load")).toBe(false);
+    expect(Object.hasOwn(disposedFile, "onProcessError")).toBe(false);
+    expect(Object.hasOwn(disposedFile, "onProcessComplete")).toBe(false);
     expect(clock.pending()).toEqual([]);
     await watch.retryFailures(() => true);
     expect(loader.keys()).toEqual(["font.optional"]);
