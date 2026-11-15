@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createLoadingAttempts } from "../../../load/loadingAttempts.ts";
-import { mountLoadingFailure } from "./loadingFailure.ts";
+import { type LoadingFailureLayout, mountLoadingFailure } from "./loadingFailure.ts";
 
 describe("mountLoadingFailure", () => {
   it("shows the exact shared text in native fallback styles without a font, image or second bar", () => {
@@ -30,7 +30,15 @@ describe("mountLoadingFailure", () => {
     ]) {
       expect(node.style.getPropertyValue("font")).toBe("medium sans-serif");
       expect(node.style.getPropertyPriority("font")).toBe("important");
+      expect(node.style.getPropertyValue("all")).toBe("revert");
+      expect(node.style.getPropertyPriority("all")).toBe("important");
     }
+    expect(view.element.style.display).toBe("block");
+    expect(view.element.style.gap).toBe("");
+    expect(view.element.style.padding).toBe("");
+    expect(view.element.querySelector("button")!.style.minWidth).toBe("");
+    expect(view.element.querySelector("button")!.style.minHeight).toBe("");
+    expect(view.element.querySelector("button")!.style.alignSelf).toBe("");
     // The DOM emulator does not serialize CSS system colours; verify the actual CSSOM writes.
     expect(
       writes.mock.calls.filter(
@@ -50,6 +58,150 @@ describe("mountLoadingFailure", () => {
     expect(onRetry).not.toHaveBeenCalled();
     view.dispose();
     writes.mockRestore();
+  });
+
+  it("uses caller spacing, target minimums and alignment after the hardened reset across states", () => {
+    for (const [actionAlign, expected] of [
+      ["start", "flex-start"],
+      ["center", "center"],
+      ["end", "flex-end"],
+    ] as const) {
+      const parent = document.createElement("div");
+      parent.style.font = "0px MissingGameFont";
+      const layout = { actionAlign, gapPx: 8.5, minActionSizePx: 48, paddingPx: 12 };
+      const view = mountLoadingFailure({ layout, onRetry: vi.fn() }, parent);
+      const retry = view.element.querySelector("button")!;
+      const expectedRoot = {
+        "box-sizing": "border-box",
+        "flex-direction": "column",
+        gap: "8.5px",
+        padding: "12px",
+      };
+      const expectedAction = {
+        "align-items": "center",
+        "align-self": expected,
+        "box-sizing": "border-box",
+        display: "flex",
+        "flex-shrink": "0",
+        "justify-content": "center",
+        "min-height": "48px",
+        "min-width": "48px",
+        "text-align": "center",
+      };
+      layout.gapPx = 100;
+      layout.minActionSizePx = 1;
+      for (const state of [
+        { attempt: 1, error: undefined, kind: "failed" },
+        { attempt: 2, kind: "loading" },
+        { attempt: 2, error: undefined, kind: "failed" },
+        { attempt: 2, kind: "ready" },
+      ] as const) {
+        view.update(state);
+        expect(view.element.style.display).toBe(state.kind === "failed" ? "flex" : "none");
+        expect(view.element.style.getPropertyPriority("display")).toBe("important");
+        for (const [property, value] of Object.entries(expectedRoot)) {
+          expect(view.element.style.getPropertyValue(property)).toBe(value);
+          expect(view.element.style.getPropertyPriority(property)).toBe("important");
+        }
+        for (const [property, value] of Object.entries(expectedAction)) {
+          expect(retry.style.getPropertyValue(property)).toBe(value);
+          expect(retry.style.getPropertyPriority(property)).toBe("important");
+        }
+        for (const node of view.element.querySelectorAll<HTMLElement>("h2, p, button")) {
+          expect(node.style.margin).toBe("0px");
+          expect(node.style.getPropertyPriority("margin")).toBe("important");
+          expect(node.style.font).toBe("medium sans-serif");
+          expect(node.style.getPropertyPriority("font")).toBe("important");
+          expect(node.style.getPropertyValue("all")).toBe("revert");
+        }
+      }
+      expect(retry.style.width).toBe("");
+      expect(retry.style.height).toBe("");
+      view.dispose();
+    }
+  });
+
+  it("guards real click dispatch with caller layout while preserving single-flight retry and disposal", async () => {
+    let finish!: () => void;
+    const onRetry = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const view = mountLoadingFailure(
+      {
+        layout: { actionAlign: "end", gapPx: 0, minActionSizePx: 0, paddingPx: 0 },
+        onRetry,
+      },
+      document.createElement("div"),
+    );
+    const retry = view.element.querySelector("button")!;
+    const click = () => retry.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    click();
+    expect(onRetry).not.toHaveBeenCalled();
+    view.update({ attempt: 1, error: undefined, kind: "failed" });
+    click();
+    click();
+    expect(onRetry).toHaveBeenCalledOnce();
+    expect(retry.disabled).toBe(true);
+    expect(view.element.style.display).toBe("flex");
+    expect(retry.style.minWidth).toBe("0px");
+    expect(retry.style.minHeight).toBe("0px");
+    view.update({ attempt: 2, kind: "loading" });
+    view.update({ attempt: 1, error: undefined, kind: "failed" });
+    click();
+    expect(onRetry).toHaveBeenCalledOnce();
+    expect(view.element.hidden).toBe(true);
+    finish();
+    await Promise.resolve();
+    expect(view.element.hidden).toBe(true);
+    view.dispose();
+    click();
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  it("rejects incomplete, nonfinite, negative or unknown layout values before any DOM write", () => {
+    const parent = document.createElement("div");
+    const existing = document.createElement("span");
+    existing.textContent = "Existing caller content";
+    parent.append(existing);
+    const before = parent.innerHTML;
+    const onRetry = vi.fn();
+    const valid = { actionAlign: "end", gapPx: 8, minActionSizePx: 48, paddingPx: 12 };
+    const writes = vi.spyOn(CSSStyleDeclaration.prototype, "setProperty");
+    try {
+      for (const property of ["gapPx", "minActionSizePx", "paddingPx"]) {
+        for (const value of [-1, NaN, Infinity, -Infinity, "48", null, undefined]) {
+          expect(() =>
+            mountLoadingFailure(
+              {
+                layout: { ...valid, [property]: value } as unknown as LoadingFailureLayout,
+                onRetry,
+              },
+              parent,
+            ),
+          ).toThrow(RangeError);
+          expect(parent.innerHTML).toBe(before);
+        }
+      }
+      for (const actionAlign of ["left", "END", undefined]) {
+        expect(() =>
+          mountLoadingFailure(
+            { layout: { ...valid, actionAlign } as unknown as LoadingFailureLayout, onRetry },
+            parent,
+          ),
+        ).toThrow(RangeError);
+      }
+      expect(() =>
+        mountLoadingFailure({ layout: null as unknown as LoadingFailureLayout, onRetry }, parent),
+      ).toThrow(RangeError);
+      expect(writes).not.toHaveBeenCalled();
+      expect(onRetry).not.toHaveBeenCalled();
+      expect([...parent.children]).toEqual([existing]);
+    } finally {
+      writes.mockRestore();
+    }
   });
 
   it("retries one required load at a time, repeats the same error and continues once on success", async () => {

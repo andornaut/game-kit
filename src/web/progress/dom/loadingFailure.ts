@@ -1,6 +1,14 @@
 import { LOADING_FAILURE_TEXT, type LoadingAttemptState } from "../../../load/loadingAttempts.ts";
 
+export interface LoadingFailureLayout {
+  readonly actionAlign: "start" | "center" | "end";
+  readonly gapPx: number;
+  readonly minActionSizePx: number;
+  readonly paddingPx: number;
+}
+
 export interface LoadingFailureContext {
+  readonly layout?: LoadingFailureLayout;
   readonly onRetry: () => void | PromiseLike<void>;
 }
 
@@ -27,12 +35,43 @@ function fallback(element: HTMLElement): void {
   }
 }
 
+// Values are CSS pixels at mount time, not game units. Keep layout independent of later caller
+// mutations and validate before creating or appending any fallback DOM.
+function checkedLayout(layout: LoadingFailureLayout | undefined): LoadingFailureLayout | undefined {
+  if (layout === undefined) {
+    return undefined;
+  }
+  if (typeof layout !== "object" || layout === null) {
+    throw new RangeError("Loading failure layout must be an object");
+  }
+  const result = {
+    actionAlign: layout.actionAlign,
+    gapPx: layout.gapPx,
+    minActionSizePx: layout.minActionSizePx,
+    paddingPx: layout.paddingPx,
+  };
+  for (const name of ["gapPx", "minActionSizePx", "paddingPx"] as const) {
+    if (!Number.isFinite(result[name]) || result[name] < 0) {
+      throw new RangeError(`layout.${name} must be finite and nonnegative`);
+    }
+  }
+  if (
+    result.actionAlign !== "start" &&
+    result.actionAlign !== "center" &&
+    result.actionAlign !== "end"
+  ) {
+    throw new RangeError("Unknown loading failure action alignment");
+  }
+  return result;
+}
+
 // Mount in a visible, non-inert caller-owned parent outside any font/art reveal gate. The
 // caller wires update to onState and onRetry to retry, retaining its existing single top bar.
 export function mountLoadingFailure(
   context: LoadingFailureContext,
   parent: HTMLElement,
 ): LoadingFailureView {
+  const layout = checkedLayout(context.layout);
   const document = parent.ownerDocument;
   const element = document.createElement("div");
   element.className = "loading-failure";
@@ -49,13 +88,43 @@ export function mountLoadingFailure(
   for (const node of [element, title, body, retry]) {
     fallback(node);
   }
+  if (layout !== undefined) {
+    for (const [name, value] of Object.entries({
+      "box-sizing": "border-box",
+      "flex-direction": "column",
+      gap: `${layout.gapPx}px`,
+      padding: `${layout.paddingPx}px`,
+    })) {
+      element.style.setProperty(name, value, "important");
+    }
+    for (const node of [title, body, retry]) {
+      node.style.setProperty("margin", "0", "important");
+    }
+    for (const [name, value] of Object.entries({
+      "align-items": "center",
+      "align-self": { center: "center", end: "flex-end", start: "flex-start" }[layout.actionAlign],
+      "box-sizing": "border-box",
+      display: "flex",
+      "flex-shrink": "0",
+      "justify-content": "center",
+      "min-height": `${layout.minActionSizePx}px`,
+      "min-width": `${layout.minActionSizePx}px`,
+      "text-align": "center",
+    })) {
+      retry.style.setProperty(name, value, "important");
+    }
+  }
   let state: LoadingAttemptState = { attempt: 0, kind: "idle" };
   let disposed = false;
   let busy = false;
   let generation = 0;
   const render = () => {
     element.hidden = state.kind !== "failed";
-    element.style.setProperty("display", element.hidden ? "none" : "block", "important");
+    element.style.setProperty(
+      "display",
+      element.hidden ? "none" : layout === undefined ? "block" : "flex",
+      "important",
+    );
     retry.disabled = state.kind !== "failed" || busy;
   };
   const onClick = () => {
