@@ -23,7 +23,7 @@ export const MULTI_FILE_METHODS = [
 export type MultiFileMethod = (typeof MULTI_FILE_METHODS)[number];
 
 // The loads a retry round can queue again, by their loader method.
-export type RetryableType = "image" | "json" | "spritesheet" | "svg" | MultiFileMethod;
+export type RetryableType = "image" | "json" | "spritesheet" | "svg" | "xml" | MultiFileMethod;
 
 // A load whose last attempt failed, waiting for its next retry round. For a single file, key and
 // url are the file's as the loader resolved them against its prefix and path, and config its
@@ -81,9 +81,15 @@ interface MultiEntry {
   verdict?: string;
 }
 
+interface XMLLoad {
+  readonly baseURL: string;
+  readonly xhrSettings: Types.Loader.XHRSettingsObject;
+}
+
 interface Recorded {
   readonly failure: LoadFailure;
   readonly load?: MultiLoad;
+  readonly xml?: XMLLoad;
 }
 
 const retryableType = (file: Loader.File): RetryableType | undefined => {
@@ -95,13 +101,18 @@ const retryableType = (file: Loader.File): RetryableType | undefined => {
     case "json":
     case "spritesheet":
     case "svg":
+    case "xml":
       return file.type;
     default:
       return undefined;
   }
 };
 
-const queueAgain = (loader: Loader.LoaderPlugin, failure: LoadFailure) => {
+const queueAgain = (
+  loader: Loader.LoaderPlugin,
+  xml: XMLLoad | undefined,
+  failure: LoadFailure,
+) => {
   const { config, key, type, url } = failure;
   switch (type) {
     case "image":
@@ -115,6 +126,12 @@ const queueAgain = (loader: Loader.LoaderPlugin, failure: LoadFailure) => {
       break;
     case "svg":
       loader.svg(key, url, config as Types.Loader.FileTypes.SVGSizeConfig);
+      break;
+    case "xml":
+      if (xml === undefined) {
+        throw new Error("XML retry requires its original ADD context");
+      }
+      loader.xml(key, url, xml.xhrSettings);
       break;
     default:
       break;
@@ -150,6 +167,8 @@ const fileId = (type: string, key: string) => `${type}\u0000${key}`;
 // - While the watch lasts, each MULTI_FILE_METHODS method on the loader is wrapped to capture
 //   its arguments, base URL, path and prefix, one call per config when given an array of configs,
 //   so a round queues each multi-file load again exactly as it was first queued.
+// - Standalone XML captures its original base URL and resolved XHR settings at ADD. XML queued
+//   before the watch has no captured context and is not retried.
 // Scene shutdown or destroy disposes the watch.
 export function watchLoader<Label extends string = string>(
   context: {
@@ -169,6 +188,8 @@ export function watchLoader<Label extends string = string>(
   // Single files a round queued again, by id, with the rounds run for them.
   const retrying = new Map<string, number>();
   const queued = new Set<string>();
+  let xmlLoads = new WeakMap<Loader.File, XMLLoad>();
+  const xmlDispatch = new Map<Loader.File, () => void>();
   let disposed = false;
   let retryFlight: Promise<void> | undefined;
   let finishRetry: (() => void) | undefined;
@@ -263,9 +284,9 @@ export function watchLoader<Label extends string = string>(
             // Recorded single-file keys and URLs already carry their original prefix and path.
             loader.path = "";
             loader.prefix = "";
-            loader.baseURL = baseURL;
+            loader.baseURL = entry.xml?.baseURL ?? baseURL;
             retrying.set(id, failure.rounds + increment);
-            queueAgain(loader, failure);
+            queueAgain(loader, entry.xml, failure);
           } else {
             loader.baseURL = load.baseURL;
             loader.path = load.path;
@@ -310,6 +331,37 @@ export function watchLoader<Label extends string = string>(
       return;
     }
     applyTimeout(file);
+    if (retryableType(file) === "xml") {
+      // Native XML URLs include path but exclude baseURL; keys already include prefix.
+      const { headers, ...settings } = file.xhrSettings;
+      xmlLoads.set(file, {
+        baseURL: loader.baseURL,
+        xhrSettings: { ...settings, ...(headers === undefined ? {} : { headers: { ...headers } }) },
+      });
+      if (retrying.has(fileId(file.type, file.key))) {
+        // File.load reads the shared baseURL at dispatch, including native XHR retries.
+        const base = loader.baseURL;
+        const own = Object.getOwnPropertyDescriptor(file, "load");
+        const load = file.load;
+        file.load = function () {
+          const current = loader.baseURL;
+          try {
+            loader.baseURL = base;
+            return load.call(this);
+          } finally {
+            loader.baseURL = current;
+          }
+        };
+        xmlDispatch.set(file, () => {
+          if (own === undefined) {
+            Reflect.deleteProperty(file, "load");
+          } else {
+            Object.defineProperty(file, "load", own);
+          }
+          xmlDispatch.delete(file);
+        });
+      }
+    }
     const multi = file.multiFile;
     if (multi && queuing !== undefined && !multiLoads.has(multi)) {
       multiLoads.set(multi, { load: queuing });
@@ -334,6 +386,7 @@ export function watchLoader<Label extends string = string>(
     if (disposed) {
       return;
     }
+    xmlDispatch.get(file)?.();
     retrying.delete(fileId(file.type, file.key));
     if (run !== undefined) {
       run.done += 1;
@@ -368,7 +421,8 @@ export function watchLoader<Label extends string = string>(
     const rounds = retrying.get(id) ?? 0;
     retrying.delete(id);
     const type = retryableType(file);
-    if (type === undefined) {
+    const xml = type === "xml" ? xmlLoads.get(file) : undefined;
+    if (type === undefined || (type === "xml" && xml === undefined)) {
       return "; not retried";
     }
     const failure = { config: file.config, key: file.key, rounds, type, url: String(file.url) };
@@ -376,13 +430,14 @@ export function watchLoader<Label extends string = string>(
     if (auto && rounds >= RETRY_ROUNDS_MS.length) {
       return ` in retry round ${rounds}; giving up`;
     }
-    recorded.set(id, { failure });
+    recorded.set(id, { failure, ...(xml === undefined ? {} : { xml }) });
     return auto ? "; retrying later" : "; waiting for manual retry";
   };
   const onError = (file: Loader.File) => {
     if (disposed) {
       return;
     }
+    xmlDispatch.get(file)?.();
     if (run !== undefined) {
       run.done += 1;
       report();
@@ -474,6 +529,10 @@ export function watchLoader<Label extends string = string>(
     run = undefined;
     queuing = undefined;
     multiLoads = new WeakMap();
+    xmlLoads = new WeakMap();
+    for (const restore of xmlDispatch.values()) {
+      restore();
+    }
     recorded.clear();
     retrying.clear();
     queued.clear();

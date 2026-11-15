@@ -29,6 +29,14 @@ const phaserRoot = dirname(phaserRequire.resolve("phaser/package.json"));
 type MultiFileClass = new (loader: object, type: string, key: string, files: FakeFile[]) => object;
 const MultiFile = phaserRequire(join(phaserRoot, "src/loader/MultiFile.js")) as MultiFileClass;
 
+type XMLFileClass = new (
+  loader: object,
+  key: string,
+  url: string,
+  xhrSettings?: Types.Loader.XHRSettingsObject,
+) => FakeFile;
+const XMLFile = phaserRequire(join(phaserRoot, "src/loader/filetypes/XMLFile.js")) as XMLFileClass;
+
 interface FontConfig {
   fontDataURL: string;
   key: string;
@@ -43,7 +51,7 @@ interface FakeFile {
   retryAttempts: number;
   type: string;
   url: string;
-  xhrSettings: { timeout?: number };
+  xhrSettings: Partial<Types.Loader.XHRSettingsObject>;
 }
 
 // Phaser's LoaderPlugin as the watch sees it: an emitter of Phaser's loader events with its
@@ -51,6 +59,7 @@ interface FakeFile {
 // method that queue multi-file loads. start, settle and complete play a run.
 class FakeLoader extends EventEmitter {
   baseURL = "";
+  readonly cacheManager = { xml: {} };
   readonly list = new Set<FakeFile>();
   loading = false;
   maxRetries: number = LOADER_CONFIG.maxRetries;
@@ -123,6 +132,10 @@ class FakeLoader extends EventEmitter {
   }
   svg(key: string, url: string, svgConfig: unknown) {
     this.add("svg", key, url, svgConfig);
+  }
+  xml(key: string, url: string, xhrSettings?: Types.Loader.XHRSettingsObject) {
+    this.queue(new XMLFile(this, key, url, xhrSettings));
+    return this;
   }
   isLoading() {
     return this.loading;
@@ -231,6 +244,133 @@ describe("LOADER_CONFIG", () => {
 });
 
 describe("watchLoader", () => {
+  it("retries native XML with its captured context while optional rounds continue", async () => {
+    const classify = vi.fn((failure: LoadFailure) =>
+      failure.key === "font.required" ? ("manual" as const) : ("automatic" as const),
+    );
+    const { clock, loader, watch } = setup(classify);
+    loader.baseURL = "https://original.invalid/";
+    loader.path = "fonts/";
+    loader.prefix = "font.";
+    const settings: Types.Loader.XHRSettingsObject = {
+      headers: { "X-Fixture": "original" },
+      overrideMimeType: "text/xml",
+      responseType: "text",
+      timeout: 4321,
+      withCredentials: true,
+    };
+    loader.xml("required", "required.xml", settings);
+    loader.xml("optional", "optional.xml");
+    loader.xml("success", "success.xml");
+    const original = [...loader.list][0]!;
+    expect(original).toBeInstanceOf(XMLFile);
+    const captured = { ...original.xhrSettings, headers: { "X-Fixture": "original" } };
+    loader.start();
+    loader.finish(["font.required", "font.optional"]);
+    expect(classify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: "font.required",
+        rounds: 0,
+        type: "xml",
+        url: "fonts/required.xml",
+      }),
+    );
+    expect(clock.pending()).toEqual([RETRY_ROUNDS_MS[0]]);
+    loader.baseURL = "https://later.invalid/";
+    loader.path = "later/";
+    loader.prefix = "later.";
+    Object.assign(original.xhrSettings.headers!, { "X-Fixture": "changed" });
+    Object.assign(original.xhrSettings, { timeout: 999 });
+    const xml = vi.spyOn(loader, "xml");
+    const bases: string[] = [];
+    loader.on(Loader.Events.ADD, () => bases.push(loader.baseURL));
+    const retry = watch.retryFailures(({ key }) => key === "font.required");
+    expect(xml).toHaveBeenLastCalledWith("font.required", "fonts/required.xml", captured);
+    expect(bases).toEqual(["https://original.invalid/"]);
+    expect(loader.queued()).toEqual([["xml", "font.required", "fonts/required.xml"]]);
+    expect([...loader.list][0]?.xhrSettings).toEqual(captured);
+    expect([loader.baseURL, loader.path, loader.prefix]).toEqual([
+      "https://later.invalid/",
+      "later/",
+      "later.",
+    ]);
+    const retried = [...loader.list][0] as unknown as Loader.File;
+    const open = vi.fn();
+    vi.stubGlobal(
+      "XMLHttpRequest",
+      class {
+        open = open;
+        overrideMimeType = vi.fn();
+        send = vi.fn();
+        setRequestHeader = vi.fn();
+      },
+    );
+    try {
+      retried.load();
+      retried.load();
+      expect(open.mock.calls.map((args) => args[1])).toEqual([
+        "https://original.invalid/fonts/required.xml",
+        "https://original.invalid/fonts/required.xml",
+      ]);
+      expect(loader.baseURL).toBe("https://later.invalid/");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    loader.finish(["font.required"]);
+    expect(Object.hasOwn(retried, "load")).toBe(false);
+    await retry;
+    expect(watch.failures().find(({ key }) => key === "font.required")?.rounds).toBe(0);
+    clock.fire();
+    expect(loader.keys()).toEqual(["font.optional"]);
+    expect(bases).toEqual(["https://original.invalid/", "https://original.invalid/"]);
+    loader.finish(["font.optional"]);
+    expect(watch.failures().find(({ key }) => key === "font.optional")?.rounds).toBe(1);
+    expect(clock.pending()).toEqual([RETRY_ROUNDS_MS[1]]);
+    const success = watch.retryFailures(({ key }) => key === "font.required");
+    loader.finish();
+    await success;
+    expect(watch.failures().map(({ key }) => key)).toEqual(["font.optional"]);
+    clock.fire();
+    const disposedFile = [...loader.list][0] as unknown as Loader.File;
+    expect(Object.hasOwn(disposedFile, "load")).toBe(true);
+    expect(xml.mock.calls.some(([key]) => key === "font.success")).toBe(false);
+    watch.dispose();
+    expect(Object.hasOwn(disposedFile, "load")).toBe(false);
+    expect(clock.pending()).toEqual([]);
+    await watch.retryFailures(() => true);
+    expect(loader.keys()).toEqual(["font.optional"]);
+  });
+
+  it("restores context and retains native XML capture after a queue error", async () => {
+    const { loader, watch } = setup(() => "manual");
+    loader.baseURL = "https://original.invalid/";
+    loader.path = "fonts/";
+    loader.prefix = "font.";
+    loader.xml("required", "required.xml");
+    loader.start();
+    loader.finish(["font.required"]);
+    loader.baseURL = "https://later.invalid/";
+    loader.path = "later/";
+    loader.prefix = "later.";
+    const queue = vi.spyOn(loader, "xml").mockImplementation(() => {
+      throw new Error("xml queue");
+    });
+    await expect(watch.retryFailures(() => true)).rejects.toThrow("xml queue");
+    expect([loader.baseURL, loader.path, loader.prefix]).toEqual([
+      "https://later.invalid/",
+      "later/",
+      "later.",
+    ]);
+    expect(watch.failures()).toHaveLength(1);
+    queue.mockRestore();
+    const retry = watch.retryFailures(() => true);
+    expect(loader.queued()).toEqual([["xml", "font.required", "fonts/required.xml"]]);
+    expect([...loader.list][0]?.xhrSettings.timeout).toBe(LOADER_CONFIG.timeout);
+    loader.finish();
+    await retry;
+    expect(watch.failures()).toEqual([]);
+  });
+
   it("keeps required failures manual while optional retries retain their independent round budget", async () => {
     const { clock, loader, watch } = setup((failure) =>
       failure.key === "required" ? "manual" : "automatic",
