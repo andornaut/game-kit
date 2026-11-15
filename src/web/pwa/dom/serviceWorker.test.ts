@@ -3,10 +3,73 @@ import { setImmediate as yieldIO } from "node:timers/promises";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ASSET_GROUPS_MESSAGE, type AssetGroupsResult } from "../assetGroups.ts";
 import { cacheNameFor, type CachePolicy } from "../cachePolicy.ts";
 import { DOWNLOAD_PROGRESS_MESSAGE, type DownloadProgress } from "../downloadProgress.ts";
 import type { PrecacheManifest } from "../precacheList.ts";
 import { runServiceWorker } from "./serviceWorker.ts";
+
+// Storage transactions have separate native IndexedDB coverage. These dispatcher scenarios
+// control commit admission to exercise network, pinning and activation interleavings.
+const durable = vi.hoisted(() => ({
+  barrier: undefined as
+    { owner: string; token: string; deadline: number; activating: boolean } | undefined,
+  builds: new Map<string, readonly string[]>(),
+}));
+vi.mock("./groupStore.ts", () => ({
+  createGroupStore: () => ({
+    close: () => undefined,
+    commit: async (build: string, ids: readonly string[], token?: string) => {
+      const b = durable.barrier;
+      if (
+        b !== undefined &&
+        (b.activating || b.deadline > Date.now()) &&
+        (b.owner !== build || b.token !== token)
+      ) {
+        return "blocked";
+      }
+      durable.builds.set(build, [...new Set([...(durable.builds.get(build) ?? []), ...ids])]);
+      return "stored";
+    },
+    finishActivation: async (build: string) => {
+      if (durable.barrier?.owner === build) {
+        durable.barrier = undefined;
+      }
+    },
+    freeze: async (owner: string, token: string, deadline: number) => {
+      if (durable.barrier?.owner === owner && durable.barrier.activating) {
+        durable.barrier = { activating: true, deadline, owner, token };
+        return { activating: true, snapshot: Object.fromEntries(durable.builds) };
+      }
+      if (
+        durable.barrier !== undefined &&
+        (durable.barrier.activating || durable.barrier.deadline > Date.now())
+      ) {
+        return undefined;
+      }
+      durable.barrier = { activating: false, deadline, owner, token };
+      return { activating: false, snapshot: Object.fromEntries(durable.builds) };
+    },
+    markActivating: async (token: string) => {
+      const b = durable.barrier;
+      if (b === undefined || b.token !== token || b.deadline <= Date.now()) {
+        return false;
+      }
+      b.activating = true;
+      return true;
+    },
+    read: async (build: string) => durable.builds.get(build),
+    release: async (token: string) => {
+      if (durable.barrier?.token === token) {
+        durable.barrier = undefined;
+      }
+    },
+    remove: async (build: string) => {
+      durable.builds.delete(build);
+    },
+    snapshot: async () => Object.fromEntries(durable.builds),
+  }),
+}));
 
 const ORIGIN = "https://game.test";
 const POLICY: CachePolicy = { cacheNamePrefix: "game-", hashedAssetPrefix: "/assets/" };
@@ -133,7 +196,7 @@ interface WorkerEvent {
   readonly resultingClientId?: string;
   readonly data?: unknown;
   readonly source?: unknown;
-  readonly ports?: readonly { postMessage(value: unknown): void }[];
+  readonly ports?: readonly { close?(): void; postMessage(value: unknown): void }[];
   respondWith?(response: Promise<Response>): void;
   waitUntil(promise: Promise<unknown>): void;
 }
@@ -236,6 +299,31 @@ function startWorker(
       });
       await done;
       return replies;
+    },
+    requestGroups: async (
+      buildId: string,
+      groups: readonly string[],
+      requester = "page",
+      version?: string,
+    ) => {
+      const replies: unknown[] = [];
+      let done = Promise.resolve<unknown>(undefined);
+      listeners.get("message")?.({
+        data: {
+          buildId,
+          groups,
+          type: ASSET_GROUPS_MESSAGE,
+
+          ...(version === undefined ? {} : { version }),
+        },
+        ports: [{ close: () => undefined, postMessage: (reply) => replies.push(reply) }],
+        source: { id: requester },
+        waitUntil: (promise) => {
+          done = promise;
+        },
+      });
+      await done;
+      return (replies.at(-1) as { type: "result"; result: AssetGroupsResult }).result;
     },
     respond,
     sendLegacyAccept: () => {
@@ -1236,5 +1324,174 @@ describe("document build pins", () => {
       "quota",
     );
     put.mockRestore();
+  });
+});
+
+describe("grouped precache dispatcher", () => {
+  const buildId = "a".repeat(40);
+  const files = { "/first": "one", "/play/": "page", "/second": "two", "/third": "three" };
+  const grouped = (version = "v2", identity = buildId): PrecacheManifest => ({
+    buildId: identity,
+    byteSizes: Object.fromEntries(Object.entries(files).map(([url, body]) => [url, body.length])),
+    contentHashes: Object.fromEntries(
+      Object.entries(files).map(([url, body]) => [url, hashOf(body)]),
+    ),
+    groups: {
+      initial: ["first"],
+      urls: { first: ["/first"], second: ["/second"], third: ["/third"] },
+    },
+    sounds: {},
+    urls: Object.keys(files),
+    version,
+  });
+  beforeEach(() => {
+    durable.builds.clear();
+    durable.barrier = undefined;
+    vi.stubGlobal("Request", PrioritizedRequest);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("preserves base/initial groups, rejects unknown batches and survives a worker restart", async () => {
+    const server = new FakeServer(files);
+    const worker = startWorker(server, {}, grouped(), undefined, [{ id: "page" }]);
+    await worker.install();
+    expect(server.fetched.sort()).toEqual(["/first", "/play/"]);
+    expect(await worker.requestGroups(buildId, [])).toEqual({
+      readyGroups: ["first"],
+      status: "available",
+      version: "v2",
+    });
+    expect(await worker.requestGroups(buildId, ["second", "unknown"])).toEqual({
+      status: "invalid-groups",
+      unknownGroups: ["unknown"],
+    });
+    expect(server.fetched).not.toContain("/second");
+    const results = await Promise.all([
+      worker.requestGroups(buildId, ["second"]),
+      worker.requestGroups(buildId, ["second"]),
+    ]);
+    expect(results).toEqual(
+      Array(2).fill({ readyGroups: ["first", "second"], status: "available", version: "v2" }),
+    );
+    expect(server.fetched.filter((url) => url === "/second")).toHaveLength(1);
+    const restart = startWorker(server, {}, grouped(), worker.storage, [{ id: "page" }]);
+    server.failures.set("/second", "always");
+    expect(await restart.requestGroups(buildId, [])).toMatchObject({
+      readyGroups: ["first", "second"],
+      status: "available",
+    });
+    expect(await restart.requestGroups("b".repeat(40), ["third"])).toEqual({
+      reason: "wrong-build",
+      status: "unavailable",
+    });
+    expect(await restart.requestGroups(buildId, ["third"], "page", "other-version")).toEqual({
+      reason: "wrong-build",
+      status: "unavailable",
+    });
+  });
+
+  it("retains successful files for retry without committing partial groups", async () => {
+    const manifest = grouped();
+    manifest.groups = {
+      initial: ["first"],
+      urls: { first: ["/first"], pair: ["/second", "/third"] },
+    };
+    const server = new FakeServer(files);
+    const worker = startWorker(server, {}, manifest, undefined, [{ id: "page" }]);
+    await worker.install();
+    server.failures.set("/third", "always");
+    vi.useFakeTimers();
+    const failed = worker.requestGroups(buildId, ["pair"]);
+    await withTimersRun(failed);
+    expect(await failed).toEqual({ reason: "failed", status: "unavailable" });
+    expect(durable.builds.get(NEW)).toEqual(["first"]);
+    server.failures.clear();
+    const retry = worker.requestGroups(buildId, ["pair"]);
+    await withTimersRun(retry);
+    expect(await retry).toMatchObject({ readyGroups: ["first", "pair"], status: "available" });
+    expect(server.fetched.filter((url) => url === "/second")).toHaveLength(1);
+    (await worker.storage.open(NEW)).bodies.delete("/third");
+    expect(await worker.requestGroups(buildId, [])).toEqual({
+      reason: "failed",
+      status: "unavailable",
+    });
+  });
+
+  it("revalidates hashed-name copies against grouped metadata rather than trusting their name", async () => {
+    const manifest = grouped();
+    manifest.urls.push("/assets/unchanged-name.js");
+    manifest.contentHashes["/assets/unchanged-name.js"] = hashOf("correct");
+    manifest.byteSizes!["/assets/unchanged-name.js"] = 7;
+    const server = new FakeServer({ ...files, "/assets/unchanged-name.js": "correct" });
+    const worker = startWorker(
+      server,
+      { [OLD]: { "/assets/unchanged-name.js": "corrupt" } },
+      manifest,
+      undefined,
+      [{ id: "page" }],
+    );
+    await worker.install();
+    expect(server.fetched).toContain("/assets/unchanged-name.js");
+    expect(await worker.respond(requestFor(`${ORIGIN}/assets/unchanged-name.js`))).toBe("correct");
+  });
+
+  it("stages the late installed-group union and blocks outgoing commits through native activation", async () => {
+    const server = new FakeServer(files);
+    const old = startWorker(server, {}, grouped("v1"), undefined, [{ id: "old" }, { id: "page" }]);
+    await old.install();
+    await old.activate();
+    await old.respond(requestFor(`${ORIGIN}/play/`, true), "", "old");
+    const nextId = "b".repeat(40);
+    const next = startWorker(server, {}, grouped("v2", nextId), old.storage, [
+      { id: "old" },
+      { id: "page" },
+    ]);
+    await next.install();
+    expect(await old.requestGroups(buildId, ["second"], "old")).toMatchObject({
+      status: "available",
+    });
+    let blocked!: AssetGroupsResult;
+    // Force a candidate cache miss so the barrier is observed during the staging operation.
+    (await next.storage.open(NEW)).bodies.delete("/second");
+    const cache = await next.storage.open(NEW);
+    const put = cache.put.bind(cache);
+    vi.spyOn(cache, "put").mockImplementation(async (key, response) => {
+      if (pathOf(key) === "/second") {
+        blocked = await old.requestGroups(buildId, ["third"], "old");
+      }
+      return put(key, response);
+    });
+    expect(await next.requestActivation("page")).toEqual(["activating"]);
+    expect(blocked).toEqual({ reason: "failed", status: "unavailable" });
+    expect(durable.builds.get(OLD)).toEqual(["first", "second"]);
+    expect(durable.builds.get(NEW)).toEqual(["first", "second"]);
+    expect(durable.barrier?.activating).toBe(true);
+    await next.activate();
+    expect(durable.barrier).toBeUndefined();
+    expect(await next.requestGroups(buildId, [], "old")).toMatchObject({
+      readyGroups: ["first", "second"],
+      status: "available",
+      version: "v1",
+    });
+    expect(await next.requestGroups(nextId, [], "old")).toEqual({
+      reason: "wrong-build",
+      status: "unavailable",
+    });
+  });
+
+  it("includes late groups at client-free activation without a manual switch", async () => {
+    const server = new FakeServer(files);
+    const old = startWorker(server, {}, grouped("v1"), undefined, [{ id: "page" }]);
+    await old.install();
+    const next = startWorker(server, {}, grouped("v2", "b".repeat(40)), old.storage, []);
+    await next.install();
+    expect(await old.requestGroups(buildId, ["second"])).toMatchObject({ status: "available" });
+    await next.activate();
+    expect(durable.builds.get(NEW)).toEqual(["first", "second"]);
+    expect(durable.builds.has(OLD)).toBe(false);
   });
 });

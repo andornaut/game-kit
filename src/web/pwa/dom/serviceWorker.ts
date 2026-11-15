@@ -1,8 +1,13 @@
 // The service worker's behaviour. A game's worker entry calls runServiceWorker with its cache
 // policy and the precache manifest the build writes in (vite/precachePlugin), and the plugin
 // builds the entry to one classic script. The worker runs in a ServiceWorkerGlobalScope, which the
-// DOM typings do not describe, so the few members it uses are declared here. It imports only
-// cachePolicy, and types, so the built worker holds nothing else.
+// DOM typings do not describe, so the few members it uses are declared here.
+import { isBuildId } from "../../build/buildVersion.ts";
+import {
+  ASSET_GROUPS_MESSAGE,
+  type AssetGroupsRequest,
+  type AssetGroupsResult,
+} from "../assetGroups.ts";
 import {
   cachedUrlsOf,
   cacheKeyFor,
@@ -20,9 +25,11 @@ import {
   DOWNLOAD_PROGRESS_MESSAGE,
   type DownloadProgress,
 } from "../downloadProgress.ts";
+import { basePrecacheUrls, precacheGroupUrls, validatePrecacheGroups } from "../precacheGroups.ts";
 import type { PrecacheManifest } from "../precacheList.ts";
 import type { SoundFormatParam } from "../serviceWorkerUrl.ts";
 import type { SkipWaitingMessage } from "../updateReady.ts";
+import { createGroupStore } from "./groupStore.ts";
 
 interface LifecycleEvent extends Event {
   waitUntil(promise: Promise<unknown>): void;
@@ -367,6 +374,28 @@ async function readDownload(
 export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest): void {
   const worker = self as unknown as WorkerScope;
   const cacheName = cacheNameFor(policy, manifest.version);
+  if (manifest.groups !== undefined) {
+    if (!isBuildId(manifest.buildId)) {
+      throw new TypeError("Grouped precache requires an immutable release build ID");
+    }
+    validatePrecacheGroups(
+      [...manifest.urls, ...Object.values(manifest.sounds).flat()],
+      manifest.groups,
+    );
+    for (const url of [...manifest.urls, ...Object.values(manifest.sounds).flat()]) {
+      if (
+        typeof manifest.contentHashes[url] !== "string" ||
+        manifest.byteSizes?.[url] === undefined
+      ) {
+        throw new TypeError(`Grouped precache requires hash and byte size for ${url}`);
+      }
+    }
+  }
+  // The database opens lazily, so legacy all-file workers need no IndexedDB support.
+  const groups = createGroupStore(
+    { indexedDB: globalThis.indexedDB, now: () => Date.now() },
+    `game-kit-groups:${policy.cacheNamePrefix}`,
+  );
   const progressPorts = new Set<MessagePort>();
   const progress = createDownloadProgress(
     {
@@ -440,20 +469,23 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
   //   never stores them; the update check that finds that deploy's worker installs it instead. A
   //   file whose attempts all fail does not stop the others. The install then logs the failed URLs
   //   and rejects, which fails it, and the next attempt fetches only the files still missing.
-  const precache = async () => {
-    const soundFormat = new URL(worker.location.href).searchParams.get(SOUND_FORMAT_PARAM);
-    const cache = await caches.open(cacheName);
-    const listedUrls = [...new Set(installUrls(manifest, soundFormat))];
+  const stage = async (
+    name: string,
+    build: PrecacheManifest,
+    listedUrls: readonly string[],
+    tracker: ReturnType<typeof createDownloadProgress>,
+  ) => {
+    const cache = await caches.open(name);
     const kept = await mapBounded(
       REUSE_CONCURRENCY,
       async (url) =>
-        (await storedCopy([cache], manifest.contentHashes[url], manifest.byteSizes?.[url], url)) !==
+        (await storedCopy([cache], build.contentHashes[url], build.byteSizes?.[url], url)) !==
         undefined,
       listedUrls,
     );
     const urls = listedUrls.filter((_, index) => kept[index] !== true);
     const earlier = await Promise.all(
-      staleCacheNames(policy, cacheName, await caches.keys())
+      staleCacheNames(policy, name, await caches.keys())
         .filter((name) => name !== routingName)
         .map((name) => caches.open(name)),
     );
@@ -467,15 +499,20 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     for (const [url, old] of listed.flat()) {
       holders.set(url, [...(holders.get(url) ?? []), old]);
     }
-    const plan = installPlan(policy, manifest.contentHashes, new Set(holders.keys()), urls);
-    const reusable = [...plan.copy.map((url) => [url, undefined] as const), ...plan.verify];
+    const plan = installPlan(policy, build.contentHashes, new Set(holders.keys()), urls);
+    const reusable = [
+      ...plan.copy.map(
+        (url) => [url, build.groups === undefined ? undefined : build.contentHashes[url]] as const,
+      ),
+      ...plan.verify,
+    ];
     const unreused = await mapBounded(
       REUSE_CONCURRENCY,
       async ([url, contentHash]) => {
         const response = await storedCopy(
           holders.get(url) ?? [],
           contentHash,
-          manifest.byteSizes?.[url],
+          build.byteSizes?.[url],
           url,
         );
         if (response === undefined) {
@@ -488,18 +525,11 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     );
     const fetched = [...plan.fetch, ...unreused.flat()];
     // Reused and already verified files consume no network bytes in this operation.
-    progress.begin(fetched);
+    tracker.begin(fetched);
     const outcomes = await mapBounded(
       PRECACHE_CONCURRENCY,
       (url) =>
-        fetchIntoCache(
-          policy,
-          manifest.contentHashes,
-          cache,
-          manifest.byteSizes?.[url],
-          progress,
-          url,
-        ),
+        fetchIntoCache(policy, build.contentHashes, cache, build.byteSizes?.[url], tracker, url),
       fetched,
     );
     const failures = outcomes.filter((outcome) => outcome !== undefined);
@@ -513,9 +543,7 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
       console.error(`${message}. Last error:`, last.error);
       throw new Error(message, { cause: last.error });
     }
-    progress.verifying();
-    await writeRecord("build", cacheName, { manifest, urls: listedUrls });
-    progress.complete();
+    tracker.verifying();
   };
 
   const currentBuild: BuildRecord = {
@@ -526,7 +554,72 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
       ),
     ],
   };
+  const requiredUrls = (build: BuildRecord, ids: readonly string[]) =>
+    build.manifest.groups === undefined
+      ? [...build.urls]
+      : [
+          ...new Set([
+            ...basePrecacheUrls(build.manifest.groups, build.urls),
+            ...precacheGroupUrls({ groups: build.manifest.groups, selectedUrls: build.urls }, ids),
+          ]),
+        ];
+  const installedUnion = async (): Promise<string[]> => {
+    if (manifest.groups === undefined) {
+      return [];
+    }
+    const snapshot = await groups.snapshot();
+    const ids = new Set(Object.values(snapshot).flat());
+    // Earlier all-file builds had no group metadata. Preserve their complete offline coverage
+    // conservatively through the first grouped update rather than silently dropping assets.
+    for (const name of staleCacheNames(policy, cacheName, await caches.keys())) {
+      if (name === routingName) {
+        continue;
+      }
+      // A failed legacy install may leave a cache without any committed build record.
+      // eslint-disable-next-line no-await-in-loop
+      if ((await (await routing()).match(recordUrl("build", name))) === undefined) {
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const build = await readBuild(name);
+      if (build.manifest.groups === undefined) {
+        for (const id of Object.keys(manifest.groups.urls)) {
+          ids.add(id);
+        }
+      }
+    }
+    const result = [...ids];
+    precacheGroupUrls({ groups: manifest.groups, selectedUrls: currentBuild.urls }, result);
+    return result;
+  };
+  // Serialize staging within this worker to retain the shared four-request network bound.
+  // Durable readiness transactions, rather than this local chain, serialize different workers.
+  let staging: Promise<unknown> = Promise.resolve();
+  const serialized = <T>(work: () => Promise<T>): Promise<T> => {
+    const result = staging.then(work, work);
+    staging = result.catch(() => undefined);
+    return result;
+  };
+  const precache = () =>
+    serialized(async () => {
+      const ids =
+        manifest.groups === undefined
+          ? []
+          : [...new Set([...manifest.groups.initial, ...(await installedUnion())])];
+      await stage(cacheName, manifest, requiredUrls(currentBuild, ids), progress);
+      // Store immutable build metadata first. A crash before the transactional ready commit
+      // leaves a resumable partial cache, never a falsely available group.
+      await writeRecord("build", cacheName, currentBuild);
+      if (manifest.groups !== undefined && (await groups.commit(cacheName, ids)) !== "stored") {
+        throw new TypeError("An update currently prevents committing asset groups");
+      }
+      progress.complete();
+    });
   const completeBuild = async (name: string, build: BuildRecord): Promise<boolean> => {
+    const ready = build.manifest.groups === undefined ? [] : await groups.read(name);
+    if (ready === undefined) {
+      return false;
+    }
     const cache = await caches.open(name);
     const complete = await mapBounded(
       REUSE_CONCURRENCY,
@@ -537,14 +630,14 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
           build.manifest.byteSizes?.[url],
           url,
         )) !== undefined,
-      build.urls,
+      requiredUrls(build, ready),
     );
     return complete.every(Boolean);
   };
-  const selectCompleteBuild = async (): Promise<boolean> => {
+  const selectCompleteBuild = async (allowCurrent = true): Promise<boolean> => {
     // Persist failure first so an interrupted activation cannot select an incomplete cache.
     await writeRecord("selection", cacheName, null);
-    if (await completeBuild(cacheName, currentBuild)) {
+    if (allowCurrent && (await completeBuild(cacheName, currentBuild))) {
       await writeRecord("selection", cacheName, cacheName);
       return true;
     }
@@ -626,6 +719,9 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
       stale.map(async (name) => {
         await caches.delete(name);
         await records.delete(recordUrl("build", name));
+        if (manifest.groups !== undefined) {
+          await groups.remove(name);
+        }
       }),
     );
     await Promise.all(
@@ -683,12 +779,124 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     return response;
   };
 
+  const requestGroups = async (event: MessageRequestEvent): Promise<void> => {
+    const port = event.ports[0];
+    if (port === undefined) {
+      return;
+    }
+    const reply = (result: AssetGroupsResult) => {
+      port.postMessage({ result, type: "result" });
+      port.close();
+    };
+    let tracker: ReturnType<typeof createDownloadProgress> | undefined;
+    try {
+      const request = event.data as Partial<AssetGroupsRequest>;
+      if (
+        !isBuildId(request.buildId) ||
+        (request.version !== undefined && typeof request.version !== "string") ||
+        !Array.isArray(request.groups) ||
+        request.groups.some((id: unknown) => typeof id !== "string")
+      ) {
+        reply({ reason: "failed", status: "unavailable" });
+        return;
+      }
+      const source = event.source;
+      const id = source !== null && "id" in source ? source.id : undefined;
+      if (
+        typeof id !== "string" ||
+        !(await worker.clients.matchAll({ includeUncontrolled: true, type: "window" })).some(
+          (client) => client.id === id,
+        )
+      ) {
+        reply({ reason: "wrong-build", status: "unavailable" });
+        return;
+      }
+      const pin = await readPin(id);
+      // A network-only navigation is not a proof that this worker owns the document's build.
+      // For the first uncontrolled document, explicit full build identity is the binding proof.
+      if (pin === null) {
+        reply({ reason: "wrong-build", status: "unavailable" });
+        return;
+      }
+      const name =
+        pin ?? (request.version === undefined ? cacheName : cacheNameFor(policy, request.version));
+      let build: BuildRecord;
+      try {
+        build = await readBuild(name);
+      } catch {
+        reply({ reason: "wrong-build", status: "unavailable" });
+        return;
+      }
+      if (
+        build.manifest.buildId !== request.buildId ||
+        (request.version !== undefined && request.version !== build.manifest.version)
+      ) {
+        reply({ reason: "wrong-build", status: "unavailable" });
+        return;
+      }
+      const partition = build.manifest.groups;
+      if (partition === undefined) {
+        reply({ reason: "unsupported", status: "unavailable" });
+        return;
+      }
+      const requested = [...new Set(request.groups)];
+      const unknownGroups = requested.filter((group) => !Object.hasOwn(partition.urls, group));
+      if (unknownGroups.length > 0) {
+        reply({ status: "invalid-groups", unknownGroups });
+        return;
+      }
+      tracker = createDownloadProgress(
+        {
+          now: () => Date.now(),
+          operationId: crypto.randomUUID(),
+          report: (snapshot) => port.postMessage({ progress: snapshot, type: "progress" }),
+          version: build.manifest.version,
+        },
+        build.manifest.byteSizes,
+      );
+      const download = tracker;
+      await serialized(async () => {
+        const ready = await groups.read(name);
+        if (ready === undefined) {
+          throw new TypeError("Missing durable base readiness");
+        }
+        const combined = [...new Set([...ready, ...requested])];
+        // Read-only state queries check durable bytes but never silently start a download.
+        if (requested.length === 0) {
+          if (!(await completeBuild(name, build))) {
+            throw new TypeError("Committed asset groups are no longer complete");
+          }
+        } else {
+          await stage(name, build.manifest, requiredUrls(build, combined), download);
+          if ((await groups.commit(name, combined)) !== "stored") {
+            throw new TypeError("An update currently prevents committing asset groups");
+          }
+        }
+        const committed = await groups.read(name);
+        if (committed === undefined) {
+          throw new TypeError("Missing committed asset group readiness");
+        }
+        download.complete();
+        reply({
+          readyGroups: [...committed].sort(),
+          status: "available",
+          version: build.manifest.version,
+        });
+      });
+    } catch {
+      tracker?.fail();
+      reply({ reason: "failed", status: "unavailable" });
+    }
+  };
+
   const requestActivation = async (event: MessageRequestEvent) => {
     const port = event.ports[0];
     // Legacy callers have no handshake and cannot safely distinguish a refused switch.
     if (port === undefined) {
       return;
     }
+    let barrierToken: string | undefined;
+    let activationIntent = false;
     try {
       const source = event.source;
       const requester = source !== null && "id" in source ? source.id : undefined;
@@ -716,7 +924,40 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
         port.postMessage("blocked");
         return;
       }
+      if (manifest.groups !== undefined) {
+        barrierToken = crypto.randomUUID();
+        const snapshot = await groups.freeze(cacheName, barrierToken, deadline);
+        if (snapshot === undefined) {
+          port.postMessage("blocked");
+          return;
+        }
+        activationIntent = snapshot.activating;
+        const ids = [
+          ...new Set([
+            ...manifest.groups.initial,
+            ...Object.values(snapshot.snapshot).flat(),
+            ...(await installedUnion()),
+          ]),
+        ];
+        await serialized(async () => {
+          await stage(cacheName, manifest, requiredUrls(currentBuild, ids), progress);
+          if ((await groups.commit(cacheName, ids, barrierToken)) !== "stored") {
+            throw new TypeError("Asset group activation barrier expired");
+          }
+        });
+      }
       if (!(await completeBuild(cacheName, currentBuild)) || Date.now() >= deadline) {
+        port.postMessage("blocked");
+        return;
+      }
+      if (barrierToken !== undefined) {
+        if (!(await groups.markActivating(barrierToken))) {
+          port.postMessage("blocked");
+          return;
+        }
+        activationIntent = true;
+      }
+      if (Date.now() >= deadline) {
         port.postMessage("blocked");
         return;
       }
@@ -725,6 +966,12 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
       port.postMessage("activating");
     } catch {
       port.postMessage("blocked");
+    } finally {
+      // Once skipWaiting may have reached the UA, keep the durable fence until activate starts.
+      // Rejection or worker termination cannot prove that native activation did not begin.
+      if (barrierToken !== undefined && !activationIntent) {
+        await groups.release(barrierToken);
+      }
     }
   };
 
@@ -739,13 +986,35 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
   worker.addEventListener("activate", (event) =>
     event.waitUntil(
       (async () => {
-        if (await selectCompleteBuild()) {
+        let allowCurrent = true;
+        if (manifest.groups !== undefined) {
+          // The UA terminates the previous active worker before dispatching this event.
+          await groups.finishActivation(cacheName);
+          try {
+            // A client-free activation also retains groups completed after installation.
+            // Functional fetch events wait until this activation promise settles.
+            await serialized(async () => {
+              const ids = [...new Set([...manifest.groups!.initial, ...(await installedUnion())])];
+              await stage(cacheName, manifest, requiredUrls(currentBuild, ids), progress);
+              if ((await groups.commit(cacheName, ids)) !== "stored") {
+                throw new TypeError("Asset group activation could not commit readiness");
+              }
+            });
+          } catch {
+            allowCurrent = false;
+          }
+        }
+        if (await selectCompleteBuild(allowCurrent)) {
           await deleteStaleCaches();
         }
       })().catch(() => undefined),
     ),
   );
   worker.addEventListener("message", (event) => {
+    if ((event.data as { type?: unknown } | null)?.type === ASSET_GROUPS_MESSAGE) {
+      event.waitUntil(requestGroups(event));
+      return;
+    }
     if ((event.data as { type?: unknown } | null)?.type === DOWNLOAD_PROGRESS_MESSAGE) {
       const port = event.ports[0];
       if (port !== undefined) {
