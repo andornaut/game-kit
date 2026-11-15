@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DOWNLOAD_PROGRESS_MESSAGE, type DownloadProgress } from "../downloadProgress.ts";
 import { type RequiredUpdateState, RESUME_CHECK_MS, SKIP_WAITING_MESSAGE } from "../updateReady.ts";
 import {
+  type InstallationState,
   INTERACTION_EVENTS,
   type OfflineActivity,
   type OfflinePage,
@@ -136,12 +137,14 @@ function openPage(
     autoLaunch = true,
     offline = false,
     onDownloadProgress,
+    onInstallationState,
     session,
   }: {
     offline?: boolean;
     session?: SessionLike | undefined;
     autoLaunch?: boolean;
     onDownloadProgress?: (snapshot: DownloadProgress) => void;
+    onInstallationState?: (state: InstallationState) => void;
   } = {},
 ) {
   const registration = deployed === "fails" ? undefined : new FakeRegistration(deployed);
@@ -172,6 +175,7 @@ function openPage(
       ...OPTIONS,
       ...(onOfflineActivity === undefined ? {} : { onOfflineActivity }),
       ...(onDownloadProgress === undefined ? {} : { onDownloadProgress }),
+      ...(onInstallationState === undefined ? {} : { onInstallationState }),
       onRequireNewer: (state) => required.push(state),
       onUpdateShown: (visible) => shown.push(visible),
     },
@@ -254,6 +258,184 @@ afterEach(() => {
 });
 
 describe("startOfflinePlay", () => {
+  it("blocks explicit first registration before preparation without changing launch memoization", async () => {
+    const { container, play } = openPage(false, "none", undefined, { autoLaunch: false });
+    await expect(play.retryInstallation()).resolves.toMatchObject({
+      kind: "idle",
+      stage: "not-ready",
+    });
+    const launch = play.launchReady();
+    expect(play.launchReady()).toBe(launch);
+    await expect(launch).resolves.toBe("continue");
+    await expect(play.retryInstallation()).resolves.toMatchObject({
+      kind: "idle",
+      stage: "not-ready",
+    });
+    expect(container.registered).toEqual([]);
+  });
+
+  it("retries prior required-newer failure before preparation with callback singleflight", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const states: InstallationState[] = [];
+    const reentered: Promise<InstallationState>[] = [];
+    const opened = openPage(false, "none", undefined, {
+      autoLaunch: false,
+      onInstallationState: (state) => {
+        states.push(state);
+        if (state.kind === "loading" && state.stage === "registering") {
+          reentered.push(opened.play.retryInstallation());
+          throw new Error("observer");
+        }
+      },
+    });
+    const found = requireRegistration(opened.registration);
+    const register = vi
+      .spyOn(opened.container, "register")
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue(found);
+    opened.play.flow.requireNewer();
+    const first = opened.play.retryInstallation();
+    expect(reentered[0]).toBe(first);
+    await expect(first).resolves.toMatchObject({
+      attempt: 1,
+      kind: "failed",
+      stage: "registration",
+    });
+    await settle();
+    const worker = foundInstall(found);
+    const retry = opened.play.retryInstallation();
+    expect(opened.play.retryInstallation()).toBe(retry);
+    expect(reentered[1]).toBe(retry);
+    await settle();
+    expect(register).toHaveBeenCalledTimes(2);
+    expect(states.at(-1)).toMatchObject({ attempt: 2, kind: "loading", stage: "installing" });
+    endInstall(found, worker, "installed");
+    await expect(retry).resolves.toMatchObject({
+      attempt: 2,
+      kind: "ready",
+      operationId: undefined,
+      stage: "installed",
+      version: undefined,
+    });
+    expect(opened.clock.reloads).toBe(0);
+    expect(worker.messages).not.toContain(SKIP_WAITING_MESSAGE);
+  });
+
+  it("observes hidden failure and explicitly retries an active registration with fresh identity", async () => {
+    const states: InstallationState[] = [];
+    const opened = openPage(false, "installing", undefined, {
+      onInstallationState: (state) => states.push(state),
+    });
+    const found = requireRegistration(opened.registration);
+    const first = startInstall(found);
+    const ports: MessagePort[] = [];
+    const subscribe = (worker: FakeWorker, operationId: string, version: string) => {
+      vi.spyOn(worker, "postMessage").mockImplementation((_message, transfer) => {
+        const port = transfer?.[0] as MessagePort;
+        ports.push(port);
+        port.postMessage({ operationId, phase: "downloading", value: 0.5, version });
+      });
+    };
+    subscribe(first, "first", "one");
+    opened.play.registrationReady();
+    await settle();
+    expect(states.at(-1)).toMatchObject({ operationId: "first", version: "one" });
+    const initialFlight = opened.play.retryInstallation();
+    opened.visibilitySource.setVisibility("hidden");
+    endInstall(found, first, "redundant");
+    await expect(initialFlight).resolves.toMatchObject({ kind: "failed", stage: "installation" });
+    const active = new FakeWorker();
+    active.state = "activated";
+    Object.assign(found, { active });
+    opened.visibilitySource.setVisibility("visible");
+    const next = new FakeWorker();
+    next.state = "installing";
+    subscribe(next, "second", "two");
+    const update = vi.spyOn(found, "update").mockImplementation(async () => {
+      found.installing = next;
+      found.dispatchEvent(new Event("updatefound"));
+    });
+    const retry = opened.play.retryInstallation();
+    expect(opened.play.retryInstallation()).toBe(retry);
+    expect(states.find((state) => state.attempt === 2 && state.stage === "checking")).toMatchObject(
+      { operationId: undefined, version: undefined },
+    );
+    first.state = "installed";
+    first.dispatchEvent(new Event("statechange"));
+    await settle();
+    expect(states.at(-1)).toMatchObject({
+      attempt: 2,
+      kind: "loading",
+      operationId: "second",
+      version: "two",
+    });
+    endInstall(found, next, "installed");
+    await expect(retry).resolves.toMatchObject({
+      attempt: 2,
+      kind: "ready",
+      operationId: "second",
+      version: "two",
+    });
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(opened.container.registered).toHaveLength(1);
+    expect(opened.clock.reloads).toBe(0);
+    for (const port of ports) {
+      port.close();
+    }
+  });
+
+  it("treats progress-port failure as unknown until native redundant and then re-registers", async () => {
+    const states: InstallationState[] = [];
+    const opened = openPage(false, "installing", undefined, {
+      onInstallationState: (state) => states.push(state),
+    });
+    const found = requireRegistration(opened.registration);
+    const worker = startInstall(found);
+    vi.spyOn(worker, "postMessage").mockImplementation(() => {
+      throw new Error("port");
+    });
+    opened.play.registrationReady();
+    await settle();
+    expect(states.at(-1)?.kind).toBe("loading");
+    const failure = opened.play.retryInstallation();
+    endInstall(found, worker, "redundant");
+    await expect(failure).resolves.toMatchObject({
+      kind: "failed",
+      operationId: undefined,
+      version: undefined,
+    });
+    const register = vi.spyOn(opened.container, "register").mockImplementation(async () => {
+      foundInstall(found);
+      return found;
+    });
+    const retry = opened.play.retryInstallation();
+    await settle();
+    const retried = found.installing!;
+    endInstall(found, retried, "installed");
+    await expect(retry).resolves.toMatchObject({ kind: "ready" });
+    expect(register).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report an old active worker or a no-install update as newly ready", async () => {
+    const states: InstallationState[] = [];
+    const opened = openPage(false, "none", undefined, {
+      onInstallationState: (state) => states.push(state),
+    });
+    const found = requireRegistration(opened.registration);
+    found.active = new FakeWorker();
+    found.active.state = "activated";
+    opened.play.registrationReady();
+    await settle();
+    await expect(opened.play.retryInstallation()).resolves.toMatchObject({
+      kind: "idle",
+      stage: "not-observed",
+    });
+    expect(found.updates).toBe(1);
+    expect(states.some(({ kind }) => kind === "ready")).toBe(false);
+    expect(opened.clock.reloads).toBe(0);
+  });
+
   it("snapshots launch before registering and never arms a later installed worker", async () => {
     const { container, play, registration } = openPage(true, "installing", undefined, {
       autoLaunch: false,
@@ -619,7 +801,12 @@ describe("startOfflinePlay", () => {
     showHome(play, true);
     await vi.advanceTimersByTimeAsync(10 * RESUME_CHECK_MS);
     endInstall(registration, installing, "redundant");
-    expect(Object.keys(play).sort()).toEqual(["flow", "launchReady", "registrationReady"]);
+    expect(Object.keys(play).sort()).toEqual([
+      "flow",
+      "launchReady",
+      "registrationReady",
+      "retryInstallation",
+    ]);
     expect(Object.keys(play.flow).sort()).toEqual([
       "accept",
       "arriveHome",

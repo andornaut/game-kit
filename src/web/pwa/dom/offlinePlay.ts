@@ -22,7 +22,28 @@ export const INTERACTION_EVENTS = ["keydown", "pointerdown"] as const;
 
 export type OfflineActivity = "idle" | "precaching" | "updating";
 
+export interface InstallationIdentity {
+  readonly attempt: number;
+  readonly operationId: string | undefined;
+  readonly version: string | undefined;
+}
+
+export type InstallationState = InstallationIdentity &
+  (
+    | { readonly kind: "idle"; readonly stage: "idle" | "not-ready" | "not-observed" }
+    | { readonly kind: "loading"; readonly stage: "registering" | "checking" | "installing" }
+    | { readonly kind: "ready"; readonly stage: "installed" }
+    | {
+        readonly kind: "failed";
+        readonly stage: "registration" | "installation";
+        readonly error: unknown;
+      }
+  );
+
 export interface OfflinePlayOptions extends UpdateReports {
+  // Independent of visibility and progress-port delivery. Unknown operation/version metadata
+  // stays undefined; idle never establishes availability. Structurally a LoadingAttemptState.
+  readonly onInstallationState?: (state: InstallationState) => void;
   // Optional relative bar progress for the installing worker. No byte or numeric labels.
   // Visibility and activity remain caller-owned; verification stays indeterminate until ready.
   readonly onDownloadProgress?: (snapshot: DownloadProgress) => void;
@@ -66,6 +87,10 @@ export interface OfflinePlay {
   // Registers the service worker on a first install, once the client has prepared its first
   // playable frame. A controlled page registers after launchReady, and this call does nothing.
   registrationReady(): void;
+  // Joins an active attempt after the prepared-frame/launch boundary. Failed and idle results
+  // also resolve: only ready establishes that this tracked worker installed. Never activates,
+  // claims, reloads or changes saves. An existing ready attempt needs no retry.
+  retryInstallation(): Promise<InstallationState>;
 }
 
 // The browser's page, or undefined where it has no service workers.
@@ -100,6 +125,86 @@ function browserSession(): SessionLike | undefined {
 export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage): OfflinePlay {
   const { container, eventTarget } = page;
   const firstVisit = container.controller === null;
+  interface Attempt {
+    readonly id: number;
+    operationId: string | undefined;
+    version: string | undefined;
+    worker: ServiceWorkerLike | undefined;
+    done: boolean;
+    state: InstallationState;
+    readonly promise: Promise<InstallationState>;
+    readonly resolve: (state: InstallationState) => void;
+  }
+  let sequence = 0;
+  let current: Attempt | undefined;
+  let retryReady = false;
+  const identity = (attempt?: Attempt): InstallationIdentity => ({
+    attempt: attempt?.id ?? 0,
+    operationId: attempt?.operationId,
+    version: attempt?.version,
+  });
+  const notify = (state: InstallationState) => {
+    try {
+      options.onInstallationState?.(state);
+    } catch (error) {
+      console.error("Installation state callback failed.", error);
+    }
+  };
+  const makeAttempt = () => {
+    let resolve!: (state: InstallationState) => void;
+    const promise = new Promise<InstallationState>((finish) => {
+      resolve = finish;
+    });
+    sequence += 1;
+    const attempt: Attempt = {
+      done: false,
+      id: sequence,
+      operationId: undefined,
+      promise,
+      resolve,
+      state: {
+        attempt: sequence,
+        kind: "idle",
+        operationId: undefined,
+        stage: "idle",
+        version: undefined,
+      },
+      version: undefined,
+      worker: undefined,
+    };
+    current = attempt;
+    return attempt;
+  };
+  const publish = (attempt: Attempt, terminal: boolean, state: InstallationState) => {
+    if (current !== attempt || attempt.done) {
+      return;
+    }
+    const previous = attempt.state;
+    attempt.state = state;
+    if (terminal) {
+      attempt.done = true;
+      attempt.resolve(state);
+    }
+    if (
+      previous.kind !== state.kind ||
+      previous.stage !== state.stage ||
+      previous.operationId !== state.operationId ||
+      previous.version !== state.version ||
+      terminal
+    ) {
+      notify(state);
+    }
+  };
+  const loading = (attempt: Attempt, stage: "registering" | "checking" | "installing") => {
+    publish(attempt, false, { ...identity(attempt), kind: "loading", stage });
+  };
+  const fail = (attempt: Attempt, stage: "registration" | "installation", error: unknown) => {
+    publish(attempt, true, { ...identity(attempt), error, kind: "failed", stage });
+  };
+  const unobserved = (attempt: Attempt) => {
+    publish(attempt, true, { ...identity(attempt), kind: "idle", stage: "not-observed" });
+  };
+  notify({ ...identity(), kind: "idle", stage: "idle" });
   // True from a first visit's registration request until its precache ends.
   let precaching = false;
   let activity: OfflineActivity | undefined;
@@ -119,31 +224,97 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
   let progressWorker: ServiceWorkerLike | undefined;
   let stopProgress: (() => void) | undefined;
   let visible = page.visibilitySource.visibilityState !== "hidden";
+  let observed: RegistrationLike | undefined;
+  let unwatch: (() => void) | undefined;
+  const inspect = (attempt: Attempt) => {
+    if (current !== attempt || attempt.done || attempt.worker === undefined) {
+      return;
+    }
+    const { state } = attempt.worker;
+    if (state === "redundant") {
+      fail(attempt, "installation", new Error("Service worker installation failed"));
+    } else if (state === "installed" || state === "activating" || state === "activated") {
+      publish(attempt, true, { ...identity(attempt), kind: "ready", stage: "installed" });
+    } else if (state === "installing") {
+      loading(attempt, "installing");
+    }
+  };
   const watchInstallation = (registration: RegistrationLike) => {
-    const watched = new WeakSet<ServiceWorkerLike>();
+    if (observed === registration) {
+      readInstallation?.();
+      return registration;
+    }
+    unwatch?.();
+    observed = registration;
+    const watched = new Map<ServiceWorkerLike, () => void>();
     const read = () => {
+      if (observed !== registration) {
+        return;
+      }
       const worker = registration.installing;
       if (worker !== null && !watched.has(worker)) {
-        watched.add(worker);
-        worker.addEventListener("statechange", read);
+        if (
+          current !== undefined &&
+          !current.done &&
+          current.worker !== undefined &&
+          current.worker !== worker
+        ) {
+          fail(current, "installation", new Error("Service worker installation was superseded"));
+        }
+        const attempt = current === undefined || current.done ? makeAttempt() : current;
+        attempt.worker = worker;
+        const changed = () => {
+          inspect(attempt);
+          read();
+        };
+        watched.set(worker, changed);
+        worker.addEventListener("statechange", changed);
+      }
+      if (current !== undefined) {
+        inspect(current);
+      }
+      if (observed !== registration) {
+        return;
       }
       const installing = worker !== null && worker.state === "installing";
       const reporting =
-        visible && installing && options.onDownloadProgress !== undefined ? worker : undefined;
+        visible &&
+        installing &&
+        (options.onDownloadProgress !== undefined || options.onInstallationState !== undefined)
+          ? worker
+          : undefined;
       if (progressWorker !== reporting) {
         stopProgress?.();
         progressWorker = reporting;
+        const attempt = current;
         stopProgress =
-          reporting === undefined || options.onDownloadProgress === undefined
+          reporting === undefined
             ? undefined
-            : watchDownloadProgress(options.onDownloadProgress, reporting);
+            : watchDownloadProgress((snapshot) => {
+                if (
+                  observed !== registration ||
+                  current !== attempt ||
+                  attempt === undefined ||
+                  attempt.done ||
+                  attempt.worker !== reporting
+                ) {
+                  return;
+                }
+                attempt.operationId = snapshot.operationId;
+                attempt.version = snapshot.version;
+                loading(attempt, "installing");
+                if (current === attempt && !attempt.done && attempt.worker === reporting) {
+                  options.onDownloadProgress?.(snapshot);
+                }
+              }, reporting);
       }
-      // A registration installs one worker at a time, so the precache ends when none is installing.
       precaching &&= installing;
-      if (installing) {
-        reportActivity(precaching ? "precaching" : "updating");
-      } else {
-        reportActivity("idle");
+      reportActivity(installing ? (precaching ? "precaching" : "updating") : "idle");
+    };
+    unwatch = () => {
+      registration.removeEventListener("updatefound", read);
+      for (const [worker, changed] of watched) {
+        worker.removeEventListener("statechange", changed);
       }
     };
     readInstallation = read;
@@ -154,32 +325,94 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
   // The registration request in flight, which a repeated request joins.
   let pending: Promise<void> | undefined;
   let registered = false;
-  const register = (): Promise<void> => {
+  // The short native request and longer installation flight are reserved before callbacks.
+  const request = (
+    stage: "registering" | "checking",
+    run: () => Promise<RegistrationLike>,
+  ): Promise<void> => {
     if (pending !== undefined) {
       return pending;
     }
-    if (!registered && firstVisit) {
+    const attempt = current === undefined || current.done ? makeAttempt() : current;
+    let finish!: () => void;
+    const flight = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    pending = flight;
+    const firstRegistration = !registered && firstVisit;
+    registered = true;
+    loading(attempt, stage);
+    if (firstRegistration) {
       precaching = true;
       reportActivity("precaching");
     }
-    registered = true;
-    pending = container
-      .register(options.serviceWorkerUrl, { scope: "/" })
-      .then(watchInstallation)
-      .then(
-        (registration) => flow.watch(registration),
-        (error: unknown) => {
-          reportActivity("idle");
-          console.warn(
-            "Service worker registration failed; the game will not work offline.",
-            error,
-          );
-        },
-      )
-      .finally(() => {
+    const failed = (error: unknown) => {
+      if (current !== attempt || attempt.done) {
+        return;
+      }
+      if (pending === flight) {
         pending = undefined;
+      }
+      reportActivity("idle");
+      fail(attempt, "registration", error);
+      console.warn("Service worker registration failed; the game will not work offline.", error);
+    };
+    let native: Promise<RegistrationLike>;
+    try {
+      native = run();
+    } catch (error) {
+      native = Promise.reject(error);
+    }
+    void native
+      .then((registration) => {
+        if (pending === flight) {
+          pending = undefined;
+        }
+        watchInstallation(registration);
+        if (stage === "registering") {
+          flow.watch(registration);
+        }
+        if (current === attempt && attempt.worker === undefined) {
+          unobserved(attempt);
+        }
+      })
+      .catch(failed)
+      .finally(() => {
+        if (pending === flight) {
+          pending = undefined;
+        }
+        finish();
       });
-    return pending;
+    return flight;
+  };
+  const register = () =>
+    request("registering", () => container.register(options.serviceWorkerUrl, { scope: "/" }));
+  const retryInstallation = (): Promise<InstallationState> => {
+    if (!retryReady && !registered) {
+      return Promise.resolve({ ...identity(), kind: "idle", stage: "not-ready" });
+    }
+    if (current !== undefined && !current.done) {
+      return current.promise;
+    }
+    if (current?.state.kind === "ready") {
+      return current.promise;
+    }
+    const registration = observed;
+    if (registration?.installing !== null && registration?.installing !== undefined) {
+      readInstallation?.();
+      if (current !== undefined && !current.done) {
+        return current.promise;
+      }
+    }
+    if (registration?.active !== null && registration?.active !== undefined) {
+      void request("checking", async () => {
+        await registration.update();
+        return registration;
+      });
+    } else {
+      void register();
+    }
+    return current!.promise;
   };
   const flow = createUpdateFlow(page, register, options);
   eventTarget.addEventListener("online", () => flow.noteOnline());
@@ -196,6 +429,9 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
     flow.setVisible(visible);
   });
   const registrationReady = () => {
+    if (firstVisit) {
+      retryReady = true;
+    }
     if (firstVisit && !registered) {
       void register();
     }
@@ -232,11 +468,12 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
         result = "blocked";
       }
       if (result !== "reloading") {
+        retryReady = true;
         void register();
       }
       return result;
     })();
     return launch;
   };
-  return { flow, launchReady, registrationReady };
+  return { flow, launchReady, registrationReady, retryInstallation };
 }
