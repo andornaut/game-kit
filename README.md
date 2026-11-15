@@ -28,6 +28,12 @@ The kit's own tests define each module's contract. A release is also proven agai
 
 `testing/phaser/sceneStub` covers the scene members both games' tests use as of 0.19.0 and is otherwise frozen: a test that needs more extends the stub through its overrides.
 
+## Migration to 0.46.0
+
+`load/phaser/watchLoader` now records and retries standalone `xml` files through the existing `retryMode` and `retryFailures` API. Install the watch before queueing XML so its ADD event captures the original base URL and resolved XHR settings. Resolved keys and URL paths are retained without duplicating the loader prefix or path; current loader settings are restored after queueing and native dispatch. XML queued before the watch remains non-retryable because its original context is unavailable.
+
+XML parsing failures are recorded before native loader completion, independently of network failures and without counting the same file twice in progress. Temporary native bindings are restored on settlement or disposal. The caller still selects required loads; optional automatic retry rounds and multi-file captures remain unchanged. No game font or asset key is defined by the kit.
+
 ## Migration to 0.45.0
 
 `watchLoader` accepts optional `retryMode(failure)` returning `"automatic"` or `"manual"`. The default preserves automatic retry rounds. The classifier receives a logical `LoadFailure`: the loader method, resolved key, captured configuration and first failed URL, with an entire captured multi-file load classified together. The caller identifies required UI or other active-view dependencies; the kit contains no required asset list. Automatic scheduling and dispatch exclude manual failures while retaining their records and original multi-file arguments. Optional failures retain their existing timers and round counts.
