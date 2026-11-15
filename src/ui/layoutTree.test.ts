@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   type ComponentNode,
+  type LayoutColumnSizing,
   type LayoutMeasurement,
   type LayoutNode,
   layoutReport,
@@ -29,6 +30,93 @@ const measurement: LayoutMeasurement = {
 };
 
 describe("layout tree validation", () => {
+  it("accepts explicit column modes and mixed tracks while retaining omitted legacy sizing", () => {
+    for (const sizing of [
+      undefined,
+      { mode: "equal" },
+      { mode: "intrinsic" },
+      { mode: "tracks", tracks: [{ kind: "fixed", size: 0 }] },
+      { mode: "tracks", tracks: [{ kind: "intrinsic" }] },
+      { mode: "tracks", tracks: [{ kind: "fraction" }] },
+    ] as const) {
+      expect(() =>
+        validateLayoutTree(slots, {
+          children: [leaf],
+          gap: 3,
+          key: "columns",
+          kind: "columns",
+          padding: 2,
+          ...(sizing === undefined ? {} : { sizing }),
+        }),
+      ).not.toThrow();
+    }
+    expect(() =>
+      validateLayoutTree(slots, {
+        children: [],
+        gap: 0,
+        key: "empty",
+        kind: "columns",
+        padding: 0,
+        sizing: { mode: "tracks", tracks: [] },
+      }),
+    ).not.toThrow();
+    const wrong: LayoutNode<Schema> = {
+      children: [],
+      gap: 0,
+      key: "row",
+      kind: "row",
+      padding: 0,
+      // @ts-expect-error Sizing is supported only by columns.
+      sizing: { mode: "equal" },
+    };
+    expect(() => validateLayoutTree(slots, wrong)).toThrow(/only supported on columns/);
+    expect(() =>
+      validateLayoutTree(slots, {
+        ...leaf,
+        sizing: { mode: "equal" },
+      } as unknown as LayoutNode<Schema>),
+    ).toThrow(/only supported on columns/);
+  });
+
+  it("rejects illegal column modes, track counts, descriptors and nonfinite extents", () => {
+    for (const sizing of [
+      null,
+      "equal",
+      { mode: "other" },
+      { mode: "equal", tracks: [] },
+      { mode: "tracks", tracks: null },
+      { mode: "tracks", tracks: [] },
+      { mode: "tracks", tracks: [null] },
+      { mode: "tracks", tracks: [{ kind: "other" }] },
+      { mode: "tracks", tracks: [{ kind: "fraction", size: 1 }] },
+      ...[-1, NaN, Infinity].map((size) => ({ mode: "tracks", tracks: [{ kind: "fixed", size }] })),
+    ]) {
+      expect(() =>
+        validateLayoutTree(slots, {
+          children: [leaf],
+          gap: 0,
+          key: "columns",
+          kind: "columns",
+          padding: 0,
+          sizing: sizing as LayoutColumnSizing,
+        }),
+      ).toThrow(RangeError);
+    }
+    expect(() =>
+      validateLayoutTree(slots, {
+        children: [leaf, { ...leaf, key: "other" }],
+        gap: Number.MAX_VALUE,
+        key: "columns",
+        kind: "columns",
+        padding: Number.MAX_VALUE,
+        sizing: {
+          mode: "tracks",
+          tracks: [{ kind: "fixed", size: Number.MAX_VALUE }, { kind: "fraction" }],
+        },
+      }),
+    ).toThrow(/finite/);
+  });
+
   it("maps component props and named slots without accepting another component's props", () => {
     expectTypeOf<Extract<ComponentNode<Schema>, { component: "text" }>["props"]>().toEqualTypeOf<{
       text: string;

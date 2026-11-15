@@ -24,6 +24,21 @@
   grid-template-columns: repeat(var(--ui-layout-columns), minmax(max-content, 1fr));
 }
 
+.ui-layout-columns[data-ui-layout-sizing] {
+  grid-template-columns: var(--ui-layout-tracks);
+  min-width: 0;
+}
+
+.ui-layout-columns[data-ui-layout-sizing="equal"],
+.ui-layout-columns[data-ui-layout-sizing="tracks"] {
+  width: 100%;
+}
+
+.ui-layout-columns[data-ui-layout-sizing="equal"] > *,
+.ui-layout-columns[data-ui-layout-sizing="tracks"] > * {
+  min-width: 0;
+}
+
 .ui-layout-stack {
   grid-template-columns: minmax(max-content, 1fr);
 }

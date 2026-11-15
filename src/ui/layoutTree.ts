@@ -4,6 +4,16 @@ export type LayoutSchema = Record<string, { readonly props: unknown; readonly sl
 export type LayoutPath = readonly string[];
 export type LayoutAlignment = "top" | "center" | "baseline";
 
+export type LayoutColumnTrack =
+  | { readonly kind: "fraction" }
+  | { readonly kind: "intrinsic" }
+  // Fixed sizes use caller logical units, scaled by the renderer's ui-unit.
+  | { readonly kind: "fixed"; readonly size: number };
+
+export type LayoutColumnSizing =
+  | { readonly mode: "equal" | "intrinsic" }
+  | { readonly mode: "tracks"; readonly tracks: readonly LayoutColumnTrack[] };
+
 export type ComponentNode<S extends LayoutSchema> = {
   [K in keyof S & string]: {
     readonly kind: "component";
@@ -18,14 +28,16 @@ export type ComponentNode<S extends LayoutSchema> = {
 
 export type LayoutNode<S extends LayoutSchema> =
   | ComponentNode<S>
-  | {
-      readonly kind: "row" | "stack" | "columns";
+  | ({
       readonly key: string;
       readonly gap: number;
       readonly padding: number;
       readonly align?: LayoutAlignment;
       readonly children: readonly LayoutNode<S>[];
-    };
+    } & (
+      | { readonly kind: "row" | "stack"; readonly sizing?: never }
+      | { readonly kind: "columns"; readonly sizing?: LayoutColumnSizing }
+    ));
 
 export type LayoutSlots<S extends LayoutSchema> = {
   readonly [K in keyof S]: readonly S[K]["slots"][];
@@ -33,6 +45,48 @@ export type LayoutSlots<S extends LayoutSchema> = {
 
 function nonnegative(value: number): boolean {
   return Number.isFinite(value) && value >= 0;
+}
+
+function validateColumnSizing(
+  count: number,
+  gap: number,
+  padding: number,
+  sizing: LayoutColumnSizing,
+): void {
+  let fixedExtent = gap * Math.max(0, count - 1) + padding * 2;
+  if (sizing === null || typeof sizing !== "object") {
+    throw new RangeError("Invalid column sizing");
+  }
+  if (sizing.mode === "equal" || sizing.mode === "intrinsic") {
+    if (Object.hasOwn(sizing, "tracks")) {
+      throw new RangeError("Column tracks require tracks mode");
+    }
+  } else if (sizing.mode === "tracks") {
+    if (!Array.isArray(sizing.tracks) || sizing.tracks.length !== count) {
+      throw new RangeError("Column tracks must match the child count");
+    }
+    for (const track of sizing.tracks) {
+      if (track === null || typeof track !== "object") {
+        throw new RangeError("Invalid column track");
+      }
+      if (track.kind === "fixed") {
+        if (!nonnegative(track.size)) {
+          throw new RangeError("Fixed column size must be finite and nonnegative");
+        }
+        fixedExtent += track.size;
+      } else if (
+        (track.kind !== "fraction" && track.kind !== "intrinsic") ||
+        Object.hasOwn(track, "size")
+      ) {
+        throw new RangeError("Unknown column track or unsupported size");
+      }
+    }
+  } else {
+    throw new RangeError("Unknown column sizing mode");
+  }
+  if (!Number.isFinite(fixedExtent)) {
+    throw new RangeError("Column fixed extent must be finite");
+  }
 }
 
 function validRect(rect: Rect | null | undefined): boolean {
@@ -66,6 +120,9 @@ export function validateLayoutTree<S extends LayoutSchema>(
         throw new RangeError("Cyclic layout tree");
       }
       ancestors.add(node);
+      if (node.kind !== "columns" && Object.hasOwn(node, "sizing")) {
+        throw new RangeError("Column sizing is only supported on columns");
+      }
       if (node.kind === "component") {
         if (!Object.hasOwn(slots, node.component)) {
           throw new RangeError(`Unknown layout component: ${node.component}`);
@@ -94,6 +151,11 @@ export function validateLayoutTree<S extends LayoutSchema>(
           node.align !== "baseline"
         ) {
           throw new RangeError("Unknown layout alignment");
+        }
+        if (node.kind === "columns") {
+          if (node.sizing !== undefined) {
+            validateColumnSizing(node.children.length, node.gap, node.padding, node.sizing);
+          }
         }
         siblings(node.children);
       }

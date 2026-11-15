@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { LayoutMeasurement, LayoutNode } from "../../../ui/layoutTree.ts";
+import type { LayoutColumnSizing, LayoutMeasurement, LayoutNode } from "../../../ui/layoutTree.ts";
 import { type LayoutComponentPorts, type LayoutOptions, mountLayout } from "./layoutTree.ts";
 
 type Schema = {
@@ -103,6 +103,75 @@ afterEach(() => {
 });
 
 describe("caller component composition", () => {
+  it("changes column sizing through custom properties while preserving keyed components and focus", () => {
+    const { buttons, components, disposeButton, host } = fixture();
+    const tree = {
+      children: [button("a"), button("b")],
+      gap: 4,
+      key: "columns",
+      kind: "columns" as const,
+      padding: 2,
+    };
+    const mounted = mountLayout({ components, host }, { ...tree, sizing: { mode: "equal" } });
+    const element = host.firstElementChild as HTMLElement;
+    const first = buttons[0]!;
+    first.focus();
+    expect(element.dataset.uiLayoutSizing).toBe("equal");
+    expect(element.style.getPropertyValue("--ui-layout-tracks")).toBe("repeat(2, minmax(0, 1fr))");
+    mounted.update({
+      ...tree,
+      sizing: { mode: "tracks", tracks: [{ kind: "fixed", size: 3.5 }, { kind: "fraction" }] },
+    });
+    expect(element.style.getPropertyValue("--ui-layout-tracks")).toBe(
+      "calc(3.5 * var(--ui-unit, 1) * 1px) minmax(0, 1fr)",
+    );
+    mounted.update({ ...tree, sizing: { mode: "intrinsic" } });
+    expect(element.style.getPropertyValue("--ui-layout-tracks")).toBe("repeat(2, max-content)");
+    mounted.update(tree);
+    expect(element.hasAttribute("data-ui-layout-sizing")).toBe(false);
+    expect(element.style.getPropertyValue("--ui-layout-tracks")).toBe("");
+    expect(host.firstElementChild).toBe(element);
+    expect(document.activeElement).toBe(first);
+    expect(host.querySelector("button")).toBe(first);
+    expect(components.button.create).toHaveBeenCalledTimes(2);
+    expect(disposeButton).not.toHaveBeenCalled();
+    expect(mounted.inspect(viewport).status).toBe("unavailable");
+    mounted.dispose();
+  });
+
+  it("rejects nested invalid columns before factories, focus or CSS change", () => {
+    const { buttons, components, host, updateButton } = fixture();
+    const mounted = mountLayout({ components, host }, group([button("a")]));
+    buttons[0]!.focus();
+    const before = host.innerHTML;
+    for (const sizing of [
+      { mode: "tracks", tracks: [] },
+      { mode: "tracks", tracks: [{ kind: "fixed", size: -1 }] },
+      { mode: "other" },
+    ]) {
+      expect(() =>
+        mounted.update(
+          group([
+            button("a", "Must not update"),
+            {
+              children: [button("new")],
+              gap: 2,
+              key: "nested",
+              kind: "columns",
+              padding: 1,
+              sizing: sizing as LayoutColumnSizing,
+            },
+          ]),
+        ),
+      ).toThrow(RangeError);
+      expect(host.innerHTML).toBe(before);
+      expect(document.activeElement).toBe(buttons[0]);
+      expect(components.button.create).toHaveBeenCalledOnce();
+      expect(updateButton).not.toHaveBeenCalled();
+    }
+    mounted.dispose();
+  });
+
   it("updates and reorders keyed components without replacing focused DOM or listeners", () => {
     const { buttons, components, disposeButton, host, updateButton } = fixture();
     const mounted = mountLayout({ components, host }, group([button("a"), button("b")]));

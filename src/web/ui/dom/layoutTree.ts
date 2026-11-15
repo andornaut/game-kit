@@ -1,5 +1,6 @@
 import type { Rect } from "../../../rect.ts";
 import {
+  type LayoutColumnSizing,
   type LayoutMeasurement,
   type LayoutNode,
   type LayoutPath,
@@ -55,6 +56,26 @@ interface Instance<S extends LayoutSchema> {
   readonly element: HTMLElement;
   readonly part: LayoutPart<unknown, string> | undefined;
   readonly groups: Map<string, Map<string, Instance<S>>>;
+}
+
+function columnTracks(count: number, sizing: LayoutColumnSizing): string {
+  if (count === 0) {
+    return "none";
+  }
+  if (sizing.mode !== "tracks") {
+    const track = sizing.mode === "equal" ? "minmax(0, 1fr)" : "max-content";
+    return `repeat(${count}, ${track})`;
+  }
+  return sizing.tracks
+    .map((track) => {
+      if (track.kind === "fraction") {
+        return "minmax(0, 1fr)";
+      }
+      return track.kind === "intrinsic"
+        ? "max-content"
+        : `calc(${track.size} * var(--ui-unit, 1) * 1px)`;
+    })
+    .join(" ");
 }
 
 // Composes caller factories and their actual DOM slots. No alternate mock renderer, action
@@ -186,6 +207,16 @@ export function mountLayout<S extends LayoutSchema>(
         instance.element,
       );
       instance.element.setAttribute("data-ui-layout-align", node.align ?? "top");
+      if (node.kind === "columns" && node.sizing !== undefined) {
+        writeLayoutProperties(
+          { "--ui-layout-tracks": columnTracks(node.children.length, node.sizing) },
+          instance.element,
+        );
+        instance.element.setAttribute("data-ui-layout-sizing", node.sizing.mode);
+      } else {
+        instance.element.style.removeProperty("--ui-layout-tracks");
+        instance.element.removeAttribute("data-ui-layout-sizing");
+      }
       instance.groups.set(
         "",
         children(instance.element, path, instance.groups.get("") ?? new Map(), node.children),
