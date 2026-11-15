@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from "vitest";
 
-import { createLoadingAttempts } from "../../../load/loadingAttempts.ts";
+import { createLoadingAttempts, createRequiredLoading } from "../../../load/loadingAttempts.ts";
 import { type LoadingFailureLayout, mountLoadingFailure } from "./loadingFailure.ts";
 
 describe("mountLoadingFailure", () => {
@@ -153,9 +153,17 @@ describe("mountLoadingFailure", () => {
     click();
     expect(onRetry).toHaveBeenCalledOnce();
     expect(view.element.hidden).toBe(true);
+    view.update({ attempt: 2, kind: "ready" });
+    expect(view.element.hidden).toBe(true);
+    view.update({ attempt: 2, error: undefined, kind: "failed" });
+    expect(view.element.hidden).toBe(false);
+    expect(retry.disabled).toBe(true);
+    click();
+    expect(onRetry).toHaveBeenCalledOnce();
     finish();
     await Promise.resolve();
-    expect(view.element.hidden).toBe(true);
+    expect(view.element.hidden).toBe(false);
+    expect(retry.disabled).toBe(false);
     view.dispose();
     click();
     expect(onRetry).toHaveBeenCalledOnce();
@@ -204,6 +212,74 @@ describe("mountLoadingFailure", () => {
     }
   });
 
+  it("keeps Retry disabled through synchronous failed registry notifications until its flight settles", async () => {
+    await Promise.all(
+      [
+        undefined,
+        { actionAlign: "end", gapPx: 8, minActionSizePx: 48, paddingPx: 12 } as const,
+      ].flatMap((layout) =>
+        [false, true].map(async (reject) => {
+          let resolve!: () => void;
+          let fail!: (error: unknown) => void;
+          const pending = new Promise<void>((yes, no) => {
+            resolve = yes;
+            fail = no;
+          });
+          const resource = { retry: vi.fn(() => pending), status: () => "failed" as const };
+          const required = createRequiredLoading([resource]);
+          let current: Promise<void> | undefined;
+          const onRetry = vi.fn(() => (current = required.retry()));
+          const view = mountLoadingFailure(
+            { ...(layout === undefined ? {} : { layout }), onRetry },
+            document.createElement("div"),
+          );
+          const unsubscribe = required.subscribe(view.update);
+          const button = view.element.querySelector("button")!;
+          const click = () => button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          try {
+            expect(required.state).toMatchObject({ attempt: 1, kind: "failed" });
+            click();
+            expect(required.state).toMatchObject({ attempt: 2, kind: "failed" });
+            expect(view.element.hidden).toBe(false);
+            expect(button.disabled).toBe(true);
+            for (let repeat = 0; repeat < 3; repeat += 1) {
+              view.update(required.state);
+              click();
+              expect(button.disabled).toBe(true);
+            }
+            expect(onRetry).toHaveBeenCalledOnce();
+            expect(resource.retry).toHaveBeenCalledOnce();
+            if (reject) {
+              fail(new Error("Required resource retry failed"));
+            } else {
+              resolve();
+            }
+            await current;
+            await Promise.resolve();
+            expect(required.state.kind).toBe("failed");
+            expect(view.element.hidden).toBe(false);
+            expect(button.disabled).toBe(false);
+            click();
+            expect(onRetry).toHaveBeenCalledTimes(2);
+            expect(resource.retry).toHaveBeenCalledTimes(2);
+            view.dispose();
+            const detached = view.element.outerHTML;
+            await current;
+            await Promise.resolve();
+            click();
+            expect(onRetry).toHaveBeenCalledTimes(2);
+            expect(view.element.outerHTML).toBe(detached);
+          } finally {
+            unsubscribe();
+            view.dispose();
+            required.dispose();
+            resolve();
+          }
+        }),
+      ),
+    );
+  });
+
   it("retries one required load at a time, repeats the same error and continues once on success", async () => {
     const parent = document.createElement("div");
     const load = vi
@@ -250,6 +326,8 @@ describe("mountLoadingFailure", () => {
     button.click();
     expect(button.disabled).toBe(false);
     button.click();
+    view.update({ attempt: 1, error: undefined, kind: "failed" });
+    expect(button.disabled).toBe(true);
     await Promise.resolve();
     expect(button.disabled).toBe(false);
     expect(view.element.textContent).toBe(

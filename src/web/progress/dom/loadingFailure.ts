@@ -163,10 +163,6 @@ export function mountLoadingFailure(
         return;
       }
       state = next;
-      if (state.kind !== "loading") {
-        busy = false;
-        generation += 1;
-      }
       render();
     },
   };
