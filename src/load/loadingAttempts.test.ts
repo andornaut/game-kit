@@ -2,8 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createLoadingAttempts,
+  createRequiredLoading,
   type LoadingAttempt,
   type LoadingAttemptState,
+  LoadingCancellationError,
+  type RequiredLoadingResource,
 } from "./loadingAttempts.ts";
 
 function pending() {
@@ -188,5 +191,278 @@ describe("createLoadingAttempts", () => {
     await attempts.start();
     expect(onReady).toHaveBeenCalledTimes(1);
     expect(load).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("loading cancellation ownership", () => {
+  it("cleans failed attempts before observers and retains successful ownership", async () => {
+    const events: string[] = [];
+    const failure = new Error("Required bootstrap failed");
+    const cleanupFailure = new Error("Partial destroy failed");
+    const retained = vi.fn();
+    const tokens: LoadingAttempt[] = [];
+    const onReady = vi.fn();
+    const attempts = createLoadingAttempts({
+      load(attempt) {
+        tokens.push(attempt);
+        attempt.onCancel(() => {
+          events.push("abort");
+        });
+        const stop = attempt.onCancel(retained);
+        stop();
+        attempt.onCancel(() => {
+          events.push("destroy");
+          throw cleanupFailure;
+        });
+        attempt.onCancel(() => {
+          events.push("listeners");
+        });
+        if (attempt.id === 1) {
+          throw failure;
+        }
+      },
+      onReady,
+      onState(state) {
+        if (state.kind === "failed") {
+          events.push("failed");
+        }
+      },
+    });
+    await expect(attempts.start()).rejects.toMatchObject({
+      cause: failure,
+      errors: [cleanupFailure],
+      name: "LoadingCancellationError",
+    });
+    expect(attempts.state.kind).toBe("failed");
+    expect(events).toEqual(["abort", "destroy", "listeners", "failed"]);
+    tokens[0]!.onCancel(() => {
+      events.push("late");
+    });
+    expect(events.at(-1)).toBe("late");
+    await attempts.retry();
+    attempts.dispose();
+    tokens[1]!.onCancel(retained);
+    expect(events).toEqual(["abort", "destroy", "listeners", "failed", "late"]);
+    expect(retained).not.toHaveBeenCalled();
+    expect(onReady).toHaveBeenCalledTimes(1);
+  });
+
+  it("disposes active I/O once even when cleanup throws and suppresses its late success", async () => {
+    const work = pending();
+    const first = vi.fn(() => {
+      throw new Error("Abort port failed");
+    });
+    const second = vi.fn();
+    const late = vi.fn();
+    const onReady = vi.fn();
+    let token!: LoadingAttempt;
+    const attempts = createLoadingAttempts({
+      load(attempt) {
+        token = attempt;
+        attempt.onCancel(first);
+        attempt.onCancel(second);
+        return work.promise;
+      },
+      onReady,
+      onState() {},
+    });
+    const task = attempts.start();
+    await Promise.resolve();
+    expect(() => attempts.dispose()).toThrow(LoadingCancellationError);
+    attempts.dispose();
+    token.onCancel(late);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(late).toHaveBeenCalledTimes(1);
+    expect(token.isCurrent()).toBe(false);
+    work.resolve();
+    await task;
+    expect(attempts.state.kind).toBe("disposed");
+    expect(onReady).not.toHaveBeenCalled();
+  });
+});
+
+function resource(initial: ReturnType<RequiredLoadingResource["status"]>) {
+  const value = { kind: initial };
+  const retry = vi.fn<RequiredLoadingResource["retry"]>();
+  return { provider: { retry, status: () => value.kind }, retry, value };
+}
+
+describe("createRequiredLoading", () => {
+  it("initializes all known requirements before notifying and supports late required resources", () => {
+    const font = resource("loading");
+    const ui = resource("failed");
+    const required = createRequiredLoading([font.provider, ui.provider]);
+    const states: LoadingAttemptState[] = [];
+    const stop = required.subscribe((state) => states.push(state));
+    expect(states.map((state) => state.kind)).toEqual(["failed"]);
+    const ready = vi.fn();
+    required.wait(ready);
+    font.value.kind = "ready";
+    ui.value.kind = "ready";
+    required.invalidate();
+    expect(ready).toHaveBeenCalledTimes(1);
+    const completed = required.state.attempt;
+    const later = resource("loading");
+    required.observe(later.provider);
+    expect(required.state.kind).toBe("loading");
+    expect(required.state.attempt).toBeGreaterThan(completed);
+    later.value.kind = "failed";
+    required.invalidate();
+    expect(states.at(-1)?.kind).toBe("failed");
+    stop();
+    const count = states.length;
+    later.value.kind = "ready";
+    required.invalidate();
+    expect(states).toHaveLength(count);
+    expect(ready).toHaveBeenCalledTimes(1);
+    required.dispose();
+  });
+
+  it("rechecks all requirements between one-shot wait callbacks and permits unregistering", () => {
+    const first = resource("loading");
+    const second = resource("loading");
+    const required = createRequiredLoading([first.provider]);
+    const events: string[] = [];
+    required.wait(() => {
+      events.push("first");
+      required.observe(second.provider);
+    });
+    const cancelled = vi.fn();
+    const cancel = required.wait(cancelled);
+    required.wait(() => {
+      events.push("second");
+    });
+    cancel();
+    first.value.kind = "ready";
+    required.invalidate();
+    expect(events).toEqual(["first"]);
+    second.value.kind = "ready";
+    required.invalidate();
+    required.invalidate();
+    expect(events).toEqual(["first", "second"]);
+    expect(cancelled).not.toHaveBeenCalled();
+    required.dispose();
+  });
+
+  it("keeps duplicate observer leases independent and retains constructor requirements", () => {
+    const item = resource("loading");
+    const required = createRequiredLoading();
+    expect(required.state.kind).toBe("ready");
+    const first = required.observe(item.provider);
+    const second = required.observe(item.provider);
+    first();
+    first();
+    expect(required.state.kind).toBe("loading");
+    second();
+    expect(required.state.kind).toBe("ready");
+    required.dispose();
+    const seeded = createRequiredLoading([item.provider]);
+    seeded.observe(item.provider)();
+    expect(seeded.state.kind).toBe("loading");
+    seeded.dispose();
+  });
+
+  it("retains successful resources and one void retry flight while any resource is still loading", async () => {
+    const kept = resource("ready");
+    const failed = resource("failed");
+    const other = resource("loading");
+    failed.retry.mockImplementation(() => {
+      failed.value.kind = "loading";
+    });
+    const required = createRequiredLoading([kept.provider, failed.provider, other.provider]);
+    const ready = vi.fn();
+    required.wait(ready);
+    const first = required.retry();
+    failed.value.kind = "failed";
+    required.invalidate();
+    expect(required.state.kind).toBe("failed");
+    expect(required.retry()).toBe(first);
+    expect(failed.retry).toHaveBeenCalledTimes(1);
+    expect(kept.retry).not.toHaveBeenCalled();
+    expect(other.retry).not.toHaveBeenCalled();
+    other.value.kind = "ready";
+    required.invalidate();
+    await first;
+    const second = required.retry();
+    Object.assign(failed.value, { kind: "ready" });
+    required.invalidate();
+    await second;
+    expect(ready).toHaveBeenCalledTimes(1);
+    expect(failed.retry).toHaveBeenCalledTimes(2);
+    required.dispose();
+  });
+
+  it("keeps a deferred void retry in flight until authoritative invalidation", async () => {
+    const item = resource("failed");
+    const required = createRequiredLoading([item.provider]);
+    const task = required.retry();
+    let finished = false;
+    void task.then(() => {
+      finished = true;
+    });
+    await Promise.resolve();
+    expect(finished).toBe(false);
+    expect(required.retry()).toBe(task);
+    item.value.kind = "loading";
+    required.invalidate();
+    expect(required.retry()).toBe(task);
+    item.value.kind = "ready";
+    required.invalidate();
+    await task;
+    expect(item.retry).toHaveBeenCalledTimes(1);
+    required.dispose();
+  });
+
+  it("assigns flight before reentrant provider subscriptions and waits for retry promises", async () => {
+    const item = resource("failed");
+    const work = pending();
+    const required = createRequiredLoading([item.provider]);
+    let inner: Promise<void> | undefined;
+    item.retry.mockImplementation(() => {
+      item.value.kind = "ready";
+      required.subscribe(() => {
+        inner = required.retry();
+      });
+      required.invalidate();
+      return work.promise;
+    });
+    const ready = vi.fn();
+    required.wait(ready);
+    const task = required.retry();
+    expect(inner).toBe(task);
+    expect(required.state.kind).toBe("loading");
+    expect(ready).not.toHaveBeenCalled();
+    work.resolve();
+    await task;
+    expect(ready).toHaveBeenCalledTimes(1);
+    expect(item.retry).toHaveBeenCalledTimes(1);
+    required.dispose();
+  });
+
+  it("settles disposal while retry promises remain pending and ignores late callbacks", async () => {
+    const item = resource("failed");
+    const work = pending();
+    item.retry.mockReturnValue(work.promise);
+    const required = createRequiredLoading([item.provider]);
+    const listener = vi.fn();
+    required.subscribe(listener);
+    const ready = vi.fn();
+    required.wait(ready);
+    const task = required.retry();
+    required.dispose();
+    required.dispose();
+    await task;
+    const count = listener.mock.calls.length;
+    work.reject(new Error("Late retry failure"));
+    await Promise.resolve();
+    item.value.kind = "ready";
+    required.invalidate();
+    required.observe(item.provider)();
+    required.subscribe(listener)();
+    required.wait(ready)();
+    expect(required.state.kind).toBe("disposed");
+    expect(listener).toHaveBeenCalledTimes(count);
+    expect(ready).not.toHaveBeenCalled();
   });
 });
