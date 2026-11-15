@@ -7,14 +7,51 @@ Game-independent TypeScript mechanisms, Phaser adapters and website infrastructu
 Import individual public modules without an extension:
 
 ```ts
-import { frameSteps } from "@andornaut/game-kit/clock/fixedStep";
-import { seededRandom } from "@andornaut/game-kit/random";
-import { memoryStorage, type SaveStorage } from "@andornaut/game-kit/save/storage";
+import { frameSteps } from "@andornaut/game-kit/runtime/clock/fixedStep";
+import { seededRandom } from "@andornaut/game-kit/runtime/random";
+import { memoryStorage, type SaveStorage } from "@andornaut/game-kit/runtime/save/storage";
 ```
 
 Install the compiled release archive by its versioned URL, `https://github.com/andornaut/game-kit/releases/download/v<version>/game-kit-<version>.tgz`, and commit the lockfile with its URL and integrity. The archive holds JavaScript and declarations; `SOURCE_COMMIT`, inside it and alongside it, records the source revision. Tests and scripts are private.
 
-Pure imports need no runtime peers. Phaser, TypeScript, Vite and Vitest are optional peers: `phaser/` adapters need the game's `phaser`, `vite/` modules its `vite`, `web/build/vite/phaserUses` its `typescript` and `web/build/vite/gameConfig` its `vitest`. Every `phaser/` adapter may import Phaser at runtime, so a game test that mocks it with `vi.mock("phaser")` must inline the kit with `test.server.deps.inline: ["@andornaut/game-kit"]`.
+Pure imports need no runtime peers. Phaser, TypeScript, Vite and Vitest are optional peers: `phaser/` adapters need the game's `phaser`, Vite plugins its `vite`, `build/phaserUses` its `typescript` and `build/gameConfig` its `vitest`. Every `phaser/` adapter may import Phaser at runtime, so a game test that mocks it with `vi.mock("phaser")` must inline the kit with `test.server.deps.inline: ["@andornaut/game-kit"]`.
+
+## API namespaces and migration
+
+Canonical imports use `@andornaut/game-kit/runtime/...`, `@andornaut/game-kit/build/...` or `@andornaut/game-kit/test/...`. Every path is explicit in `package.json`; there are no root barrels or wildcard exports. The `package.json` metadata export is unchanged.
+
+| Namespace  | Use                                                                                                             | Dependency direction                                           |
+| ---------- | --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `runtime/` | Game and website runtime, including pure mechanisms, browser and Phaser adapters, CSS and shared data contracts | Must not import build tooling or test helpers                  |
+| `build/`   | Build configuration, asset processing, generated metadata and plugins                                           | May import runtime modules; must not import test helpers       |
+| `test/`    | The three shared testing APIs                                                                                   | For tests only; runtime and build modules must not import them |
+
+For the 144 existing APIs, use `runtime/<legacy-path>` except for the build and test mappings below and `web/build/buildLabel`, whose canonical path is `runtime/web/buildLabel`. The source layout and environmental constraints remain separate from these consumer namespaces.
+
+| Canonical build path          | Deprecated compatibility path            |
+| ----------------------------- | ---------------------------------------- |
+| `build/rgbaImage`             | `art/rgbaImage`                          |
+| `build/buildVersion`          | `web/build/buildVersion`                 |
+| `build/phaserBuild`           | `web/build/phaserBuild`                  |
+| `build/buildInfo`             | `web/build/vite/buildInfo`               |
+| `build/contentHash`           | `web/build/vite/contentHash`             |
+| `build/gameConfig`            | `web/build/vite/gameConfig`              |
+| `build/gitHead`               | `web/build/vite/gitHead`                 |
+| `build/phaserBuildPlugin`     | `web/build/vite/phaserBuildPlugin`       |
+| `build/phaserSource`          | `web/build/vite/phaserSource`            |
+| `build/phaserUses`            | `web/build/vite/phaserUses`              |
+| `build/securityHeaders`       | `web/headers/securityHeaders`            |
+| `build/securityHeadersPlugin` | `web/headers/vite/securityHeadersPlugin` |
+| `build/hashedIcons`           | `web/pwa/hashedIcons`                    |
+| `build/precacheList`          | `web/pwa/precacheList`                   |
+| `build/hashedIconsPlugin`     | `web/pwa/vite/hashedIconsPlugin`         |
+| `build/precachePlugin`        | `web/pwa/vite/precachePlugin`            |
+
+The test paths replace only the `testing/` prefix: `test/storageFixture`, `test/dom/failingLocalStorage` and `test/phaser/sceneStub` map to their existing implementations.
+
+Shared runtime contracts have dedicated paths: `runtime/art/rgbaImage` provides RGBA image types, `runtime/web/pwa/buildIdentity` provides build identity contracts, and `runtime/web/pwa/precacheManifest` provides the precache manifest schema. Image processing remains at `build/rgbaImage`; manifest production remains at `build/precacheList`. The legacy `art/rgbaImage` path retains both its functions and types.
+
+Every legacy API path remains available unchanged as a deprecated compatibility alias to the same implementation as its canonical replacement. This includes CSS and the type-only `buildInfo` declaration. Use canonical paths for new imports and migrate existing imports according to this mapping; aliases are not removed by this alignment. Internal helpers and private fixtures are not additional APIs. Older migration sections and the source inventory below retain legacy names under this compatibility policy. These package paths do not establish consumer adoption or game integration.
 
 ## Version and interface policy
 
@@ -190,7 +227,7 @@ The install offer shows in every browser until the game is installed: the browse
 
 ## Modules and environments
 
-Paths are relative to `src/`, and tests sit beside their modules. Every module is a public path except `input/tapGuard`, `terrain/fnv1a64`, `text/phaser/uiGlyphPen` and `web/build/mapLimit`, which are internal.
+The inventory uses implementation paths relative to `src/`, and tests sit beside their modules. Use the canonical namespace mapping above for imports. Only explicit `package.json` exports are public; internal helpers and fixtures remain private.
 
 | Modules                                                                                                           | Environment              | Responsibility                                                                                                       |
 | ----------------------------------------------------------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------- |
@@ -244,7 +281,7 @@ A module's directory names its environment, and its `tsconfig.<environment>.json
 | `dom/`            | `tsconfig.dom.json`    | ES2022 and DOM, no Phaser     |
 | `vite/`           | `tsconfig.vite.json`   | ES2022, Node and Vite, no DOM |
 
-Each compilation rejects the other environments' ambient globals, and ESLint rejects imports across them: pure modules import no environment directory, `dom/` imports no Phaser or `vite/`, `vite/` imports no Phaser or `dom/`, and nothing outside `vite/` imports Vite. `web/<area>/` holds website infrastructure in the same layout: pure policy such as headers, cache policy and precache lists at the top, browser bindings in `dom/` and build plugins in `vite/`. Public paths mirror source paths, for example `@andornaut/game-kit/web/headers/vite/securityHeadersPlugin`. The combined test/config project has the development types it needs.
+Each compilation rejects the other environments' ambient globals, and ESLint rejects imports across them: pure modules import no environment directory, `dom/` imports no Phaser or `vite/`, `vite/` imports no Phaser or `dom/`, and nothing outside `vite/` imports Vite. `web/<area>/` holds website infrastructure in the same layout: pure policy such as headers, cache policy and precache lists at the top, browser bindings in `dom/` and build plugins in `vite/`. Canonical public paths classify consumer use, for example `@andornaut/game-kit/build/securityHeadersPlugin` points to `src/web/headers/vite/securityHeadersPlugin.ts`. The combined test/config project has the development types it needs.
 
 ## Integration contracts
 
