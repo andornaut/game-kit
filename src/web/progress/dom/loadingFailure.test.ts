@@ -5,6 +5,137 @@ import { createLoadingAttempts, createRequiredLoading } from "../../../load/load
 import { type LoadingFailureLayout, mountLoadingFailure } from "./loadingFailure.ts";
 
 describe("mountLoadingFailure", () => {
+  it("contains Retry activation keys without preventing defaults or synthesizing clicks", () => {
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    const onRetry = vi.fn();
+    const view = mountLoadingFailure({ onRetry }, parent);
+    view.update({ attempt: 1, error: undefined, kind: "failed" });
+    const button = view.element.querySelector("button")!;
+    const bubble = vi.fn();
+    const capture = vi.fn();
+    const types = ["keydown", "keypress", "keyup"] as const;
+    for (const type of types) {
+      window.addEventListener(type, bubble);
+      window.addEventListener(type, capture, true);
+    }
+    try {
+      for (const key of ["Enter", " ", "Spacebar"]) {
+        for (const type of ["keydown", "keydown", "keypress", "keyup"]) {
+          const event = new KeyboardEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            key,
+            repeat: type === "keydown",
+          });
+          expect(button.dispatchEvent(event)).toBe(true);
+          expect(event.defaultPrevented).toBe(false);
+        }
+      }
+      expect(bubble).not.toHaveBeenCalled();
+      expect(capture).toHaveBeenCalledTimes(12);
+      expect(onRetry).not.toHaveBeenCalled();
+      button.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Tab" }));
+      button.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Escape" }));
+      expect(bubble).toHaveBeenCalledTimes(2);
+      view.dispose();
+      parent.append(button);
+      button.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+      expect(bubble).toHaveBeenCalledTimes(3);
+      button.click();
+      expect(onRetry).not.toHaveBeenCalled();
+    } finally {
+      view.dispose();
+      parent.remove();
+      for (const type of types) {
+        window.removeEventListener(type, bubble);
+        window.removeEventListener(type, capture, true);
+      }
+    }
+  });
+
+  it("contains a held Retry key after disable and blur without trapping other controls or disposal", async () => {
+    const exercise = async (key: string) => {
+      const parent = document.createElement("div");
+      const other = document.createElement("button");
+      document.body.append(parent, other);
+      let finish!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const onRetry = vi.fn(() => pending);
+      const view = mountLoadingFailure({ onRetry }, parent);
+      view.update({ attempt: 1, error: undefined, kind: "failed" });
+      const button = view.element.querySelector("button")!;
+      const bubble = vi.fn();
+      const types = ["keydown", "keypress", "keyup"] as const;
+      const send = (target: EventTarget, type: string, eventKey = key, repeat = false) => {
+        const event = new KeyboardEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          key: eventKey,
+          repeat,
+        });
+        expect(target.dispatchEvent(event)).toBe(true);
+        expect(event.defaultPrevented).toBe(false);
+      };
+      for (const type of types) {
+        window.addEventListener(type, bubble);
+      }
+      try {
+        button.focus();
+        send(button, "keydown");
+        button.click();
+        expect(button.disabled).toBe(true);
+        button.blur();
+        send(document.body, "keydown", key, true);
+        send(document.body, "keypress");
+        send(document.body, "keyup");
+        send(button, "keydown");
+        button.click();
+        send(button, "keyup");
+        expect(onRetry).toHaveBeenCalledOnce();
+        expect(bubble).not.toHaveBeenCalled();
+        finish();
+        await pending;
+        await Promise.resolve();
+        expect(button.disabled).toBe(false);
+
+        send(button, "keydown");
+        other.focus();
+        send(other, "keypress");
+        send(other, "keyup");
+        other.blur();
+        send(document.body, "keyup");
+        send(document.body, "keydown", "ArrowDown");
+        expect(bubble).toHaveBeenCalledTimes(4);
+        button.focus();
+        send(button, "keydown");
+        window.dispatchEvent(new Event("blur"));
+        button.blur();
+        send(document.body, "keyup");
+        expect(bubble).toHaveBeenCalledTimes(5);
+
+        button.focus();
+        send(button, "keydown");
+        view.dispose();
+        send(document.body, "keyup");
+        expect(bubble).toHaveBeenCalledTimes(6);
+        expect(onRetry).toHaveBeenCalledOnce();
+      } finally {
+        finish();
+        view.dispose();
+        parent.remove();
+        other.remove();
+        for (const type of types) {
+          window.removeEventListener(type, bubble);
+        }
+      }
+    };
+    await exercise("Enter");
+    await exercise(" ");
+  });
+
   it("shows the exact shared text in native fallback styles without a font, image or second bar", () => {
     const parent = document.createElement("div");
     parent.style.font = "0px MissingGameFont";

@@ -147,6 +147,47 @@ export function mountLoadingFailure(
       finish();
     }
   };
+  const heldKeys = new Set<string>();
+  const keyTypes = ["keydown", "keypress", "keyup"] as const;
+  const neutralTarget = (target: EventTarget | null) =>
+    target === document || target === document.body || target === document.documentElement;
+  // Keep native activation defaults. Ancestor capture listeners still observe these keys.
+  // Disabling Retry can move focus to the body before the same press repeats or releases.
+  const onKey = (event: KeyboardEvent) => {
+    const key = event.key === "Spacebar" ? " " : event.key;
+    if (key !== "Enter" && key !== " ") {
+      return;
+    }
+    if (!event.composedPath().includes(retry)) {
+      if (
+        !heldKeys.has(key) ||
+        !neutralTarget(event.target) ||
+        (document.activeElement !== retry && !neutralTarget(document.activeElement)) ||
+        (event.type === "keydown" && !event.repeat)
+      ) {
+        heldKeys.delete(key);
+        return;
+      }
+    }
+    if (event.type === "keydown") {
+      heldKeys.add(key);
+    } else if (event.type === "keyup") {
+      heldKeys.delete(key);
+    }
+    event.stopPropagation();
+  };
+  const clearKeys = () => heldKeys.clear();
+  const onFocus = (event: FocusEvent) => {
+    if (event.target !== retry && !neutralTarget(event.target)) {
+      clearKeys();
+    }
+  };
+  for (const type of keyTypes) {
+    retry.addEventListener(type, onKey);
+    document.addEventListener(type, onKey);
+  }
+  document.addEventListener("focusin", onFocus);
+  document.defaultView?.addEventListener("blur", clearKeys);
   retry.addEventListener("click", onClick);
   render();
   parent.append(element);
@@ -154,6 +195,13 @@ export function mountLoadingFailure(
     dispose() {
       disposed = true;
       generation += 1;
+      clearKeys();
+      for (const type of keyTypes) {
+        retry.removeEventListener(type, onKey);
+        document.removeEventListener(type, onKey);
+      }
+      document.removeEventListener("focusin", onFocus);
+      document.defaultView?.removeEventListener("blur", clearKeys);
       retry.removeEventListener("click", onClick);
       element.remove();
     },
