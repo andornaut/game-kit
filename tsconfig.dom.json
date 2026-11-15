@@ -7,6 +7,7 @@
   "files": [
     "src/testing/dom/failingLocalStorage.ts",
     "src/web/crash/dom/crashScreen.ts",
+    "src/web/input/dom/holdActions.ts",
     "src/web/input/dom/pagePresses.ts",
     "src/web/progress/dom/progressBar.ts",
     "src/web/pwa/dom/audioUnlock.ts",
