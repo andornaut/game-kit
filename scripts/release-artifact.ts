@@ -96,6 +96,10 @@ import { shortCommit, UNKNOWN_COMMIT } from '@andornaut/game-kit/build/buildVers
 import { replacePhaserFlags } from '@andornaut/game-kit/build/phaserBuild';
 import { crashGate } from '@andornaut/game-kit/runtime/web/crash/crashModel';
 import { isBuildId } from '@andornaut/game-kit/runtime/web/pwa/buildIdentity';
+import { validateLayoutTree } from '@andornaut/game-kit/runtime/ui/layoutTree';
+import { mountLoadingFailure } from '@andornaut/game-kit/runtime/web/progress/dom/loadingFailure';
+validateLayoutTree({}, {kind:'columns',key:'columns',gap:0,padding:0,sizing:{mode:'equal'},children:[]});
+assert.equal(typeof mountLoadingFailure, 'function');
 import * as imageTypes from '@andornaut/game-kit/runtime/art/rgbaImage';
 assert.deepEqual(Object.keys(imageTypes), []);
 assert.equal(isBuildId('a'.repeat(40)), true);
@@ -177,6 +181,17 @@ export const image: RgbaImage = { data: new Uint8Array(4), height: 1, width: 1 }
 export const manifest: PrecacheManifest = { contentHashes: {}, sounds: {}, urls: [], version: 'proof' };
 export const legacyManifest: LegacyManifest = manifest;
 export const fixture = storageFixture();
+import type { LayoutColumnSizing, LayoutColumnTrack, LayoutNode } from '@andornaut/game-kit/runtime/ui/layoutTree';
+import { mountLoadingFailure, type LoadingFailureLayout } from '@andornaut/game-kit/runtime/web/progress/dom/loadingFailure';
+export const tracks: readonly LayoutColumnTrack[] = [{kind:'fraction'},{kind:'intrinsic'},{kind:'fixed',size:3}];
+export const columnSizing: LayoutColumnSizing = {mode:'tracks',tracks};
+export const columns: LayoutNode<{text:{props:{label:string};slots:never}}> = {
+  kind:'columns',key:'columns',gap:0,padding:0,sizing:{mode:'equal'},children:[],
+};
+export const failureLayout: LoadingFailureLayout = {actionAlign:'end',gapPx:8,minActionSizePx:48,paddingPx:12};
+export function mountFailure(parent: HTMLElement): void {
+  mountLoadingFailure({layout:failureLayout,onRetry(){}},parent);
+}
 import { crashView, type CrashView } from '@andornaut/game-kit/runtime/web/crash/crashModel';
 export const label: string = buildLabel(__APP_VERSION__, __COMMIT__);
 export const phaser: PhaserBuild = { flags: { CANVAS_RENDERER: false }, omitted: [] };

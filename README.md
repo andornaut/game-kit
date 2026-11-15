@@ -57,6 +57,12 @@ Every legacy API path remains available unchanged as a deprecated compatibility 
 
 The precache plugin builds the worker through Vite's isolated worker pipeline as one self-contained classic script. Shared page modules cannot split the worker into ESM chunks. Builds reject worker imports or additional emitted files; games retain their existing classic registration and runtime policies.
 
+## Additive layout controls in 0.48.0
+
+`runtime/ui/layoutTree` exports `LayoutColumnSizing` and `LayoutColumnTrack`. Only `columns` nodes accept optional `sizing`: `{ mode: "equal" }` allocates equal fractions of the bounded content width; `{ mode: "intrinsic" }` keeps content-sized tracks; `{ mode: "tracks", tracks }` assigns one descriptor per child. Descriptors are `{ kind: "fraction" }`, `{ kind: "intrinsic" }` or `{ kind: "fixed", size }`. Fraction tracks share the space remaining after fixed/intrinsic tracks, gaps and padding. Fixed sizes use the existing logical `--ui-unit` scaling. Use explicit intrinsic/fixed descriptors for divider tracks; the renderer never infers a component role. Omission preserves legacy sizing. Invalid configurations fail before DOM mutation. Actual measurements still determine overflow or unavailable results; track selection does not guarantee fit.
+
+`runtime/web/progress/dom/loadingFailure` exports `LoadingFailureLayout`. Pass optional `layout` with all fields `{ actionAlign: "start" | "center" | "end", gapPx, minActionSizePx, paddingPx }` alongside `onRetry` to `mountLoadingFailure`. Numeric values are finite, nonnegative CSS pixels captured at mount; callers convert game units. The fallback applies those values through its hardened CSSOM styles, keeps the native button label centred, and remains independent of game fonts and art. Minimum dimensions do not guarantee viewport fit. Omission retains native defaults. Shared text, single-flight Retry, stale-event guards and disposal are unchanged.
+
 ## Version and interface policy
 
 The `exports` map and the exported declarations define the public interface. Internal imports are relative and acyclic, and there is no root barrel, so a pure import loads no engine.
