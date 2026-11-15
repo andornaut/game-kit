@@ -5,5 +5,7 @@
 //
 // package.json's version.
 declare const __APP_VERSION__: string;
+// Full clean source identity shared with grouped precache, unavailable on dirty or unknown builds.
+declare const __BUILD_ID__: string | undefined;
 // The commit's 8-character hash, or "dev" when the build knew none (web/build/buildVersion).
 declare const __COMMIT__: string;

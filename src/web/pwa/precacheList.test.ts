@@ -148,4 +148,57 @@ describe("precacheFingerprint", () => {
       `/a hash ${Number.MAX_SAFE_INTEGER}`,
     );
   });
+
+  it("fingerprints full build identity, ordered initial groups, partition and every grouped content hash", () => {
+    const buildId = "0123456789abcdef0123456789abcdef01234567";
+    const hashes = new Map([
+      ["/assets/a.bin", "a"],
+      ["/b", "b"],
+    ]);
+    const groups = {
+      initial: ["first", "second"],
+      urls: { first: ["/assets/a.bin"], second: ["/b"] },
+    };
+    const fingerprint = precacheFingerprint(policy, hashes, undefined, { buildId, groups });
+    expect(
+      precacheFingerprint(policy, new Map([...hashes].reverse()), undefined, {
+        buildId,
+        groups: {
+          initial: [...groups.initial],
+          urls: Object.fromEntries([
+            ["second", ["/b", "/b"]],
+            ["first", ["/assets/a.bin"]],
+          ]),
+        },
+      }),
+    ).toBe(fingerprint);
+    for (const metadata of [
+      { buildId: "1123456789abcdef0123456789abcdef01234567", groups },
+      { buildId, groups: { ...groups, initial: ["second", "first"] } },
+      {
+        buildId,
+        groups: { initial: groups.initial, urls: { first: ["/b"], second: ["/assets/a.bin"] } },
+      },
+    ]) {
+      expect(precacheFingerprint(policy, hashes, undefined, metadata)).not.toBe(fingerprint);
+    }
+    expect(
+      precacheFingerprint(policy, new Map(hashes).set("/assets/a.bin", "changed"), undefined, {
+        buildId,
+        groups,
+      }),
+    ).not.toBe(fingerprint);
+    expect(() =>
+      precacheFingerprint(policy, hashes, undefined, { buildId: buildId.slice(0, 8), groups }),
+    ).toThrow(/full 40/);
+    expect(() =>
+      precacheFingerprint(policy, hashes, undefined, { buildId: `${buildId}\n`, groups }),
+    ).toThrow(/full 40/);
+    expect(() =>
+      precacheFingerprint(policy, new Map(hashes).set("/assets/a.bin", ""), undefined, {
+        buildId,
+        groups,
+      }),
+    ).toThrow(/content hash/);
+  });
 });

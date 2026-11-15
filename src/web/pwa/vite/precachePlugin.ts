@@ -2,8 +2,11 @@ import { createHash } from "node:crypto";
 
 import type { Plugin } from "vite";
 
+import { isBuildId } from "../../build/buildVersion.ts";
 import { contentHash } from "../../build/vite/contentHash.ts";
+import { gitBuildMetadata } from "../../build/vite/gitHead.ts";
 import { cacheKeyFor, type CachePolicy, isHashedAssetUrl } from "../cachePolicy.ts";
+import { type PrecacheGroups, validatePrecacheGroups } from "../precacheGroups.ts";
 import {
   bundleDependencies,
   type BundleFile,
@@ -22,6 +25,9 @@ export interface HashedFiles {
 }
 
 export interface PrecachePluginOptions {
+  readonly buildId?: string | undefined;
+  // Called on the complete final normalized discovery, including public links and all sounds.
+  readonly groups?: (files: HashedFiles) => PrecacheGroups;
   // The hashed files beyond what the page links, read once the bundle is written: bundleFile
   // gives a build output file's bytes by its URL. Throws to fail the build.
   hashedFiles?: (bundleFile: (url: string) => Uint8Array | undefined) => HashedFiles;
@@ -45,16 +51,41 @@ function sha256Hex(bytes: Uint8Array): string {
 // files hashedFiles names. Sounds are listed apart, by format, for the worker to precache the one
 // format the page plays.
 export function precachePlugin({
+  buildId,
+  groups,
   hashedFiles = () => ({ sounds: {}, urls: [] }),
   pageHtmlFile,
   policy,
   serviceWorkerFileName = "sw.js",
   serviceWorkerSource,
 }: PrecachePluginOptions): Plugin {
+  let root: string;
+  const checkIdentity = () => {
+    if (!isBuildId(buildId) || gitBuildMetadata(root, process.env).buildId !== buildId) {
+      throw new Error("precache: grouped builds require a matching clean source and full buildId");
+    }
+  };
   return {
-    apply: "build",
+    apply:
+      groups === undefined
+        ? "build"
+        : (_config, env) => {
+            if (env.command !== "build") {
+              throw new Error("precache: grouped precache is unavailable in development");
+            }
+            return true;
+          },
     buildStart() {
       this.emitFile({ fileName: serviceWorkerFileName, id: serviceWorkerSource, type: "chunk" });
+    },
+    configResolved(config) {
+      root = config.root;
+      if (groups !== undefined) {
+        checkIdentity();
+        if (config.define?.__BUILD_ID__ !== JSON.stringify(buildId)) {
+          throw new Error("precache: app __BUILD_ID__ must match the grouped worker buildId");
+        }
+      }
     },
     enforce: "post",
     generateBundle: {
@@ -153,10 +184,32 @@ export function precachePlugin({
           ...contents,
           ...soundUrls.map((url) => [cacheKeyFor(url), requiredBundleBytes(url)] as const),
         ]);
+        const sounds = Object.fromEntries(
+          Object.entries(hashed.sounds).map(([format, urls]) => [
+            format,
+            [...new Set(urls.map(cacheKeyFor))],
+          ]),
+        );
+        let grouped: { buildId: string; groups: PrecacheGroups } | undefined;
+        if (groups !== undefined) {
+          checkIdentity();
+          const discovery: HashedFiles = Object.freeze({
+            sounds: Object.freeze(
+              Object.fromEntries(
+                Object.entries(sounds).map(([format, urls]) => [format, Object.freeze([...urls])]),
+              ),
+            ),
+            urls: Object.freeze([...contents.keys()].sort()),
+          });
+          grouped = {
+            buildId: buildId!,
+            groups: validatePrecacheGroups([...listed.keys()], groups(discovery)),
+          };
+        }
         const byteSizes = new Map([...listed].map(([url, bytes]) => [url, bytes.byteLength]));
         const contentHashes = new Map(
           [...listed]
-            .filter(([url]) => !isHashedAssetUrl(policy, url))
+            .filter(([url]) => grouped !== undefined || !isHashedAssetUrl(policy, url))
             .map(([url, bytes]) => [url, contentHash(bytes)] as const),
         );
         const fingerprint = sha256Hex(
@@ -165,22 +218,19 @@ export function precachePlugin({
               policy,
               new Map([...listed.keys()].map((url) => [url, contentHashes.get(url) ?? ""])),
               byteSizes,
+              grouped,
             ),
           ),
         );
         const manifest: PrecacheManifest = {
+          ...(grouped === undefined ? {} : grouped),
           byteSizes: Object.fromEntries(
             [...byteSizes.keys()].sort().map((url) => [url, byteSizes.get(url)!]),
           ),
           contentHashes: Object.fromEntries(
             [...contentHashes.keys()].sort().map((url) => [url, contentHashes.get(url) ?? ""]),
           ),
-          sounds: Object.fromEntries(
-            Object.entries(hashed.sounds).map(([format, urls]) => [
-              format,
-              [...new Set(urls.map(cacheKeyFor))],
-            ]),
-          ),
+          sounds,
           urls: [...contents.keys()].sort(),
           version: fingerprint.slice(0, 16),
         };

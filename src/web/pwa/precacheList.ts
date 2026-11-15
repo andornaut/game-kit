@@ -1,4 +1,6 @@
+import { isBuildId } from "../build/buildVersion.ts";
 import { type CachePolicy, isHashedAssetUrl } from "./cachePolicy.ts";
+import { type PrecacheGroups, validatePrecacheGroups } from "./precacheGroups.ts";
 
 // The service worker's precache: every URL the game needs to boot offline, each sound file by
 // format (the worker stores the one format the page plays, named on its URL by
@@ -7,10 +9,12 @@ import { type CachePolicy, isHashedAssetUrl } from "./cachePolicy.ts";
 // hashed build output (cachePolicy's isHashedAssetUrl) to its content's web/build/vite/contentHash,
 // for an install to reuse an earlier version's unchanged copy (cachePolicy's installPlan).
 export interface PrecacheManifest {
+  buildId?: string;
   // Exact built byte lengths for every normalized listed URL, all sound alternatives included.
   // Absent on older manifests; totals depend on the caller's selected sound format.
   byteSizes?: Record<string, number>;
   contentHashes: Record<string, string>;
+  groups?: PrecacheGroups;
   sounds: Record<string, string[]>;
   urls: string[];
   version: string;
@@ -76,20 +80,36 @@ export function webManifestIconUrls(manifestJson: unknown): string[] {
 }
 
 // The text a version hash is computed over: each URL with its content hash, in URL order.
-// Hashed assets need no content hash because their name already changes with their content.
+// Legacy hashed assets need no content hash because their name changes with their content.
 // Optional byte sizes must cover exactly those URLs and become part of the version fingerprint.
+// Grouped builds include every hash, canonical partition and full source identity.
 export function precacheFingerprint(
   policy: CachePolicy,
   contentHashes: ReadonlyMap<string, string>,
   byteSizes?: ReadonlyMap<string, number>,
+  grouped?: { readonly buildId: string; readonly groups: PrecacheGroups },
 ): string {
   if (byteSizes !== undefined && byteSizes.size !== contentHashes.size) {
     throw new RangeError("Precache byte sizes must cover exactly the listed URLs");
   }
-  return [...contentHashes.keys()]
-    .sort()
+  const urls = [...contentHashes.keys()].sort();
+  let metadata: { readonly buildId: string; readonly groups: PrecacheGroups } | undefined;
+  if (grouped !== undefined) {
+    if (!isBuildId(grouped.buildId)) {
+      throw new RangeError("Grouped precache requires a full 40-character source build ID");
+    }
+    metadata = { buildId: grouped.buildId, groups: validatePrecacheGroups(urls, grouped.groups) };
+    if (urls.some((url) => !contentHashes.get(url))) {
+      throw new RangeError("Grouped precache requires a content hash for every URL");
+    }
+  }
+  const files = urls
     .map((url) => {
-      const entry = `${url} ${isHashedAssetUrl(policy, url) ? "" : (contentHashes.get(url) ?? "")}`;
+      const hash =
+        metadata === undefined && isHashedAssetUrl(policy, url)
+          ? ""
+          : (contentHashes.get(url) ?? "");
+      const entry = `${url} ${hash}`;
       if (byteSizes === undefined) {
         return entry;
       }
@@ -100,4 +120,5 @@ export function precacheFingerprint(
       return `${entry} ${size}`;
     })
     .join("\n");
+  return metadata === undefined ? files : `${files}\n${JSON.stringify(metadata)}`;
 }

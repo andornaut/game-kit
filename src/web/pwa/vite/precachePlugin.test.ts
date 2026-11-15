@@ -1,12 +1,15 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { build, type Plugin } from "vite";
-import { describe, expect, it } from "vitest";
+import { build, createServer, type Plugin } from "vite";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { CI_COMMIT_VARIABLE } from "../../build/buildVersion.ts";
 import { contentHash } from "../../build/vite/contentHash.ts";
+import { gitBuildMetadata, gitHead } from "../../build/vite/gitHead.ts";
 import type { CachePolicy } from "../cachePolicy.ts";
 import { precacheFingerprint, type PrecacheManifest } from "../precacheList.ts";
 import { precachePlugin, type PrecachePluginOptions } from "./precachePlugin.ts";
@@ -15,6 +18,32 @@ const POLICY: CachePolicy = {
   cacheNamePrefix: "game-",
   hashedAssetPrefix: "/assets/",
 };
+
+afterEach(() => vi.unstubAllEnvs());
+
+function cleanSite(): { root: string; buildId: string } {
+  vi.stubEnv(CI_COMMIT_VARIABLE, "");
+  const root = site("icon");
+  writeFileSync(join(root, ".gitignore"), "node_modules/\ndist/\n");
+  writeFileSync(join(root, "main.js"), "console.log(__BUILD_ID__);\n");
+  execFileSync("git", ["init", "--quiet", root]);
+  execFileSync("git", ["-C", root, "add", "."]);
+  execFileSync("git", [
+    "-C",
+    root,
+    "-c",
+    "user.name=Fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "-c",
+    "core.hooksPath=/dev/null",
+    "commit",
+    "--quiet",
+    "-m",
+    "Fixture",
+  ]);
+  return { buildId: gitHead(root).trim(), root };
+}
 
 const INDEX = `<!doctype html>
 <html><head><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/favicon.png">
@@ -41,6 +70,9 @@ function site(icon: string, placeholder = true): string {
 }
 
 interface Build {
+  readonly buildId?: string | undefined;
+  readonly groups?: PrecachePluginOptions["groups"];
+  readonly lateEmitted?: Readonly<Record<string, string>>;
   // Files a plugin before the precache writes into the build output, by file name.
   readonly emitted?: Readonly<Record<string, string | Uint8Array>>;
   readonly hashedFiles?: PrecachePluginOptions["hashedFiles"];
@@ -67,10 +99,13 @@ function emitPlugin(files: Readonly<Record<string, string | Uint8Array>>): Plugi
 
 // Builds the site in memory and returns the precache manifest written into sw.js.
 async function precache({
+  buildId,
   emitted = {},
+  groups,
   hashedFiles,
   missing,
   onOutput,
+  lateEmitted = {},
   placeholder,
   root = site("icon", placeholder),
   unreadable,
@@ -85,15 +120,21 @@ async function precache({
   const result = await build({
     build: { minify: false, write: false },
     configFile: false,
+    define: {
+      __BUILD_ID__: JSON.stringify(gitBuildMetadata(root, process.env).buildId) ?? "undefined",
+    },
     logLevel: "silent",
     plugins: [
       emitPlugin(emitted),
       precachePlugin({
+        buildId,
+        ...(groups === undefined ? {} : { groups }),
         ...(hashedFiles === undefined ? {} : { hashedFiles }),
         pageHtmlFile: "index.html",
         policy: POLICY,
         serviceWorkerSource: join(root, "sw.js"),
       }),
+      { ...emitPlugin(lateEmitted), enforce: "post", name: "late-art-json" },
     ],
     root,
   });
@@ -118,6 +159,132 @@ async function precache({
 }
 
 describe("precachePlugin", { timeout: 60_000 }, () => {
+  it("partitions late emissions and binds the same full source ID into app and worker", async () => {
+    const { buildId, root } = cleanSite();
+    let discovery: Parameters<NonNullable<PrecachePluginOptions["groups"]>>[0] | undefined;
+    let output: ReadonlyMap<string, Uint8Array> = new Map();
+    const manifest = await precache({
+      buildId,
+      emitted: { "assets/a-12345678.mp3": "mp3", "assets/a-12345678.ogg": "ogg" },
+      groups: (files) => {
+        discovery = files;
+        expect(files.urls).toEqual(
+          expect.arrayContaining([
+            "/",
+            "/late.json",
+            "/favicon.png",
+            "/icon.png",
+            "/manifest.webmanifest",
+          ]),
+        );
+        expect(files.sounds).toEqual({
+          mp3: ["/assets/a-12345678.mp3"],
+          ogg: ["/assets/a-12345678.ogg"],
+        });
+        return {
+          initial: ["optional"],
+          urls: { optional: ["/late.json", ...Object.values(files.sounds).flat()] },
+        };
+      },
+      hashedFiles: () => ({
+        sounds: { mp3: ["/assets/a-12345678.mp3"], ogg: ["/assets/a-12345678.ogg"] },
+        urls: ["/late.json"],
+      }),
+      lateEmitted: { "late.json": '{"generated":true}' },
+      onOutput: (files) => {
+        output = files;
+      },
+      root,
+    });
+    expect(manifest.buildId).toBe(buildId);
+    expect(manifest.groups).toEqual({
+      initial: ["optional"],
+      urls: { optional: ["/assets/a-12345678.mp3", "/assets/a-12345678.ogg", "/late.json"] },
+    });
+    const listed = [
+      ...new Set([...manifest.urls, ...Object.values(manifest.sounds).flat()]),
+    ].sort();
+    expect(Object.keys(manifest.contentHashes)).toEqual(listed);
+    expect(manifest.contentHashes["/assets/a-12345678.ogg"]).toBe(contentHash(Buffer.from("ogg")));
+    expect(discovery?.urls).toEqual(manifest.urls);
+    const app = [...output].find(([name]) => /^assets\/index-/.test(name))![1];
+    expect(Buffer.from(app).toString()).toContain(buildId);
+    expect(Buffer.from(app).toString()).not.toContain("__BUILD_ID__");
+    expect(manifest.version).toBe(
+      createHash("sha256")
+        .update(
+          precacheFingerprint(
+            POLICY,
+            new Map(Object.entries(manifest.contentHashes)),
+            new Map(Object.entries(manifest.byteSizes!)),
+            { buildId, groups: manifest.groups! },
+          ),
+        )
+        .digest("hex")
+        .slice(0, 16),
+    );
+    const regrouped = await precache({ buildId, groups: () => ({ initial: [], urls: {} }), root });
+    const same = await precache({ buildId, groups: () => ({ initial: [], urls: {} }), root });
+    expect(regrouped.version).toBe(same.version);
+  });
+
+  it("rejects dirty, missing, mismatched and development grouped identities", async () => {
+    const { buildId, root } = cleanSite();
+    const groups = () => ({ initial: [], urls: {} });
+    await expect(precache({ groups, root })).rejects.toThrow(/clean source/);
+    await expect(precache({ buildId: "0".repeat(40), groups, root })).rejects.toThrow(
+      /clean source/,
+    );
+    await expect(
+      build({
+        build: { write: false },
+        configFile: false,
+        logLevel: "silent",
+        plugins: [
+          precachePlugin({
+            buildId,
+            groups,
+            pageHtmlFile: "index.html",
+            policy: POLICY,
+            serviceWorkerSource: join(root, "sw.js"),
+          }),
+        ],
+        root,
+      }),
+    ).rejects.toThrow(/app __BUILD_ID__/);
+    writeFileSync(join(root, "untracked.txt"), "untracked");
+    await expect(precache({ buildId, groups, root })).rejects.toThrow(/clean source/);
+    rmSync(join(root, "untracked.txt"));
+    await expect(
+      createServer({
+        configFile: false,
+        plugins: [
+          precachePlugin({
+            buildId,
+            groups,
+            pageHtmlFile: "index.html",
+            policy: POLICY,
+            serviceWorkerSource: join(root, "sw.js"),
+          }),
+        ],
+        root,
+      }),
+    ).rejects.toThrow(/development/);
+  });
+
+  it("rejects partition metadata against all discovered URLs before emitting grouped output", async () => {
+    const { buildId, root } = cleanSite();
+    await expect(
+      precache({ buildId, groups: () => ({ initial: ["missing"], urls: {} }), root }),
+    ).rejects.toThrow(/Unknown precache group/);
+    await expect(
+      precache({ buildId, groups: () => ({ initial: [], urls: { a: ["/missing"] } }), root }),
+    ).rejects.toThrow(/Unknown precache URL/);
+    await expect(
+      precache({ buildId, groups: () => ({ initial: [], urls: { a: ["/"], b: ["/"] } }), root }),
+    ).rejects.toThrow(/multiple groups/);
+  });
+
   it("precaches the page, its build output, its public links and their icons", async () => {
     const manifest = await precache({});
     expect(manifest.sounds).toEqual({});
@@ -129,6 +296,8 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
       "/manifest.webmanifest",
     ]);
     expect(manifest.version).toMatch(/^[0-9a-f]{16}$/);
+    expect(manifest).not.toHaveProperty("groups");
+    expect(manifest).not.toHaveProperty("buildId");
   });
 
   it("records the content hash of every precached file outside the hashed build output", async () => {

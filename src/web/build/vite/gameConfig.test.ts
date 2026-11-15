@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,9 +7,10 @@ import type { PluginOption } from "vite";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ViteUserConfig } from "vitest/config";
 
-import { CI_COMMIT_VARIABLE } from "../buildVersion.ts";
+import { type BuildMetadata, CI_COMMIT_VARIABLE } from "../buildVersion.ts";
 import { PHASER_ENTRY_ID } from "../phaserBuild.ts";
 import { gameViteConfig } from "./gameConfig.ts";
+import { gitHead } from "./gitHead.ts";
 
 // A game's repository, laid out as gameViteConfig expects, whose config module imports an
 // installed package through its exports.
@@ -45,6 +47,23 @@ beforeAll(async () => {
     join(repo, "src/tools/configModules.ts"),
     'export { MARKER as marker } from "@andornaut/game-kit/marker";\n',
   );
+  writeFileSync(join(repo, ".gitignore"), "node_modules/\ndist/\n");
+  execFileSync("git", ["init", "--quiet", repo]);
+  execFileSync("git", ["-C", repo, "add", "."]);
+  execFileSync("git", [
+    "-C",
+    repo,
+    "-c",
+    "user.name=Fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "-c",
+    "core.hooksPath=/dev/null",
+    "commit",
+    "--quiet",
+    "-m",
+    "Fixture",
+  ]);
   vi.stubEnv(CI_COMMIT_VARIABLE, CI_SHA);
   config = await gameViteConfig<Modules>({
     chunkSizeWarningLimit: 1100,
@@ -62,6 +81,39 @@ beforeAll(async () => {
 }, 30_000);
 
 describe("gameViteConfig", () => {
+  it("shares one immutable clean app/plugin ID and withholds it when dirty", async () => {
+    const head = gitHead(repo).trim();
+    vi.stubEnv(CI_COMMIT_VARIABLE, head);
+    let seenMetadata: BuildMetadata | undefined;
+    const configure = () =>
+      gameViteConfig<Modules>({
+        chunkSizeWarningLimit: 1100,
+        configModules: "src/tools/configModules.ts",
+        pages: { main: "pages/index.html" },
+        plugins: (_modules, _repoPath, metadata) => {
+          seenMetadata = metadata;
+          return [];
+        },
+        previewHost: undefined,
+        repoRoot: repo,
+        testTimeout: 30_000,
+      });
+    const clean = await configure();
+    expect(seenMetadata).toEqual({ buildId: head, commit: head.slice(0, 8) });
+    expect(Object.isFrozen(seenMetadata)).toBe(true);
+    expect(clean.define?.__BUILD_ID__).toBe(JSON.stringify(seenMetadata!.buildId));
+    expect(clean.define?.__COMMIT__).toBe(JSON.stringify(head.slice(0, 8)));
+    writeFileSync(join(repo, "untracked.txt"), "change");
+    try {
+      const dirty = await configure();
+      expect(seenMetadata?.buildId).toBeUndefined();
+      expect(dirty.define?.__BUILD_ID__).toBe("undefined");
+      expect(dirty.define?.__COMMIT__).toBe(clean.define?.__COMMIT__);
+    } finally {
+      rmSync(join(repo, "untracked.txt"));
+    }
+  });
+
   it("loads the game's plugins from its config module, through the installed package", () => {
     // The module runner gives a module namespace, so its export is compared, not the object.
     expect([seen.modules?.marker, seen.repoPath]).toEqual(["kit", join(repo, "x")]);

@@ -17,9 +17,9 @@ import { resolve } from "node:path";
 import { type PluginOption, runnerImport } from "vite";
 import type { ViteUserConfig } from "vitest/config";
 
-import { shortCommit } from "../buildVersion.ts";
+import type { BuildMetadata } from "../buildVersion.ts";
 import { PHASER_ENTRY_ID } from "../phaserBuild.ts";
-import { gitHead } from "./gitHead.ts";
+import { gitBuildMetadata } from "./gitHead.ts";
 
 export interface GameViteOptions<Modules> {
   // The size in kB past which the build warns about a chunk: just above the largest, so growth
@@ -30,7 +30,11 @@ export interface GameViteOptions<Modules> {
   // Each page's entry name and HTML file, relative to repoRoot, in build input order.
   readonly pages: Readonly<Record<string, string>>;
   // The game's plugins, given configModules' exports and repoPath.
-  readonly plugins: (modules: Modules, repoPath: (path: string) => string) => PluginOption[];
+  readonly plugins: (
+    modules: Modules,
+    repoPath: (path: string) => string,
+    metadata: BuildMetadata,
+  ) => PluginOption[];
   // A host name the dev and preview servers answer besides localhost, or undefined for none.
   readonly previewHost: string | undefined;
   // The repository's root: import.meta.dirname in vite.config.ts.
@@ -50,6 +54,7 @@ export async function gameViteConfig<Modules>(
   // An absolute path in the repository. Vite resolves relative paths against root, which is
   // pages/, so every path goes through here instead.
   const repoPath = (path: string) => resolve(options.repoRoot, path);
+  const metadata = gitBuildMetadata(repoPath("."), process.env);
   // configFile: false, so the runner resolves its own config from these options alone rather than
   // loading vite.config.ts, which calls this function, again.
   const { module } = await runnerImport<Modules>(repoPath(options.configModules), {
@@ -82,9 +87,10 @@ export async function gameViteConfig<Modules>(
     },
     define: {
       __APP_VERSION__: JSON.stringify(packageVersion),
-      __COMMIT__: JSON.stringify(shortCommit(() => gitHead(repoPath(".")), process.env)),
+      __BUILD_ID__: metadata.buildId === undefined ? "undefined" : JSON.stringify(metadata.buildId),
+      __COMMIT__: JSON.stringify(metadata.commit),
     },
-    plugins: options.plugins(module, repoPath),
+    plugins: options.plugins(module, repoPath, metadata),
     preview: { allowedHosts: hosts },
     publicDir: repoPath("public"),
     // The pages load their modules as /src/..., which names the repository's src/ rather than
