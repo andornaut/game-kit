@@ -89,6 +89,11 @@ describe("mountLoadingFailure", () => {
       expect(view.element.style.overflow).toBe("auto");
       expect(view.element.style.padding).toBe("24px 16px 16px");
       expect(view.element.style.backgroundColor).toBe("#ead4aa");
+      for (const node of [title, body]) {
+        expect(node.style.getPropertyValue("background-color")).toBe("transparent");
+        expect(node.style.getPropertyPriority("background-color")).toBe("important");
+      }
+      expect(button.style.backgroundColor).toBe("#63c74d");
       expect(body.style.margin).toBe("16px 0px 24px");
       expect(title.style.fontSize).toBe("24px");
       expect(body.style.fontSize).toBe("18px");
@@ -128,6 +133,12 @@ describe("mountLoadingFailure", () => {
       mutableReplacement.panel.maxWidthPx = 456;
       const element = view.element;
       view.setPresentation(replacement);
+      for (const node of [title, body]) {
+        expect(node.style.getPropertyValue("background-color")).toBe("transparent");
+        expect(node.style.getPropertyPriority("background-color")).toBe("important");
+      }
+      expect(element.style.backgroundColor).toBe("#ead4aa");
+      expect(button.style.backgroundColor).toBe("#63c74d");
       mutableReplacement.action.heightPx = 500;
       expect(view.element).toBe(element);
       expect(element.querySelector("button")).toBe(button);

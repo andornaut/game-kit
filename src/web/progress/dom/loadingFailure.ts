@@ -331,7 +331,7 @@ export function mountLoadingFailure(
       styles({ "box-sizing": "border-box", flex: "none", margin: "0" }, node);
     }
     for (const node of [title, body]) {
-      styles({ "max-width": "100%" }, node);
+      styles({ "background-color": "transparent", "max-width": "100%" }, node);
     }
     font(text.title, palette.text, title);
     font(text.body, palette.text, body);
