@@ -422,6 +422,10 @@ try {
   assert.equal(view.element.querySelector('p').style.fontSize,'18px');
   assert.equal(button.style.fontSize,'18px');
   assert.equal(button.style.height,'30px');
+  for (const node of view.element.querySelectorAll('h2, p')) {
+    assert.equal(node.style.backgroundColor,'transparent');
+    assert.equal(node.style.getPropertyPriority('background-color'),'important');
+  }
   button.focus();
   button.dispatchEvent(new window.KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
   button.click();
@@ -434,6 +438,10 @@ try {
   assert.equal(button.style.height,'24px');
   assert.equal(button.style.fontSize,'18px');
   assert.equal(retries,1);
+  for (const node of view.element.querySelectorAll('h2, p')) {
+    assert.equal(node.style.backgroundColor,'transparent');
+    assert.equal(node.style.getPropertyPriority('background-color'),'important');
+  }
   const before = view.element.getAttribute('style');
   assert.throws(()=>view.setPresentation({...resized,panel:{...resized.panel,maxWidthPx:NaN}}),RangeError);
   assert.equal(view.element.getAttribute('style'),before);

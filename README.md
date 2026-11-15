@@ -57,6 +57,10 @@ Every legacy API path remains available unchanged as a deprecated compatibility 
 
 The precache plugin builds the worker through Vite's isolated worker pipeline as one self-contained classic script. Shared page modules cannot split the worker into ESM chunks. Builds reject worker imports or additional emitted files; games retain their existing classic registration and runtime policies.
 
+## Configured text paint in 0.50.1
+
+Configured headings and body text use transparent backgrounds over the caller's panel colour. Unconfigured and legacy-layout fallback backgrounds remain unchanged. Public declarations, geometry, typography and input behaviour are unchanged.
+
 ## Configured failure presentation in 0.50.0
 
 `runtime/web/progress/dom/loadingFailure` exports `LoadingFailurePresentation` and `LoadingFailureTextStyle`. Pass optional `presentation` to `mountLoadingFailure` to configure the existing hardened fallback. Omission retains the previous native fallback and optional `layout` behaviour. `layout` and `presentation` are mutually exclusive. Invalid configurations fail before DOM mutation; configurations are captured rather than retaining caller objects.
