@@ -818,8 +818,18 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
         reply({ reason: "wrong-build", status: "unavailable" });
         return;
       }
-      const name =
-        pin ?? (request.version === undefined ? cacheName : cacheNameFor(policy, request.version));
+      if (
+        pin === undefined &&
+        (await worker.clients.matchAll({ includeUncontrolled: false, type: "window" })).some(
+          (client) => client.id === id,
+        )
+      ) {
+        reply({ reason: "wrong-build", status: "unavailable" });
+        return;
+      }
+      // Only the first uncontrolled visit can establish a missing pin, and only for this
+      // active build. A caller-supplied previous version is not durable routing evidence.
+      const name = pin ?? cacheName;
       let build: BuildRecord;
       try {
         build = await readBuild(name);
@@ -844,6 +854,9 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
       if (unknownGroups.length > 0) {
         reply({ status: "invalid-groups", unknownGroups });
         return;
+      }
+      if (pin === undefined) {
+        await writeRecord("client", id, name);
       }
       tracker = createDownloadProgress(
         {

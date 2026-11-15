@@ -76,6 +76,17 @@ const POLICY: CachePolicy = { cacheNamePrefix: "game-", hashedAssetPrefix: "/ass
 
 const hashOf = (text: string) => createHash("sha256").update(text).digest("base64url").slice(0, 8);
 
+function virtualNetworkClock(): void {
+  vi.useFakeTimers();
+  // Real SHA-256, without racing a native crypto thread against simulated network deadlines.
+  vi.spyOn(crypto.subtle, "digest").mockImplementation(async (_algorithm, input) => {
+    const bytes = ArrayBuffer.isView(input)
+      ? new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+      : new Uint8Array(input);
+    return new Uint8Array(createHash("sha256").update(bytes).digest()).buffer;
+  });
+}
+
 const pathOf = (key: Request | string) =>
   new URL(key instanceof Request ? key.url : key, ORIGIN).pathname;
 
@@ -230,12 +241,16 @@ function startWorker(
     storage.seed(name, files);
   }
   const listeners = new Map<string, Listener>();
+  const controlled = new Set<string>();
   vi.stubGlobal("caches", storage);
   vi.stubGlobal("fetch", (request: Request) => server.fetch(request));
   const skipWaiting = vi.fn(() => Promise.resolve());
   vi.stubGlobal("self", {
     addEventListener: (type: string, listener: Listener) => listeners.set(type, listener),
-    clients: { matchAll: () => Promise.resolve(clients) },
+    clients: {
+      matchAll: ({ includeUncontrolled }: { includeUncontrolled: boolean }) =>
+        Promise.resolve(clients.filter(({ id }) => includeUncontrolled || controlled.has(id))),
+    },
     location: { href: `${ORIGIN}/sw.js?sound=ogg`, origin: ORIGIN },
     registration: {
       active:
@@ -271,11 +286,19 @@ function startWorker(
       resultingClientId,
       waitUntil: () => undefined,
     });
-    return answer === undefined ? undefined : (await answer).text();
+    if (answer === undefined) {
+      return undefined;
+    }
+    const response = await answer;
+    if (resultingClientId) {
+      controlled.add(resultingClientId);
+    }
+    return response.text();
   };
   return {
     activate: () => dispatch("activate"),
     clients,
+    controlled,
     install: () => dispatch("install"),
     nativeWorker: {
       postMessage: (data: unknown, ports: Transferable[]) => {
@@ -773,14 +796,7 @@ describe("runServiceWorker's install", () => {
   });
 
   it("retries bytes that lack the recorded content hash, then fails without storing them", async () => {
-    vi.useFakeTimers();
-    // Compute real SHA-256 without racing a native crypto thread against virtual deadlines.
-    vi.spyOn(crypto.subtle, "digest").mockImplementation(async (_algorithm, input) => {
-      const bytes = ArrayBuffer.isView(input)
-        ? new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
-        : new Uint8Array(input);
-      return new Uint8Array(createHash("sha256").update(bytes).digest()).buffer;
-    });
+    virtualNetworkClock();
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const server = new FakeServer({ ...FILES, "/art/same.png": "same, a newer deploy" });
     const { install, storage } = startWorker(server, {}, MANIFEST);
@@ -795,7 +811,7 @@ describe("runServiceWorker's install", () => {
   });
 
   it("stores bytes that gain the recorded content hash on a later attempt", async () => {
-    vi.useFakeTimers();
+    virtualNetworkClock();
     const files: Record<string, string> = { ...FILES, "/play/": "page v3" };
     const server = new FakeServer(files);
     const fetchFile = server.fetch.bind(server);
@@ -1365,6 +1381,8 @@ describe("grouped precache dispatcher", () => {
       status: "available",
       version: "v2",
     });
+    const routing = await worker.storage.open("game-kit-routing:game-");
+    expect(await (await routing.match("/.game-kit-routing/client/page"))!.json()).toBe(NEW);
     expect(await worker.requestGroups(buildId, ["second", "unknown"])).toEqual({
       status: "invalid-groups",
       unknownGroups: ["unknown"],
@@ -1392,6 +1410,13 @@ describe("grouped precache dispatcher", () => {
       reason: "wrong-build",
       status: "unavailable",
     });
+    await routing.delete("/.game-kit-routing/client/page");
+    restart.controlled.add("page");
+    expect(await restart.requestGroups(buildId, ["third"], "page", "v2")).toEqual({
+      reason: "wrong-build",
+      status: "unavailable",
+    });
+    expect(server.fetched).not.toContain("/third");
   });
 
   it("retains successful files for retry without committing partial groups", async () => {
@@ -1404,7 +1429,7 @@ describe("grouped precache dispatcher", () => {
     const worker = startWorker(server, {}, manifest, undefined, [{ id: "page" }]);
     await worker.install();
     server.failures.set("/third", "always");
-    vi.useFakeTimers();
+    virtualNetworkClock();
     const failed = worker.requestGroups(buildId, ["pair"]);
     await withTimersRun(failed);
     expect(await failed).toEqual({ reason: "failed", status: "unavailable" });
