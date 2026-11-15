@@ -1,10 +1,10 @@
-import { isBuildId } from "../buildIdentity.ts";
 import {
   ASSET_GROUPS_MESSAGE,
   type AssetGroupsRequest,
   type AssetGroupsResult,
   isAssetGroupsReply,
 } from "../assetGroups.ts";
+import { isBuildId } from "../buildIdentity.ts";
 import type { DownloadProgress } from "../downloadProgress.ts";
 
 interface GroupWorker {

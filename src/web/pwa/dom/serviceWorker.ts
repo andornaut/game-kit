@@ -2,12 +2,12 @@
 // policy and the precache manifest the build writes in (vite/precachePlugin), and the plugin
 // builds the entry to one classic script. The worker runs in a ServiceWorkerGlobalScope, which the
 // DOM typings do not describe, so the few members it uses are declared here.
-import { isBuildId } from "../buildIdentity.ts";
 import {
   ASSET_GROUPS_MESSAGE,
   type AssetGroupsRequest,
   type AssetGroupsResult,
 } from "../assetGroups.ts";
+import { isBuildId } from "../buildIdentity.ts";
 import {
   cachedUrlsOf,
   cacheKeyFor,
