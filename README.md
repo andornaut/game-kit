@@ -57,6 +57,12 @@ Every legacy API path remains available unchanged as a deprecated compatibility 
 
 The precache plugin builds the worker through Vite's isolated worker pipeline as one self-contained classic script. Shared page modules cannot split the worker into ESM chunks. Builds reject worker imports or additional emitted files; games retain their existing classic registration and runtime policies.
 
+## Retry keyboard containment in 0.49.1
+
+The loading-failure Retry button contains Enter and Space keydown, keypress and keyup propagation while preserving native button activation and accessibility. Matching repeats and release redirected to a neutral document target after disabling or blurring Retry remain contained while focus stays on Retry or neutral. New presses at neutral targets, other controls, focus transfer and window blur end that tracking. Disposal removes its listeners.
+
+This prevents activation keys from reaching window bubble handlers. Ancestor capture listeners still observe them, and redirected events can reach document or earlier ancestor bubble observers. It does not trap focus, suppress unrelated controls, prevent native defaults, synthesize clicks or change retry singleflight, layout, state or caller policy. No API change is required.
+
 ## Installation retry and failure state in 0.49.0
 
 `runtime/web/pwa/dom/offlinePlay` adds optional `onInstallationState(state)` and `OfflinePlay.retryInstallation(): Promise<InstallationState>`. Native worker lifecycle determines installation success or failure independently of visibility and progress messages. States carry a page-local `attempt`, optional `operationId` and `version`, and a `kind` of `idle`, `loading`, `ready` or `failed`. Unknown metadata remains undefined. Only `ready` establishes that the tracked worker installed; `idle` is not an availability result. Registration failure and a redundant installing worker report failure. A closed progress port does not establish either outcome.

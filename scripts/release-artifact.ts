@@ -332,10 +332,28 @@ const view = mountLoadingFailure({onRetry: () => {
   return flight = registry.retry();
 }}, window.document.body);
 const stop = registry.subscribe(state => view.update(state));
+const leakedKeys = [];
+const keyTypes = ['keydown', 'keypress', 'keyup'];
+const onKey = event => leakedKeys.push(event.key);
+for (const type of keyTypes) window.addEventListener(type, onKey);
 try {
   const button = view.element.querySelector('button');
   assert.ok(button);
+  button.focus();
+  const down = new window.KeyboardEvent('keydown', {key:'Enter',bubbles:true,cancelable:true});
+  button.dispatchEvent(down);
+  assert.equal(down.defaultPrevented, false);
+  assert.deepEqual(leakedKeys, []);
   button.click();
+  button.blur();
+  for (const type of ['keydown', 'keypress', 'keyup']) {
+    const event = new window.KeyboardEvent(type, {key:'Enter',repeat:true,bubbles:true,cancelable:true});
+    window.document.body.dispatchEvent(event);
+    assert.equal(event.defaultPrevented, false);
+  }
+  assert.deepEqual(leakedKeys, []);
+  window.document.body.dispatchEvent(new window.KeyboardEvent('keydown', {key:'ArrowDown',bubbles:true}));
+  assert.deepEqual(leakedKeys, ['ArrowDown']);
   assert.equal(registry.state.kind, 'failed');
   assert.equal(button.disabled, true);
   view.update(registry.state);
@@ -354,6 +372,7 @@ try {
   registry.dispose();
   finish();
   await flight;
+  for (const type of keyTypes) window.removeEventListener(type, onKey);
   window.close();
 }
 `,
