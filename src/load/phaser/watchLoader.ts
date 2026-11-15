@@ -30,7 +30,7 @@ export type RetryableType = "image" | "json" | "spritesheet" | "svg" | MultiFile
 // type's options: a JSON file's data key, an SVG's size or a sprite sheet's frames. For a
 // multi-file load, key is the load's key with its prefix, config the arguments its loader method
 // was called with, and url that of its first file that failed. rounds counts the retry rounds
-// already run for it.
+// already run for it; explicit retries do not increment rounds.
 export interface LoadFailure {
   readonly config: unknown;
   readonly key: string;
@@ -43,8 +43,13 @@ export interface LoaderWatch<Label extends string> {
   // Clears the scene's loader's listeners, restores its multi-file methods, cancels any retry
   // round and finishes a measured run.
   dispose(): void;
-  // The failed loads waiting for their next retry round, oldest first.
+  // The failed logical loads waiting for an automatic or explicit retry, oldest first.
   failures(): readonly LoadFailure[];
+  // Retry selected recorded logical loads, sharing the current retry flight. Settles on loader
+  // COMPLETE or disposal, including another failed attempt; inspect failures for the outcome.
+  // Predicate errors reject that call before queueing; queue errors reject the shared flight.
+  // Neither spends an automatic round.
+  retryFailures(select: (failure: LoadFailure) => boolean): Promise<void>;
   // Marks a load the player waits for, which reports to the progress state: the loader's run
   // under way, from its share so far, or else its next run, from 0. A run already measured keeps
   // its label; a later mark before a run starts replaces an earlier one.
@@ -131,14 +136,17 @@ const fileId = (type: string, key: string) => `${type}\u0000${key}`;
 //   art and the retry rounds, is silent.
 // - Each file that fails after the loader's own retries is logged once with console.warn and
 //   its load recorded, a multi-file load once however many of its files fail. When a run
-//   completes with recorded loads and no round is pending, a retry round is scheduled on timer
+//   completes with automatic recorded loads and no round is pending, a retry round is scheduled on timer
 //   RETRY_ROUNDS_MS after it, by the fewest rounds any recorded load has had. The round queues
-//   every recorded load again, a single file by its type's loader method and a multi-file load
+//   each still-automatic recorded load again, a single file by its type's loader method and a multi-file load
 //   whole by the call that queued it, and starts the loader if it is idle; a busy loader takes
 //   them into its run, and a run marked by waitFor is measured whoever starts it. A load that
 //   fails again is recorded again, until it has failed its last round and is logged as given up.
 //   A file of any other type, a linked file outside a multi-file load, or part of a multi-file
 //   load queued before the watch or by another method, is logged as not retried.
+// - retryMode can retain a logical failure for explicit retry instead. Classification is checked
+//   again before an automatic round fires. Manual retries leave automatic budgets/timers intact,
+//   queue only selected failures and share a flight through COMPLETE or disposal.
 // - While the watch lasts, each MULTI_FILE_METHODS method on the loader is wrapped to capture
 //   its arguments, base URL, path and prefix, one call per config when given an array of configs,
 //   so a round queues each multi-file load again exactly as it was first queued.
@@ -147,6 +155,9 @@ export function watchLoader<Label extends string = string>(
   context: {
     readonly console: Pick<Console, "warn">;
     readonly progress: { begin(): ProgressHandle };
+    // Classify a captured logical load, including original multi-file args and first failed URL.
+    // A throwing classifier is treated as manual. Automatic is the default.
+    readonly retryMode?: (failure: LoadFailure) => "automatic" | "manual";
     readonly timer: Timer;
   },
   scene: Pick<Scene, "events" | "load">,
@@ -157,6 +168,12 @@ export function watchLoader<Label extends string = string>(
   const recorded = new Map<string, Recorded>();
   // Single files a round queued again, by id, with the rounds run for them.
   const retrying = new Map<string, number>();
+  const queued = new Set<string>();
+  let disposed = false;
+  let retryFlight: Promise<void> | undefined;
+  let finishRetry: (() => void) | undefined;
+  let failRetry: ((error: unknown) => void) | undefined;
+  let queueDepth = 0;
   let multiLoads = new WeakMap<Loader.MultiFile, MultiEntry>();
   // The multi-file load whose loader method is running, which its files' ADD events join.
   let queuing: MultiLoad | undefined;
@@ -165,6 +182,15 @@ export function watchLoader<Label extends string = string>(
   let marked: Label | undefined;
   let round: unknown;
   let roundPending = false;
+
+  const automatic = (failure: LoadFailure) => {
+    try {
+      return context.retryMode === undefined || context.retryMode(failure) === "automatic";
+    } catch {
+      // A classification failure retains the load for explicit retry, never an automatic round.
+      return false;
+    }
+  };
 
   const share = () => (run === undefined ? 0 : run.share(run.done, run.total));
   const report = () => measured?.handle.progress(share());
@@ -193,7 +219,7 @@ export function watchLoader<Label extends string = string>(
     try {
       Reflect.apply(original, loader, load.args);
     } finally {
-      queuing = outer;
+      queuing = disposed ? undefined : outer;
     }
   };
   const wrapped = MULTI_FILE_METHODS.flatMap((method) => {
@@ -204,6 +230,9 @@ export function watchLoader<Label extends string = string>(
     originals.set(method, original as (...args: unknown[]) => unknown);
     const own = Object.getOwnPropertyDescriptor(loader, method);
     methods[method] = (...args: unknown[]) => {
+      if (disposed) {
+        return loader;
+      }
       const calls = Array.isArray(args[0]) ? args[0].map((config: unknown) => [config]) : [args];
       const { baseURL, path, prefix } = loader;
       for (const call of calls) {
@@ -214,34 +243,72 @@ export function watchLoader<Label extends string = string>(
     return [{ method, own }];
   });
 
-  const runRound = () => {
-    roundPending = false;
-    const loads = [...recorded.entries()];
-    recorded.clear();
+  const queueLoads = (loads: readonly (readonly [string, Recorded])[], increment: number) => {
     const { baseURL, path, prefix } = loader;
-    for (const [id, { failure, load }] of loads) {
-      if (load === undefined) {
-        // The recorded key and URL already carry the prefix and path they were queued with.
-        loader.path = "";
-        loader.prefix = "";
-        retrying.set(id, failure.rounds + 1);
-        queueAgain(loader, failure);
-      } else {
-        loader.baseURL = load.baseURL;
-        loader.path = load.path;
-        loader.prefix = load.prefix;
-        queueMulti({ ...load, rounds: load.rounds + 1 });
+    let count = 0;
+    queueDepth += 1;
+    try {
+      for (const [id, entry] of loads) {
+        if (disposed) {
+          break;
+        }
+        if (queued.has(id) || recorded.get(id) !== entry) {
+          continue;
+        }
+        const { failure, load } = entry;
+        recorded.delete(id);
+        queued.add(id);
+        try {
+          if (load === undefined) {
+            // Recorded single-file keys and URLs already carry their original prefix and path.
+            loader.path = "";
+            loader.prefix = "";
+            loader.baseURL = baseURL;
+            retrying.set(id, failure.rounds + increment);
+            queueAgain(loader, failure);
+          } else {
+            loader.baseURL = load.baseURL;
+            loader.path = load.path;
+            loader.prefix = load.prefix;
+            queueMulti({ ...load, rounds: load.rounds + increment });
+          }
+          count += 1;
+        } catch (error) {
+          if (!disposed) {
+            queued.delete(id);
+            retrying.delete(id);
+            recorded.set(id, entry);
+          }
+          throw error;
+        }
       }
+    } finally {
+      loader.baseURL = baseURL;
+      loader.path = path;
+      loader.prefix = prefix;
+      queueDepth -= 1;
     }
-    loader.baseURL = baseURL;
-    loader.path = path;
-    loader.prefix = prefix;
-    if (!loader.isLoading()) {
+    return count;
+  };
+  const automaticLoads = () =>
+    [...recorded.entries()].filter(
+      ([, { failure }]) => automatic(failure) && failure.rounds < RETRY_ROUNDS_MS.length,
+    );
+  const runRound = () => {
+    if (disposed) {
+      return;
+    }
+    roundPending = false;
+    const count = queueLoads(automaticLoads(), 1);
+    if (!disposed && count > 0 && !loader.isLoading()) {
       loader.start();
     }
   };
 
   const onAdd = (_key: string, _type: string, _loader: unknown, file: Loader.File) => {
+    if (disposed) {
+      return;
+    }
     applyTimeout(file);
     const multi = file.multiFile;
     if (multi && queuing !== undefined && !multiLoads.has(multi)) {
@@ -253,6 +320,9 @@ export function watchLoader<Label extends string = string>(
     }
   };
   const onStart = () => {
+    if (disposed) {
+      return;
+    }
     run = { done: 0, share: createFileShare(), total: loader.list.size };
     if (marked !== undefined) {
       const label = marked;
@@ -261,6 +331,9 @@ export function watchLoader<Label extends string = string>(
     }
   };
   const onLoad = (file: Loader.File) => {
+    if (disposed) {
+      return;
+    }
     retrying.delete(fileId(file.type, file.key));
     if (run !== undefined) {
       run.done += 1;
@@ -274,17 +347,18 @@ export function watchLoader<Label extends string = string>(
       return entry.verdict;
     }
     const { load } = entry;
-    if (load.rounds >= RETRY_ROUNDS_MS.length) {
+    const failure: LoadFailure = {
+      config: load.args,
+      key: multi.key,
+      rounds: load.rounds,
+      type: load.method,
+      url: String(file.url),
+    };
+    const auto = automatic(failure);
+    if (auto && load.rounds >= RETRY_ROUNDS_MS.length) {
       entry.verdict = ` in retry round ${load.rounds}; giving up`;
     } else {
-      entry.verdict = "; retrying later";
-      const failure = {
-        config: load.args,
-        key: multi.key,
-        rounds: load.rounds,
-        type: load.method,
-        url: String(file.url),
-      };
+      entry.verdict = auto ? "; retrying later" : "; waiting for manual retry";
       recorded.set(fileId(load.method, multi.key), { failure, load });
     }
     return entry.verdict;
@@ -297,14 +371,18 @@ export function watchLoader<Label extends string = string>(
     if (type === undefined) {
       return "; not retried";
     }
-    if (rounds >= RETRY_ROUNDS_MS.length) {
+    const failure = { config: file.config, key: file.key, rounds, type, url: String(file.url) };
+    const auto = automatic(failure);
+    if (auto && rounds >= RETRY_ROUNDS_MS.length) {
       return ` in retry round ${rounds}; giving up`;
     }
-    const failure = { config: file.config, key: file.key, rounds, type, url: String(file.url) };
     recorded.set(id, { failure });
-    return "; retrying later";
+    return auto ? "; retrying later" : "; waiting for manual retry";
   };
   const onError = (file: Loader.File) => {
+    if (disposed) {
+      return;
+    }
     if (run !== undefined) {
       run.done += 1;
       report();
@@ -322,16 +400,32 @@ export function watchLoader<Label extends string = string>(
     console.warn(`Loading ${String(file.url)} failed after ${attempts} attempt${plural}${verdict}`);
   };
   const onComplete = () => {
-    run = undefined;
-    if (measured !== undefined) {
-      measured.handle.progress(1);
-      measured.handle.finish();
-      measured = undefined;
+    if (disposed) {
+      return;
     }
-    if (recorded.size > 0 && !roundPending) {
-      const fewest = Math.min(...[...recorded.values()].map(({ failure }) => failure.rounds));
-      roundPending = true;
-      round = timer.setTimeout(runRound, RETRY_ROUNDS_MS[fewest] ?? 0);
+    run = undefined;
+    queued.clear();
+    const finish = finishRetry;
+    retryFlight = undefined;
+    finishRetry = undefined;
+    failRetry = undefined;
+    try {
+      const ending = measured;
+      if (ending !== undefined) {
+        ending.handle.progress(1);
+        ending.handle.finish();
+        if (measured === ending) {
+          measured = undefined;
+        }
+      }
+      const loads = disposed ? [] : automaticLoads();
+      if (!disposed && loads.length > 0 && !roundPending) {
+        const fewest = Math.min(...loads.map(([, { failure }]) => failure.rounds));
+        roundPending = true;
+        round = timer.setTimeout(runRound, RETRY_ROUNDS_MS[fewest] ?? 0);
+      }
+    } finally {
+      finish?.();
     }
   };
 
@@ -352,6 +446,10 @@ export function watchLoader<Label extends string = string>(
   }
 
   const dispose = () => {
+    if (disposed) {
+      return;
+    }
+    disposed = true;
     for (const [event, listener] of listeners) {
       loader.off(event, listener);
     }
@@ -370,7 +468,7 @@ export function watchLoader<Label extends string = string>(
       timer.clearTimeout(round);
       roundPending = false;
     }
-    measured?.handle.finish();
+    const ending = measured;
     measured = undefined;
     marked = undefined;
     run = undefined;
@@ -378,6 +476,12 @@ export function watchLoader<Label extends string = string>(
     multiLoads = new WeakMap();
     recorded.clear();
     retrying.clear();
+    queued.clear();
+    finishRetry?.();
+    retryFlight = undefined;
+    finishRetry = undefined;
+    failRetry = undefined;
+    ending?.handle.finish();
   };
   scene.events.once(Scenes.Events.SHUTDOWN, dispose);
   scene.events.once(Scenes.Events.DESTROY, dispose);
@@ -385,8 +489,48 @@ export function watchLoader<Label extends string = string>(
   return {
     dispose,
     failures: () => [...recorded.values()].map(({ failure }) => failure),
+    retryFailures(select) {
+      if (disposed) {
+        return Promise.resolve();
+      }
+      let selected: [string, Recorded][];
+      try {
+        // Finish every predicate evaluation before deleting records or queueing any load.
+        selected = [...recorded.entries()].filter(([, { failure }]) => select(failure));
+      } catch (error) {
+        return Promise.reject(error);
+      }
+      if (disposed) {
+        return Promise.resolve();
+      }
+      if (retryFlight === undefined && selected.length === 0) {
+        return Promise.resolve();
+      }
+      if (retryFlight === undefined) {
+        retryFlight = new Promise<void>((resolve, reject) => {
+          finishRetry = resolve;
+          failRetry = reject;
+        });
+      }
+      const pending = retryFlight;
+      try {
+        const count = queueLoads(selected, 0);
+        if (!disposed && count > 0 && queueDepth === 0 && !loader.isLoading()) {
+          loader.start();
+        }
+      } catch (error) {
+        if (retryFlight === pending) {
+          const fail = failRetry;
+          retryFlight = undefined;
+          finishRetry = undefined;
+          failRetry = undefined;
+          fail?.(error);
+        }
+      }
+      return pending;
+    },
     waitFor(label) {
-      if (measured !== undefined) {
+      if (disposed || measured !== undefined) {
         return;
       }
       if (run === undefined) {

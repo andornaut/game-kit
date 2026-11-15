@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Timer } from "../../clock/timer.ts";
 import { createProgressState, type ProgressSnapshot } from "../../progressState.ts";
 import { LOADER_CONFIG, RETRY_ROUNDS_MS } from "../loaderConfig.ts";
-import { watchLoader } from "./watchLoader.ts";
+import { type LoadFailure, watchLoader } from "./watchLoader.ts";
 
 vi.mock("phaser", async () => {
   const nodeModule = await import("node:module");
@@ -200,7 +200,7 @@ function fakeTimer() {
   };
 }
 
-function setup() {
+function setup(retryMode?: (failure: LoadFailure) => "automatic" | "manual") {
   const loader = new FakeLoader();
   const events = new EventEmitter();
   const scene = { events, load: loader } as unknown as Pick<Scene, "events" | "load">;
@@ -211,7 +211,12 @@ function setup() {
   progress.subscribe((snapshot) => seen.push(snapshot));
   const begin = vi.spyOn(progress, "begin");
   const watch = watchLoader<"boot" | "level">(
-    { console: { warn }, progress, timer: clock.timer },
+    {
+      console: { warn },
+      progress,
+      ...(retryMode === undefined ? {} : { retryMode }),
+      timer: clock.timer,
+    },
     scene,
   );
   const values = () => seen.filter(({ active }) => active).map(({ value }) => value);
@@ -226,6 +231,247 @@ describe("LOADER_CONFIG", () => {
 });
 
 describe("watchLoader", () => {
+  it("keeps required failures manual while optional retries retain their independent round budget", async () => {
+    const { clock, loader, watch } = setup((failure) =>
+      failure.key === "required" ? "manual" : "automatic",
+    );
+    loader.add("json", "required", "required.json");
+    loader.add("json", "optional", "optional.json");
+    loader.add("image", "success", "success.png");
+    loader.start();
+    loader.finish(["required", "optional"]);
+    for (const [index, delay] of RETRY_ROUNDS_MS.entries()) {
+      expect(clock.pending()).toEqual([delay]);
+      const retry = watch.retryFailures((failure) => failure.key === "required");
+      expect(loader.keys()).toEqual(["required"]);
+      loader.finish(["required"]);
+      // Each explicit retry settles before exercising the still-pending automatic round.
+      // eslint-disable-next-line no-await-in-loop
+      await retry;
+      expect(clock.pending()).toEqual([delay]);
+      clock.fire();
+      expect(loader.keys()).toEqual(["optional"]);
+      loader.finish(["optional"]);
+      expect(watch.failures().find(({ key }) => key === "required")?.rounds).toBe(0);
+      expect(watch.failures().find(({ key }) => key === "optional")?.rounds).toBe(
+        index + 1 < RETRY_ROUNDS_MS.length ? index + 1 : undefined,
+      );
+    }
+    const retry = watch.retryFailures(() => true);
+    loader.finish(["required"]);
+    await retry;
+    expect(watch.failures().map(({ key, rounds }) => [key, rounds])).toEqual([["required", 0]]);
+    expect(clock.pending()).toEqual([]);
+    const success = watch.retryFailures(() => true);
+    loader.finish();
+    await success;
+    expect(watch.failures()).toEqual([]);
+    expect(loader.keys()).not.toContain("success");
+  });
+
+  it("selects atomically, coalesces ADD reentry and unions requests through COMPLETE", async () => {
+    const { loader, watch } = setup(() => "manual");
+    loader.add("json", "a", "a.json");
+    loader.add("json", "b", "b.json");
+    loader.start();
+    loader.finish(["a", "b"]);
+    const failures = watch.failures();
+    await expect(
+      watch.retryFailures((failure) => {
+        if (failure.key === "b") {
+          throw new Error("predicate");
+        }
+        return true;
+      }),
+    ).rejects.toThrow("predicate");
+    expect(loader.keys()).toEqual([]);
+    expect(watch.failures()).toEqual(failures);
+    let settled = false;
+    let reentered: Promise<void> | undefined;
+    loader.once(Loader.Events.ADD, () => {
+      reentered = watch.retryFailures(() => true);
+    });
+    const first = watch.retryFailures(({ key }) => key === "a");
+    expect(reentered).toBe(first);
+    void first.then(() => {
+      settled = true;
+    });
+    const second = watch.retryFailures(() => true);
+    expect(second).toBe(first);
+    expect(watch.retryFailures(() => true)).toBe(first);
+    expect(loader.keys()).toEqual(["a", "b"]);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    const a = [...loader.list].find(({ key }) => key === "a")!;
+    loader.settle(a, false);
+    // A failed logical load may not be queued twice in the same retry flight.
+    expect(watch.retryFailures(() => true)).toBe(first);
+    expect(loader.keys()).toEqual(["b"]);
+    loader.finish();
+    await first;
+    expect(settled).toBe(true);
+    expect(watch.failures().map(({ key, rounds }) => [key, rounds])).toEqual([["a", 0]]);
+  });
+
+  it("classifies and explicitly retries whole real MultiFile loads using captured args and context", async () => {
+    const seen: LoadFailure[] = [];
+    const { clock, loader, watch } = setup((failure) => {
+      seen.push(failure);
+      return "manual";
+    });
+    loader.baseURL = "https://assets.invalid/";
+    loader.path = "art/";
+    loader.prefix = "ui.";
+    loader.bitmapFont("pixel", "pixel.png", "pixel.xml");
+    loader.start();
+    loader.finish(["ui.pixel"]);
+    expect(
+      seen.every(
+        ({ config, key, type, url }) =>
+          type === "bitmapFont" &&
+          key === "ui.pixel" &&
+          JSON.stringify(config) === JSON.stringify(["pixel", "pixel.png", "pixel.xml"]) &&
+          url === "art/pixel.png",
+      ),
+    ).toBe(true);
+    expect(watch.failures()).toHaveLength(1);
+    expect(clock.pending()).toEqual([]);
+    loader.baseURL = "https://other.invalid/";
+    loader.path = "other/";
+    loader.prefix = "other.";
+    const original = loader.bitmapFont;
+    const retry = watch.retryFailures(() => true);
+    expect(loader.queued()).toEqual([
+      ["image", "ui.pixel", "art/pixel.png"],
+      ["xml", "ui.pixel", "art/pixel.xml"],
+    ]);
+    expect(new Set([...loader.list].map(({ multiFile }) => multiFile)).size).toBe(1);
+    expect([...loader.list][0]?.multiFile).toMatchObject({
+      baseURL: "https://assets.invalid/",
+      path: "art/",
+      prefix: "ui.",
+    });
+    expect([loader.baseURL, loader.path, loader.prefix]).toEqual([
+      "https://other.invalid/",
+      "other/",
+      "other.",
+    ]);
+    expect(loader.bitmapFont).toBe(original);
+    loader.finish(["art/pixel.xml"]);
+    await retry;
+    expect(watch.failures()[0]).toMatchObject({
+      config: ["pixel", "pixel.png", "pixel.xml"],
+      key: "ui.pixel",
+      rounds: 0,
+      type: "bitmapFont",
+      url: "art/pixel.xml",
+    });
+  });
+
+  it("fails classifier exceptions closed and rechecks dynamic classification at automatic fire", async () => {
+    let mode: "automatic" | "manual" | "throw" = "throw";
+    const { clock, loader, watch } = setup(() => {
+      if (mode === "throw") {
+        throw new Error("classification");
+      }
+      return mode;
+    });
+    loader.add("json", "a", "a.json");
+    loader.start();
+    loader.finish(["a"]);
+    expect(watch.failures()).toHaveLength(1);
+    expect(clock.pending()).toEqual([]);
+    mode = "automatic";
+    const retry = watch.retryFailures(() => true);
+    loader.finish(["a"]);
+    await retry;
+    expect(clock.pending()).toEqual([RETRY_ROUNDS_MS[0]]);
+    mode = "manual";
+    const starts = loader.starts;
+    clock.fire();
+    expect(loader.starts).toBe(starts);
+    expect(loader.keys()).toEqual([]);
+    expect(watch.failures()[0]?.rounds).toBe(0);
+  });
+
+  it("settles retry on disposal and ignores stale timers and all later retry calls", async () => {
+    const { clock, loader, watch } = setup(({ key }) =>
+      key === "required" ? "manual" : "automatic",
+    );
+    let stale: (() => void) | undefined;
+    const set = clock.timer.setTimeout;
+    vi.spyOn(clock.timer, "setTimeout").mockImplementation((handler, ms) => {
+      stale = handler;
+      return set(handler, ms);
+    });
+    loader.add("json", "required", "required.json");
+    loader.add("json", "optional", "optional.json");
+    loader.start();
+    loader.finish(["required", "optional"]);
+    const retry = watch.retryFailures(({ key }) => key === "required");
+    watch.dispose();
+    await retry;
+    const starts = loader.starts,
+      keys = loader.keys();
+    stale?.();
+    const select = vi.fn(() => true);
+    await watch.retryFailures(select);
+    watch.waitFor("boot");
+    watch.dispose();
+    expect(select).not.toHaveBeenCalled();
+    expect(loader.starts).toBe(starts);
+    expect(loader.keys()).toEqual(keys);
+    expect(watch.failures()).toEqual([]);
+    expect(watch.waited()).toBeUndefined();
+    expect(clock.pending()).toEqual([]);
+  });
+
+  it("retains a failure classified manual on the last automatic round for further explicit retries", async () => {
+    let manual = false;
+    const { clock, loader, watch } = setup(() => (manual ? "manual" : "automatic"));
+    loader.bitmapFont("pixel", "pixel.png", "pixel.xml");
+    loader.start();
+    loader.finish(["pixel"]);
+    for (let index = 0; index < RETRY_ROUNDS_MS.length; index++) {
+      clock.fire();
+      manual = index === RETRY_ROUNDS_MS.length - 1;
+      loader.finish(["pixel"]);
+    }
+    expect(watch.failures()[0]?.rounds).toBe(RETRY_ROUNDS_MS.length);
+    expect(clock.pending()).toEqual([]);
+    const retry = watch.retryFailures(() => true);
+    loader.finish(["pixel"]);
+    await retry;
+    expect(watch.failures()[0]?.rounds).toBe(RETRY_ROUNDS_MS.length);
+    expect(clock.pending()).toEqual([]);
+  });
+
+  it("restores loader context and retains a failure when its queue method throws", async () => {
+    const { loader, watch } = setup(() => "manual");
+    loader.add("json", "a", "a.json");
+    loader.start();
+    loader.finish(["a"]);
+    loader.baseURL = "https://assets.invalid/";
+    loader.path = "later/";
+    loader.prefix = "later.";
+    const failure = watch.failures()[0];
+    const queue = vi.spyOn(loader, "json").mockImplementation(() => {
+      throw new Error("queue");
+    });
+    await expect(watch.retryFailures(() => true)).rejects.toThrow("queue");
+    expect([loader.baseURL, loader.path, loader.prefix]).toEqual([
+      "https://assets.invalid/",
+      "later/",
+      "later.",
+    ]);
+    expect(watch.failures()).toEqual([failure]);
+    queue.mockRestore();
+    const retry = watch.retryFailures(() => true);
+    loader.finish();
+    await retry;
+    expect(watch.failures()).toEqual([]);
+  });
+
   it("gives every queued file the loader's timeout and keeps a file's own", () => {
     const loader = new FakeLoader();
     const before = loader.add("json", "early", "early.json");
