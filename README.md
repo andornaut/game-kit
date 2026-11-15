@@ -28,6 +28,14 @@ The kit's own tests define each module's contract. A release is also proven agai
 
 `testing/phaser/sceneStub` covers the scene members both games' tests use as of 0.19.0 and is otherwise frozen: a test that needs more extends the stub through its overrides.
 
+## Migration to 0.45.0
+
+`watchLoader` accepts optional `retryMode(failure)` returning `"automatic"` or `"manual"`. The default preserves automatic retry rounds. The classifier receives a logical `LoadFailure`: the loader method, resolved key, captured configuration and first failed URL, with an entire captured multi-file load classified together. The caller identifies required UI or other active-view dependencies; the kit contains no required asset list. Automatic scheduling and dispatch exclude manual failures while retaining their records and original multi-file arguments. Optional failures retain their existing timers and round counts.
+
+`watch.retryFailures(select)` explicitly requeues only currently recorded selected failures. Successful loads remain intact. Calls share an active flight and add newly selected logical loads without duplicating those already queued. Manual retries do not consume automatic retry rounds. The promise settles when the loader run completes or the watch is disposed; settlement is not a success result. Recheck the caller's required-resource status before continuing. Use the existing `waitFor(label)` and progress handle for the same loading bar. Keep one watch for its scene lifecycle rather than disposing it to suppress a subset of retries.
+
+`createLoadingAttempts` reruns the supplied callback; it does not clear native ES module maps or reload the document. A browser may retain a failed module record, and module evaluation failures are not repaired by importing that record again. Keep fallible application startup in an explicit attempt-owned function, with cleanup registered before acquiring mutable resources. Same-page recovery requires a genuinely repeatable provider operation. A fresh-document restart is a separate caller-owned lifecycle decision, including launch, activation and save guards.
+
 ## Migration to 0.44.0
 
 The optional `PrecacheManifest.groups` partition keeps the full URL inventory, hashes and byte sizes while deferring caller-selected optional groups. Every unassigned URL remains mandatory. The producer validates the final normalized emitted inventory, including all audio alternatives, before computing the fingerprint. Group IDs, initial groups and shared dependencies belong to the game. Grouped releases require one immutable full source build ID shared by the app and worker; the visible short label is independent.
