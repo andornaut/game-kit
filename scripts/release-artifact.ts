@@ -63,6 +63,10 @@ assert.deepEqual(Object.keys(manifest.peerDependencies), [
 assert.deepEqual(manifest.exports["./web/build/vite/buildInfo"], {
   types: "./dist/web/build/vite/buildInfo.d.ts",
 });
+assert.deepEqual(
+  manifest.exports["./build/buildInfo"],
+  manifest.exports["./web/build/vite/buildInfo"],
+);
 assert.equal(manifest.exports["./web/crash/dom/crash.css"], "./dist/web/crash/dom/crash.css");
 for (const path of files) {
   assert.ok(!path.endsWith(".ts") || path.endsWith(".d.ts"), path);
@@ -76,30 +80,54 @@ writeFileSync(
 import assert from 'node:assert/strict';
 import {
   CelebrationQueue, earnedFormat, earnedStore, judge, newlyEarned, orderByTier,
-} from '@andornaut/game-kit/achievements';
-import { NOTHING_PREVIEWED, previewAchievements } from '@andornaut/game-kit/achievements/preview';
-import { clamp } from '@andornaut/game-kit/numbers';
-import { createProgressState } from '@andornaut/game-kit/progressState';
-import { memoryStorage } from '@andornaut/game-kit/save/storage';
-import * as storageModule from '@andornaut/game-kit/save/storage';
+} from '@andornaut/game-kit/runtime/achievements';
+import { NOTHING_PREVIEWED, previewAchievements } from '@andornaut/game-kit/runtime/achievements/preview';
+import { clamp } from '@andornaut/game-kit/runtime/numbers';
+import { createProgressState } from '@andornaut/game-kit/runtime/progressState';
+import { memoryStorage } from '@andornaut/game-kit/runtime/save/storage';
+import * as storageModule from '@andornaut/game-kit/runtime/save/storage';
 assert.deepEqual(Object.keys(storageModule), ['memoryStorage']);
-import { findTraversal } from '@andornaut/game-kit/terrain/traversal';
-import { beginCrumblingStep, endCrumblingStep } from '@andornaut/game-kit/terrain/crumbling';
-import { renderPolicy } from '@andornaut/game-kit/web/headers/securityHeaders';
-import { frameTurnFor } from '@andornaut/game-kit/web/view/frameTurn';
-import { buildLabel } from '@andornaut/game-kit/web/build/buildLabel';
-import { shortCommit, UNKNOWN_COMMIT } from '@andornaut/game-kit/web/build/buildVersion';
-import { replacePhaserFlags } from '@andornaut/game-kit/web/build/phaserBuild';
-import { crashGate } from '@andornaut/game-kit/web/crash/crashModel';
+import { findTraversal } from '@andornaut/game-kit/runtime/terrain/traversal';
+import { beginCrumblingStep, endCrumblingStep } from '@andornaut/game-kit/runtime/terrain/crumbling';
+import { renderPolicy } from '@andornaut/game-kit/build/securityHeaders';
+import { frameTurnFor } from '@andornaut/game-kit/runtime/web/view/frameTurn';
+import { buildLabel } from '@andornaut/game-kit/runtime/web/buildLabel';
+import { shortCommit, UNKNOWN_COMMIT } from '@andornaut/game-kit/build/buildVersion';
+import { replacePhaserFlags } from '@andornaut/game-kit/build/phaserBuild';
+import { crashGate } from '@andornaut/game-kit/runtime/web/crash/crashModel';
+import { isBuildId } from '@andornaut/game-kit/runtime/web/pwa/buildIdentity';
+import * as imageTypes from '@andornaut/game-kit/runtime/art/rgbaImage';
+assert.deepEqual(Object.keys(imageTypes), []);
+assert.equal(isBuildId('a'.repeat(40)), true);
+assert.equal(isBuildId('a'.repeat(40) + String.fromCharCode(10)), false);
+for (const [canonical, legacy] of [
+  ['runtime/numbers', 'numbers'],
+  ['runtime/save/storage', 'save/storage'],
+  ['runtime/web/buildLabel', 'web/build/buildLabel'],
+  ['build/buildVersion', 'web/build/buildVersion'],
+  ['build/phaserBuild', 'web/build/phaserBuild'],
+  ['build/securityHeaders', 'web/headers/securityHeaders'],
+  ['build/precacheList', 'web/pwa/precacheList'],
+  ['build/rgbaImage', 'art/rgbaImage'],
+  ['test/storageFixture', 'testing/storageFixture'],
+  ['test/dom/failingLocalStorage', 'testing/dom/failingLocalStorage'],
+  ['test/phaser/sceneStub', 'testing/phaser/sceneStub'],
+]) {
+  assert.strictEqual(await import('@andornaut/game-kit/' + canonical),
+    await import('@andornaut/game-kit/' + legacy), canonical);
+}
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 assert.equal(buildLabel('1.0.0', UNKNOWN_COMMIT), 'v1.0.0 · dev');
 assert.equal(shortCommit(() => '', {}), UNKNOWN_COMMIT);
 assert.equal(replacePhaserFlags({ CANVAS_RENDERER: false }, 'typeof CANVAS_RENDERER'), 'false');
 assert.equal(crashGate()({ message: 'boom', source: '', stack: undefined }), true);
-const css = import.meta.resolve('@andornaut/game-kit/web/crash/dom/crash.css');
+const css = import.meta.resolve('@andornaut/game-kit/runtime/web/crash/dom/crash.css');
 assert.ok(css.endsWith('/dist/web/crash/dom/crash.css'), css);
 assert.ok(readFileSync(fileURLToPath(css), 'utf8').includes('.crash {'));
+assert.throws(() => import.meta.resolve('@andornaut/game-kit/build/buildInfo'), {
+  code: 'ERR_PACKAGE_PATH_NOT_EXPORTED'
+});
 assert.throws(() => import.meta.resolve('@andornaut/game-kit/web/build/vite/buildInfo'), {
   code: 'ERR_PACKAGE_PATH_NOT_EXPORTED'
 });
@@ -107,7 +135,7 @@ assert.equal(clamp(0,1,2), 1);
 assert.equal(renderPolicy({'default-src': ["'self'"]}), "default-src 'self'");
 assert.equal(frameTurnFor('landscape', true, 'portrait-secondary'), -90);
 for (const sheet of ['frameTurnLandscapeGame.css', 'frameTurnPortraitGame.css']) {
-  assert.ok(import.meta.resolve('@andornaut/game-kit/web/view/' + sheet).endsWith('/dist/web/view/' + sheet));
+  assert.ok(import.meta.resolve('@andornaut/game-kit/runtime/web/view/' + sheet).endsWith('/dist/web/view/' + sheet));
 }
 assert.equal(typeof findTraversal, 'function');
 assert.equal(typeof beginCrumblingStep, 'function');
@@ -138,22 +166,30 @@ for (const path of ['src/numbers.ts', 'dist/numbers.js', 'SOURCE_COMMIT']) {
 execFileSync(process.execPath, ["bootstrap.mjs"], { cwd: consumer, stdio: "inherit" });
 writeFileSync(
   join(consumer, "types.mts"),
-  `/// <reference types="@andornaut/game-kit/web/build/vite/buildInfo" />
-import { buildLabel } from '@andornaut/game-kit/web/build/buildLabel';
-import type { PhaserBuild } from '@andornaut/game-kit/web/build/phaserBuild';
-import { crashView, type CrashView } from '@andornaut/game-kit/web/crash/crashModel';
+  `/// <reference types="@andornaut/game-kit/build/buildInfo" />
+import { buildLabel } from '@andornaut/game-kit/runtime/web/buildLabel';
+import type { PhaserBuild } from '@andornaut/game-kit/build/phaserBuild';
+import type { RgbaImage } from '@andornaut/game-kit/runtime/art/rgbaImage';
+import type { PrecacheManifest } from '@andornaut/game-kit/runtime/web/pwa/precacheManifest';
+import type { PrecacheManifest as LegacyManifest } from '@andornaut/game-kit/web/pwa/precacheList';
+import { storageFixture } from '@andornaut/game-kit/test/storageFixture';
+export const image: RgbaImage = { data: new Uint8Array(4), height: 1, width: 1 };
+export const manifest: PrecacheManifest = { contentHashes: {}, sounds: {}, urls: [], version: 'proof' };
+export const legacyManifest: LegacyManifest = manifest;
+export const fixture = storageFixture();
+import { crashView, type CrashView } from '@andornaut/game-kit/runtime/web/crash/crashModel';
 export const label: string = buildLabel(__APP_VERSION__, __COMMIT__);
 export const phaser: PhaserBuild = { flags: { CANVAS_RENDERER: false }, omitted: [] };
 export const view: CrashView = crashView(
   { body: 'b', reload: 'r', title: 't' }, false, { message: 'm', source: '', stack: undefined },
 );
-import { memoryStorage, type SaveStorage } from '@andornaut/game-kit/save/storage';
+import { memoryStorage, type SaveStorage } from '@andornaut/game-kit/runtime/save/storage';
 import {
   judge, type AchievementDef, type ConditionKinds, type EarnedStore, earnedStore, earnedFormat,
-} from '@andornaut/game-kit/achievements';
+} from '@andornaut/game-kit/runtime/achievements';
 import {
   previewAchievements, NOTHING_PREVIEWED, type AchievementPreview,
-} from '@andornaut/game-kit/achievements/preview';
+} from '@andornaut/game-kit/runtime/achievements/preview';
 type Badge = AchievementDef<'a', { readonly kind: 'flag' }, 'low'>;
 export const badge: Badge = { conditions: [{ kind: 'flag' }], id: 'a', tier: 'low' };
 const badgeKinds: ConditionKinds<{ readonly kind: 'flag' }, 'end', boolean> = {
@@ -168,8 +204,10 @@ import {
   stepTraversal, findTraversal, type TraversalContext,
   type WorldTraversalContext, type WorldTraversalState,
   type WorldTraversalStepResult, type WorldTraversalResult,
-} from '@andornaut/game-kit/terrain/traversal';
-import { beginCrumblingStep, endCrumblingStep, type CrumblingWorld } from '@andornaut/game-kit/terrain/crumbling';
+} from '@andornaut/game-kit/runtime/terrain/traversal';
+import {
+  beginCrumblingStep, endCrumblingStep, type CrumblingWorld,
+} from '@andornaut/game-kit/runtime/terrain/crumbling';
 type World = CrumblingWorld<string, string>;
 declare const context: WorldTraversalContext<string, World>;
 declare const state: WorldTraversalState<string, World>;
@@ -208,9 +246,16 @@ writeFileSync(
   join(consumer, "vite.config.ts"),
   `
 import { defineConfig } from 'vite';
-import { clamp } from '@andornaut/game-kit/numbers';
-import { securityHeadersPlugin } from '@andornaut/game-kit/web/headers/vite/securityHeadersPlugin';
-import { phaserBuildPlugin } from '@andornaut/game-kit/web/build/vite/phaserBuildPlugin';
+import { clamp } from '@andornaut/game-kit/runtime/numbers';
+import { securityHeadersPlugin } from '@andornaut/game-kit/build/securityHeadersPlugin';
+import { phaserBuildPlugin } from '@andornaut/game-kit/build/phaserBuildPlugin';
+import { phaserBuildPlugin as legacyPhaserPlugin } from '@andornaut/game-kit/web/build/vite/phaserBuildPlugin';
+import {
+  securityHeadersPlugin as legacyHeadersPlugin,
+} from '@andornaut/game-kit/web/headers/vite/securityHeadersPlugin';
+if (phaserBuildPlugin !== legacyPhaserPlugin || securityHeadersPlugin !== legacyHeadersPlugin) {
+  throw new Error('Canonical build aliases changed module identity');
+}
 export default defineConfig({
   define: { __KIT_CHECK__: JSON.stringify(clamp(0,1,2)) },
   plugins: [phaserBuildPlugin({ flags: {}, omitted: [] }), securityHeadersPlugin({

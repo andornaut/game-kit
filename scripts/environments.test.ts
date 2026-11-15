@@ -1,10 +1,11 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import ts from "typescript";
 import { expect, it } from "vitest";
 
+import { namespaceBoundaryErrors } from "./namespace-boundary.ts";
 import { ENVIRONMENTS } from "./typecheck.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -93,4 +94,21 @@ it("assigns every public TypeScript source module to exactly one explicit enviro
       expect(declared, target).toContain(target.replace(/^\.\//, ""));
     }
   }
+});
+
+it("keeps runtime and build transitive source graphs within their namespace boundaries", () => {
+  const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+  expect(Object.keys(manifest.exports)).not.toContain(".");
+  for (const name of Object.keys(manifest.exports)) {
+    expect(name).not.toContain("*");
+  }
+  expect(
+    namespaceBoundaryErrors({
+      exports: manifest.exports,
+      readSource: (path) => {
+        const file = resolve(root, path);
+        return existsSync(file) ? readFileSync(file, "utf8") : undefined;
+      },
+    }),
+  ).toEqual([]);
 });
