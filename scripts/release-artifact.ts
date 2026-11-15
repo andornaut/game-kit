@@ -182,7 +182,9 @@ export const manifest: PrecacheManifest = { contentHashes: {}, sounds: {}, urls:
 export const legacyManifest: LegacyManifest = manifest;
 export const fixture = storageFixture();
 import type { LayoutColumnSizing, LayoutColumnTrack, LayoutNode } from '@andornaut/game-kit/runtime/ui/layoutTree';
-import { mountLoadingFailure, type LoadingFailureLayout } from '@andornaut/game-kit/runtime/web/progress/dom/loadingFailure';
+import {
+  mountLoadingFailure, type LoadingFailureLayout,
+} from '@andornaut/game-kit/runtime/web/progress/dom/loadingFailure';
 export const tracks: readonly LayoutColumnTrack[] = [{kind:'fraction'},{kind:'intrinsic'},{kind:'fixed',size:3}];
 export const columnSizing: LayoutColumnSizing = {mode:'tracks',tracks};
 export const columns: LayoutNode<{text:{props:{label:string};slots:never}}> = {
