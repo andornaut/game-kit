@@ -70,6 +70,13 @@ export function precachePlugin({
           const content = file.type === "chunk" ? file.code : file.source;
           return typeof content === "string" ? encoder.encode(content) : content;
         };
+        const requiredBundleBytes = (url: string): Uint8Array => {
+          const bytes = bundleBytes(url);
+          if (bytes === undefined) {
+            return this.error(`precache: ${url} is not in the build output`);
+          }
+          return bytes;
+        };
         // A linked public file or manifest icon the build cannot read would leave the offline page
         // incomplete, so it fails the build: a missing file as absent from the public directory,
         // any other read error with its own code and message.
@@ -100,7 +107,7 @@ export function precachePlugin({
         ).map((fileName) => `/${fileName}`);
         const contents = new Map<string, Uint8Array>([[cacheKeyFor(`/${pageHtmlFile}`), pageHtml]]);
         for (const url of bundleUrls) {
-          contents.set(url, bundleBytes(url) ?? new Uint8Array());
+          contents.set(cacheKeyFor(url), requiredBundleBytes(url));
         }
 
         let hashed: HashedFiles = { sounds: {}, urls: [] };
@@ -115,7 +122,7 @@ export function precachePlugin({
           this.error(`precache: ${missing.join(", ")} are named but not in the build output`);
         }
         for (const url of hashed.urls) {
-          contents.set(url, bundleBytes(url) ?? new Uint8Array());
+          contents.set(cacheKeyFor(url), requiredBundleBytes(url));
         }
 
         // The public files the page links, and the icons each web app manifest names, read from
@@ -126,13 +133,13 @@ export function precachePlugin({
           (url) => !(url.slice(1) in bundle) || url.endsWith(".webmanifest"),
         );
         for (const url of linkedUrls) {
-          if (contents.has(url) && !url.endsWith(".webmanifest")) {
+          if (contents.has(cacheKeyFor(url)) && !url.endsWith(".webmanifest")) {
             continue;
           }
           // Each file's references are only known once it is read, so reads run one at a time.
           // eslint-disable-next-line no-await-in-loop
           const bytes = bundleBytes(url) ?? (await readPublicFile(url));
-          contents.set(url, bytes);
+          contents.set(cacheKeyFor(url), bytes);
           if (url.endsWith(".webmanifest")) {
             const icons = webManifestIconUrls(JSON.parse(decoder.decode(bytes)));
             linkedUrls.push(...icons.filter((icon) => !linkedUrls.includes(icon)));
@@ -144,8 +151,9 @@ export function precachePlugin({
         // one only where its content is unchanged. A hashed file's name stands for its content.
         const listed = new Map([
           ...contents,
-          ...soundUrls.map((url) => [url, bundleBytes(url) ?? new Uint8Array()] as const),
+          ...soundUrls.map((url) => [cacheKeyFor(url), requiredBundleBytes(url)] as const),
         ]);
+        const byteSizes = new Map([...listed].map(([url, bytes]) => [url, bytes.byteLength]));
         const contentHashes = new Map(
           [...listed]
             .filter(([url]) => !isHashedAssetUrl(policy, url))
@@ -156,15 +164,22 @@ export function precachePlugin({
             precacheFingerprint(
               policy,
               new Map([...listed.keys()].map((url) => [url, contentHashes.get(url) ?? ""])),
+              byteSizes,
             ),
           ),
         );
         const manifest: PrecacheManifest = {
+          byteSizes: Object.fromEntries(
+            [...byteSizes.keys()].sort().map((url) => [url, byteSizes.get(url)!]),
+          ),
           contentHashes: Object.fromEntries(
             [...contentHashes.keys()].sort().map((url) => [url, contentHashes.get(url) ?? ""]),
           ),
           sounds: Object.fromEntries(
-            Object.entries(hashed.sounds).map(([format, urls]) => [format, [...urls]]),
+            Object.entries(hashed.sounds).map(([format, urls]) => [
+              format,
+              [...new Set(urls.map(cacheKeyFor))],
+            ]),
           ),
           urls: [...contents.keys()].sort(),
           version: fingerprint.slice(0, 16),

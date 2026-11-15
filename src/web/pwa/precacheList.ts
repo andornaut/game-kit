@@ -7,6 +7,9 @@ import { type CachePolicy, isHashedAssetUrl } from "./cachePolicy.ts";
 // hashed build output (cachePolicy's isHashedAssetUrl) to its content's web/build/vite/contentHash,
 // for an install to reuse an earlier version's unchanged copy (cachePolicy's installPlan).
 export interface PrecacheManifest {
+  // Exact built byte lengths for every normalized listed URL, all sound alternatives included.
+  // Absent on older manifests; totals depend on the caller's selected sound format.
+  byteSizes?: Record<string, number>;
   contentHashes: Record<string, string>;
   sounds: Record<string, string[]>;
   urls: string[];
@@ -74,12 +77,27 @@ export function webManifestIconUrls(manifestJson: unknown): string[] {
 
 // The text a version hash is computed over: each URL with its content hash, in URL order.
 // Hashed assets need no content hash because their name already changes with their content.
+// Optional byte sizes must cover exactly those URLs and become part of the version fingerprint.
 export function precacheFingerprint(
   policy: CachePolicy,
   contentHashes: ReadonlyMap<string, string>,
+  byteSizes?: ReadonlyMap<string, number>,
 ): string {
+  if (byteSizes !== undefined && byteSizes.size !== contentHashes.size) {
+    throw new RangeError("Precache byte sizes must cover exactly the listed URLs");
+  }
   return [...contentHashes.keys()]
     .sort()
-    .map((url) => `${url} ${isHashedAssetUrl(policy, url) ? "" : (contentHashes.get(url) ?? "")}`)
+    .map((url) => {
+      const entry = `${url} ${isHashedAssetUrl(policy, url) ? "" : (contentHashes.get(url) ?? "")}`;
+      if (byteSizes === undefined) {
+        return entry;
+      }
+      const size = byteSizes.get(url);
+      if (size === undefined || !Number.isSafeInteger(size) || size < 0) {
+        throw new RangeError(`Precache byte size for ${url} must be a nonnegative safe integer`);
+      }
+      return `${entry} ${size}`;
+    })
     .join("\n");
 }

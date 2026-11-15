@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -7,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import { contentHash } from "../../build/vite/contentHash.ts";
 import type { CachePolicy } from "../cachePolicy.ts";
-import type { PrecacheManifest } from "../precacheList.ts";
+import { precacheFingerprint, type PrecacheManifest } from "../precacheList.ts";
 import { precachePlugin, type PrecachePluginOptions } from "./precachePlugin.ts";
 
 const POLICY: CachePolicy = {
@@ -41,7 +42,7 @@ function site(icon: string, placeholder = true): string {
 
 interface Build {
   // Files a plugin before the precache writes into the build output, by file name.
-  readonly emitted?: Readonly<Record<string, string>>;
+  readonly emitted?: Readonly<Record<string, string | Uint8Array>>;
   readonly hashedFiles?: PrecachePluginOptions["hashedFiles"];
   // A public file to delete from the site before building.
   readonly missing?: string;
@@ -50,9 +51,10 @@ interface Build {
   readonly unreadable?: string;
   // An existing site to build again, as Vite's output names depend on the root.
   readonly root?: string;
+  readonly onOutput?: (files: ReadonlyMap<string, Uint8Array>) => void;
 }
 
-function emitPlugin(files: Readonly<Record<string, string>>): Plugin {
+function emitPlugin(files: Readonly<Record<string, string | Uint8Array>>): Plugin {
   return {
     generateBundle() {
       for (const [fileName, source] of Object.entries(files)) {
@@ -68,6 +70,7 @@ async function precache({
   emitted = {},
   hashedFiles,
   missing,
+  onOutput,
   placeholder,
   root = site("icon", placeholder),
   unreadable,
@@ -97,6 +100,14 @@ async function precache({
   if (!("output" in result)) {
     throw new Error("expected one build output");
   }
+  onOutput?.(
+    new Map(
+      result.output.map((file) => [
+        file.fileName,
+        Buffer.from(file.type === "chunk" ? file.code : file.source),
+      ]),
+    ),
+  );
   const worker = result.output.find((file) => file.fileName === "sw.js");
   const json =
     worker?.type === "chunk" ? /console\.log\((\{.*\})\)/s.exec(worker.code)?.[1] : undefined;
@@ -139,6 +150,65 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     });
   });
 
+  it("records sorted exact sizes for normalized URLs, binary assets and all sound alternatives", async () => {
+    const root = site("icône 漢字");
+    const guide = "<!doctype html><p>Résumé 漢字</p>";
+    writeFileSync(
+      join(root, "index.html"),
+      INDEX.replace("</head>", '<link href="/guide/index.html"></head>'),
+    );
+    mkdirSync(join(root, "public/guide"));
+    writeFileSync(join(root, "public/guide/index.html"), guide);
+    let output: ReadonlyMap<string, Uint8Array> = new Map();
+    const manifest = await precache({
+      emitted: {
+        "art/a.mp3": new Uint8Array([1, 2, 3]),
+        "art/a.ogg": new Uint8Array([10, 20, 30, 40]).subarray(1, 3),
+        "assets/empty-12345678.bin": new Uint8Array(),
+        "assets/pixel-12345678.bin": new Uint8Array([1, 2, 3, 4, 5]),
+      },
+      hashedFiles: () => ({
+        sounds: { mp3: ["/art/a.mp3"], ogg: ["/art/a.ogg", "/art/a.ogg"] },
+        urls: [
+          "/assets/pixel-12345678.bin",
+          "/assets/empty-12345678.bin",
+          "/assets/pixel-12345678.bin",
+        ],
+      }),
+      onOutput: (files) => {
+        output = files;
+      },
+      root,
+    });
+    const chunk = [...output.keys()].find((name) => /^assets\/index-[\w-]{8}\.js$/.test(name))!;
+    const expected = {
+      "/": output.get("index.html")!.byteLength,
+      "/art/a.mp3": 3,
+      "/art/a.ogg": 2,
+      "/assets/empty-12345678.bin": 0,
+      "/assets/pixel-12345678.bin": 5,
+      "/favicon.png": Buffer.byteLength("favicon"),
+      "/guide/": Buffer.byteLength(guide),
+      "/icon.png": Buffer.byteLength("icône 漢字"),
+      "/manifest.webmanifest": Buffer.byteLength(JSON.stringify({ icons: [{ src: "/icon.png" }] })),
+      [`/${chunk}`]: output.get(chunk)!.byteLength,
+    };
+    expect(manifest.byteSizes).toEqual(expected);
+    expect(Object.keys(manifest.byteSizes!)).toEqual(Object.keys(expected).sort());
+    expect(manifest.urls).toContain("/guide/");
+    expect(manifest.urls).not.toContain("/guide/index.html");
+    expect(manifest.contentHashes["/guide/"]).toBe(contentHash(Buffer.from(guide)));
+    expect(manifest.sounds).toEqual({ mp3: ["/art/a.mp3"], ogg: ["/art/a.ogg"] });
+    const fingerprint = precacheFingerprint(
+      POLICY,
+      new Map(Object.keys(expected).map((url) => [url, manifest.contentHashes[url] ?? ""])),
+      new Map(Object.entries(expected)),
+    );
+    expect(manifest.version).toBe(
+      createHash("sha256").update(fingerprint).digest("hex").slice(0, 16),
+    );
+  });
+
   it.each<[string, string, boolean]>([
     ["the same files", "icon", true],
     ["a changed public file", "redrawn", false],
@@ -149,6 +219,7 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     const second = await precache({ root });
     expect({ ...second, version: first.version === second.version }).toEqual({
       ...first,
+      byteSizes: { ...first.byteSizes, "/icon.png": Buffer.byteLength(icon) },
       contentHashes: {
         ...first.contentHashes,
         "/icon.png": contentHash(new TextEncoder().encode(icon)),

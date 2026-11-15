@@ -104,4 +104,48 @@ describe("precacheFingerprint", () => {
   ])("%s", (_, hashes, text) => {
     expect(precacheFingerprint(policy, new Map(hashes))).toBe(text);
   });
+
+  it("includes exact byte sizes deterministically, including zero and hashed assets", () => {
+    const hashes = new Map([
+      ["/play/", "page"],
+      ["/assets/a.js", "ignored"],
+    ]);
+    const sizes = new Map([
+      ["/play/", 23],
+      ["/assets/a.js", 0],
+    ]);
+    const fingerprint = precacheFingerprint(policy, hashes, sizes);
+    expect(fingerprint).toBe("/assets/a.js  0\n/play/ page 23");
+    expect(
+      precacheFingerprint(policy, new Map([...hashes].reverse()), new Map([...sizes].reverse())),
+    ).toBe(fingerprint);
+    expect(precacheFingerprint(policy, hashes, new Map(sizes).set("/assets/a.js", 1))).not.toBe(
+      fingerprint,
+    );
+    expect(precacheFingerprint(policy, hashes, new Map(sizes).set("/play/", 24))).not.toBe(
+      fingerprint,
+    );
+  });
+
+  it("rejects missing, extra or invalid byte sizes instead of fingerprinting unknown work", () => {
+    const hashes = new Map([["/a", "hash"]]);
+    for (const sizes of [
+      new Map<string, number>(),
+      new Map([
+        ["/a", 1],
+        ["/extra", 2],
+      ]),
+      new Map([["/other", 1]]),
+    ]) {
+      expect(() => precacheFingerprint(policy, hashes, sizes)).toThrow(RangeError);
+    }
+    for (const value of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => precacheFingerprint(policy, hashes, new Map([["/a", value]]))).toThrow(
+        RangeError,
+      );
+    }
+    expect(precacheFingerprint(policy, hashes, new Map([["/a", Number.MAX_SAFE_INTEGER]]))).toBe(
+      `/a hash ${Number.MAX_SAFE_INTEGER}`,
+    );
+  });
 });
