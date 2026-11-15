@@ -2,14 +2,272 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createLoadingAttempts, createRequiredLoading } from "../../../load/loadingAttempts.ts";
-import { type LoadingFailureLayout, mountLoadingFailure } from "./loadingFailure.ts";
+import {
+  type LoadingFailureLayout,
+  type LoadingFailurePresentation,
+  mountLoadingFailure,
+} from "./loadingFailure.ts";
+
+function presentationFixture(unit = 1): LoadingFailurePresentation {
+  return {
+    action: {
+      borderWidthPx: Math.max(1, unit),
+      heightPx: 48 * unit,
+      highlightHeightPx: Math.max(1, unit),
+      paddingBottomPx: 4 * unit,
+      paddingXPx: 12,
+      shadeHeightPx: 4 * unit,
+      widthPx: 128 * unit,
+    },
+    palette: {
+      action: "#63c74d",
+      actionText: "#181425",
+      border: "#181425",
+      highlight: "#fee761",
+      lip: "#e4a672",
+      panel: "#ead4aa",
+      shade: "#265c42",
+      shadow: "#181425",
+      text: "#3e2731",
+    },
+    panel: {
+      bodyActionGapPx: 24,
+      borderWidthPx: 1,
+      lipHeightPx: 4,
+      maxWidthPx: 328,
+      paddingBottomPx: 16,
+      paddingTopPx: 24,
+      paddingXPx: 16,
+      safeInsetPx: 16,
+      shadowOffsetPx: 4,
+      titleBodyGapPx: 16,
+    },
+    text: {
+      action: { lineHeight: 1.2, sizePx: 18, weight: 700 },
+      body: { lineHeight: 1.45, sizePx: 18, weight: 400 },
+      title: { lineHeight: 1.2, sizePx: 24, weight: 700 },
+    },
+  };
+}
 
 describe("mountLoadingFailure", () => {
+  it("hardens a caller presentation after reset and snapshots its geometry, type and palette", async () => {
+    const presentation = presentationFixture(0.5);
+    const mutable = presentation as {
+      panel: { maxWidthPx: number };
+      action: { heightPx: number };
+      text: { title: { sizePx: number } };
+      palette: { panel: string };
+    };
+    const onRetry = vi.fn(() => pending);
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const parent = document.createElement("div");
+    parent.style.fontSize = "0px";
+    document.body.append(parent);
+    const view = mountLoadingFailure({ onRetry, presentation }, parent);
+    const [title, body, button] = [...view.element.children] as [
+      HTMLElement,
+      HTMLElement,
+      HTMLButtonElement,
+    ];
+    const bubble = vi.fn();
+    window.addEventListener("keydown", bubble);
+    window.addEventListener("keyup", bubble);
+    try {
+      mutable.panel.maxWidthPx = 500;
+      mutable.action.heightPx = 200;
+      mutable.text.title.sizePx = 40;
+      mutable.palette.panel = "#ffffff";
+      view.update({ attempt: 1, error: undefined, kind: "failed" });
+      expect(view.element.style.display).toBe("flex");
+      expect(view.element.style.width).toBe("calc(100% - 32px)");
+      expect(view.element.style.maxWidth).toBe("328px");
+      expect(view.element.style.maxHeight).toBe("calc(100% - 32px)");
+      expect(view.element.style.overflow).toBe("auto");
+      expect(view.element.style.padding).toBe("24px 16px 16px");
+      expect(view.element.style.backgroundColor).toBe("#ead4aa");
+      expect(body.style.margin).toBe("16px 0px 24px");
+      expect(title.style.fontSize).toBe("24px");
+      expect(body.style.fontSize).toBe("18px");
+      expect(button.style.fontSize).toBe("18px");
+      expect(button.style.width).toBe("64px");
+      expect(button.style.height).toBe("24px");
+      expect(Number.parseFloat(button.style.minHeight)).toBe(0);
+      expect(button.style.padding).toBe("0px 12px 2px");
+      expect(button.style.boxShadow).toContain("-2px");
+      expect(button.style.justifyContent).toBe("center");
+      expect(button.style.alignItems).toBe("center");
+      for (const node of [view.element, title, body, button]) {
+        expect(node.style.getPropertyValue("all")).toBe("revert");
+        for (const property of Array.from({ length: node.style.length }, (_, index) =>
+          node.style.item(index),
+        )) {
+          expect(node.style.getPropertyPriority(property)).toBe("important");
+        }
+      }
+      for (const node of [title, body, button]) {
+        expect(node.style.fontFamily).toBe("system-ui, sans-serif");
+      }
+      const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" });
+      expect(button.dispatchEvent(event)).toBe(true);
+      expect(event.defaultPrevented).toBe(false);
+      expect(bubble).not.toHaveBeenCalled();
+      button.click();
+      view.update({ attempt: 2, error: undefined, kind: "failed" });
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(onRetry).toHaveBeenCalledOnce();
+      expect(button.disabled).toBe(true);
+      const replacement = presentationFixture(1);
+      const mutableReplacement = replacement as {
+        panel: { maxWidthPx: number };
+        action: { heightPx: number };
+      };
+      mutableReplacement.panel.maxWidthPx = 456;
+      const element = view.element;
+      view.setPresentation(replacement);
+      mutableReplacement.action.heightPx = 500;
+      expect(view.element).toBe(element);
+      expect(element.querySelector("button")).toBe(button);
+      expect(element.hidden).toBe(false);
+      expect(button.disabled).toBe(true);
+      expect(button.style.width).toBe("128px");
+      expect(button.style.height).toBe("48px");
+      expect(title.style.fontSize).toBe("24px");
+      expect(element.style.maxWidth).toBe("456px");
+      const beforeInvalid = element.outerHTML;
+      const invalid = presentationFixture();
+      (invalid as { action: { heightPx: number } }).action.heightPx = NaN;
+      expect(() => view.setPresentation(invalid)).toThrow(RangeError);
+      expect(element.outerHTML).toBe(beforeInvalid);
+      button.blur();
+      document.body.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Enter" }));
+      expect(bubble).not.toHaveBeenCalled();
+      finish();
+      await pending;
+      await Promise.resolve();
+      expect(button.disabled).toBe(false);
+      view.update({ attempt: 3, kind: "ready" });
+      expect(view.element.hidden).toBe(true);
+      expect(view.element.style.display).toBe("none");
+      expect(parent.querySelector("img, canvas, style, link")).toBeNull();
+      view.dispose();
+      const detached = element.outerHTML;
+      view.setPresentation(invalid);
+      expect(element.outerHTML).toBe(detached);
+    } finally {
+      finish();
+      window.removeEventListener("keydown", bubble);
+      window.removeEventListener("keyup", bubble);
+      view.dispose();
+      parent.remove();
+    }
+  });
+
+  it("rejects invalid or conflicting presentation before creating or styling DOM", () => {
+    const invalid: unknown[] = [null, {}, { ...presentationFixture(), text: undefined }];
+    for (const path of ["panel", "action", "text.title", "text.body", "text.action"]) {
+      const original = presentationFixture();
+      const group = path
+        .split(".")
+        .reduce(
+          (object, key) => object[key] as Record<string, unknown>,
+          original as unknown as Record<string, unknown>,
+        );
+      for (const field of Object.keys(group)) {
+        for (const value of [-1, NaN, Infinity, -Infinity, "12", undefined]) {
+          const copy = structuredClone(original) as unknown as Record<string, unknown>;
+          const target = path
+            .split(".")
+            .reduce((object, key) => object[key] as Record<string, unknown>, copy);
+          target[field] = value;
+          invalid.push(copy);
+        }
+      }
+    }
+    for (const value of ["red", "var(--colour)", "url(image.png)", "#xyz", null, undefined]) {
+      invalid.push({
+        ...presentationFixture(),
+        palette: { ...presentationFixture().palette, panel: value },
+      });
+    }
+    for (const path of ["title", "body", "action"] as const) {
+      for (const patch of [{ sizePx: 0 }, { lineHeight: 0 }, { weight: 0 }, { weight: 1001 }]) {
+        const original = presentationFixture();
+        invalid.push({
+          ...original,
+          text: { ...original.text, [path]: { ...original.text[path], ...patch } },
+        });
+      }
+    }
+    invalid.push({
+      ...presentationFixture(),
+      panel: { ...presentationFixture().panel, maxWidthPx: 0 },
+    });
+    invalid.push({
+      ...presentationFixture(),
+      action: { ...presentationFixture().action, widthPx: 0 },
+    });
+    invalid.push({
+      ...presentationFixture(),
+      action: { ...presentationFixture().action, heightPx: 0 },
+    });
+    invalid.push({
+      ...presentationFixture(),
+      panel: { ...presentationFixture().panel, safeInsetPx: Number.MAX_VALUE },
+    });
+    invalid.push({
+      ...presentationFixture(),
+      panel: { ...presentationFixture().panel, maxWidthPx: 10 },
+    });
+    invalid.push({
+      ...presentationFixture(),
+      action: { ...presentationFixture().action, heightPx: 1 },
+    });
+    invalid.push({
+      ...presentationFixture(),
+      action: { ...presentationFixture().action, widthPx: 1 },
+    });
+    const parent = document.createElement("div");
+    parent.textContent = "Existing caller content";
+    const create = vi.spyOn(document, "createElement");
+    const writes = vi.spyOn(CSSStyleDeclaration.prototype, "setProperty");
+    try {
+      for (const presentation of invalid) {
+        expect(() =>
+          mountLoadingFailure(
+            { onRetry: vi.fn(), presentation: presentation as LoadingFailurePresentation },
+            parent,
+          ),
+        ).toThrow(RangeError);
+      }
+      expect(() =>
+        mountLoadingFailure(
+          {
+            layout: { actionAlign: "center", gapPx: 0, minActionSizePx: 0, paddingPx: 0 },
+            onRetry: vi.fn(),
+            presentation: presentationFixture(),
+          },
+          parent,
+        ),
+      ).toThrow("mutually exclusive");
+      expect(create).not.toHaveBeenCalled();
+      expect(writes).not.toHaveBeenCalled();
+      expect(parent.textContent).toBe("Existing caller content");
+    } finally {
+      create.mockRestore();
+      writes.mockRestore();
+    }
+  });
+
   it("contains Retry activation keys without preventing defaults or synthesizing clicks", () => {
     const parent = document.createElement("div");
     document.body.append(parent);
     const onRetry = vi.fn();
     const view = mountLoadingFailure({ onRetry }, parent);
+    expect(Object.keys(view).sort()).toEqual(["dispose", "element", "update"]);
     view.update({ attempt: 1, error: undefined, kind: "failed" });
     const button = view.element.querySelector("button")!;
     const bubble = vi.fn();
