@@ -1,6 +1,6 @@
 import type { GameObjects, Renderer, Textures } from "phaser";
 
-import type { RgbaImage } from "../../art/rgbaImage.ts";
+import type { RgbaImage } from "../../art/rgbaImageTypes.ts";
 import type { Point, Rect } from "../../rect.ts";
 
 export type Size = Readonly<{ width: number; height: number }>;

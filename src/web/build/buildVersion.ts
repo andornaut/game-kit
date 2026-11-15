@@ -1,3 +1,7 @@
+import { isBuildId } from "../pwa/buildIdentity.ts";
+
+export { isBuildId } from "../pwa/buildIdentity.ts";
+
 // What the build shows when it knows no commit: no CI variable and no git repository.
 export const UNKNOWN_COMMIT = "dev";
 const SHORT_LENGTH = 8;
@@ -9,10 +13,6 @@ export const CI_COMMIT_VARIABLE = "WORKERS_CI_COMMIT_SHA";
 export interface BuildMetadata {
   readonly buildId: string | undefined;
   readonly commit: string;
-}
-
-export function isBuildId(value: unknown): value is string {
-  return typeof value === "string" && value.length === 40 && COMMIT_SHA.test(value);
 }
 
 // Resolve one identity for app constants and plugin options. A CI label still works without

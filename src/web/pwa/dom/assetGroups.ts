@@ -1,4 +1,4 @@
-import { isBuildId } from "../../build/buildVersion.ts";
+import { isBuildId } from "../buildIdentity.ts";
 import {
   ASSET_GROUPS_MESSAGE,
   type AssetGroupsRequest,

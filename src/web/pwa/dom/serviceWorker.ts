@@ -2,7 +2,7 @@
 // policy and the precache manifest the build writes in (vite/precachePlugin), and the plugin
 // builds the entry to one classic script. The worker runs in a ServiceWorkerGlobalScope, which the
 // DOM typings do not describe, so the few members it uses are declared here.
-import { isBuildId } from "../../build/buildVersion.ts";
+import { isBuildId } from "../buildIdentity.ts";
 import {
   ASSET_GROUPS_MESSAGE,
   type AssetGroupsRequest,
@@ -26,7 +26,7 @@ import {
   type DownloadProgress,
 } from "../downloadProgress.ts";
 import { basePrecacheUrls, precacheGroupUrls, validatePrecacheGroups } from "../precacheGroups.ts";
-import type { PrecacheManifest } from "../precacheList.ts";
+import type { PrecacheManifest } from "../precacheManifest.ts";
 import type { SoundFormatParam } from "../serviceWorkerUrl.ts";
 import type { SkipWaitingMessage } from "../updateReady.ts";
 import { createGroupStore } from "./groupStore.ts";

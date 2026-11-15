@@ -1,4 +1,4 @@
-import type { PrecacheManifest } from "./precacheList.ts";
+import type { PrecacheManifest } from "./precacheManifest.ts";
 
 // How the service worker answers a same-origin GET.
 // cache-first: the precached page and every other precached file, content-hashed build output and

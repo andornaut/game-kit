@@ -1,12 +1,8 @@
 import { clampIndex } from "../arrays.ts";
 import type { Point, Rect } from "../rect.ts";
+import type { RgbaImage } from "./rgbaImageTypes.ts";
 
-// An image's pixels, 4 bytes each (red, green, blue, alpha), row by row from the top-left.
-export interface RgbaImage {
-  data: Uint8Array;
-  height: number;
-  width: number;
-}
+export type { RgbaImage } from "./rgbaImageTypes.ts";
 
 // An image of clear pixels.
 export function blankImage(width: number, height: number): RgbaImage {
