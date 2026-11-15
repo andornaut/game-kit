@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Script } from "node:vm";
 
 import { build, createServer, type Plugin } from "vite";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +14,7 @@ import { contentHash } from "../../build/vite/contentHash.ts";
 import { gitBuildMetadata, gitHead } from "../../build/vite/gitHead.ts";
 import type { CachePolicy } from "../cachePolicy.ts";
 import { precacheFingerprint, type PrecacheManifest } from "../precacheList.ts";
+import { assertClassicWorker } from "./classicWorker.ts";
 import { precachePlugin, type PrecachePluginOptions } from "./precachePlugin.ts";
 
 const POLICY: CachePolicy = {
@@ -150,15 +153,102 @@ async function precache({
     ),
   );
   const worker = result.output.find((file) => file.fileName === "sw.js");
-  const json =
-    worker?.type === "chunk" ? /console\.log\((\{.*\})\)/s.exec(worker.code)?.[1] : undefined;
-  if (json === undefined) {
+  if (worker?.type !== "asset" || typeof worker.source !== "string") {
     throw new Error("missing sw.js or its manifest");
   }
-  return JSON.parse(json) as PrecacheManifest;
+  let manifest: PrecacheManifest | undefined;
+  new Script(worker.source).runInNewContext({
+    console: {
+      log: (value: PrecacheManifest) => {
+        manifest = value;
+      },
+    },
+  });
+  if (manifest === undefined) {
+    throw new Error("missing worker manifest");
+  }
+  return manifest;
 }
 
 describe("precachePlugin", { timeout: 60_000 }, () => {
+  it("isolates a classic worker when page and worker share the byte-progress runtime", async () => {
+    const root = site("icon");
+    const shared = fileURLToPath(new URL("../downloadProgress.ts", import.meta.url));
+    writeFileSync(
+      join(root, "main.js"),
+      'import { downloadByteTotal } from "@progress";' +
+        'console.log(downloadByteTotal({a: 7}, ["a"]));',
+    );
+    writeFileSync(
+      join(root, "sw.js"),
+      'import { downloadByteTotal } from "@progress";' +
+        'self.total = downloadByteTotal({a: 11}, ["a"]);' +
+        "self.marker = __WORKER_MARKER__; self.manifest = GAME_KIT_PRECACHE_MANIFEST;",
+    );
+    const result = await build({
+      build: { minify: false, target: "es2022", write: true },
+      configFile: false,
+      define: { __WORKER_MARKER__: JSON.stringify("captured") },
+      logLevel: "silent",
+      plugins: [
+        precachePlugin({
+          pageHtmlFile: "index.html",
+          policy: POLICY,
+          serviceWorkerFileName: "offline-worker.js",
+          serviceWorkerSource: join(root, "sw.js"),
+        }),
+      ],
+      resolve: { alias: { "@progress": shared } },
+      root,
+    });
+    if (!("output" in result)) {
+      throw new Error("expected output");
+    }
+    const worker = result.output.find(({ fileName }) => fileName === "offline-worker.js");
+    expect(worker?.type).toBe("asset");
+    if (worker?.type !== "asset" || typeof worker.source !== "string") {
+      throw new Error("missing worker");
+    }
+    expect(worker.source).not.toContain("GAME_KIT_PRECACHE_MANIFEST");
+    const scope: Record<string, unknown> = {};
+    new Script(worker.source).runInNewContext({ self: scope });
+    expect(scope.total).toBe(11);
+    expect(scope.marker).toBe("captured");
+    const manifest = scope.manifest as PrecacheManifest;
+    expect(manifest.byteSizes).toHaveProperty("/");
+    expect(manifest.urls).not.toContain("/offline-worker.js");
+    const page = result.output.filter((file) => file.type === "chunk");
+    expect(page).toHaveLength(1);
+    expect(page[0]?.imports).toEqual([]);
+    expect(page[0]?.dynamicImports).toEqual([]);
+    expect(page[0]?.code).toContain("downloadByteTotal");
+    expect(worker.source).toContain("downloadByteTotal");
+    await expect(
+      build({
+        build: { write: false },
+        configFile: false,
+        logLevel: "silent",
+        plugins: [
+          precachePlugin({
+            pageHtmlFile: "index.html",
+            policy: POLICY,
+            serviceWorkerSource: join(root, "sw.js"),
+          }),
+        ],
+        resolve: { alias: { "@progress": shared } },
+        root,
+        worker: { rolldownOptions: { external: ["@progress"] } },
+      }),
+    ).rejects.toThrow(/split or external/);
+    for (const code of [
+      'import "./page.js";',
+      'import("./page.js");',
+      'importScripts("./page.js");',
+    ]) {
+      expect(() => assertClassicWorker("sw.js", code)).toThrow(/classic|import/);
+    }
+  });
+
   it("partitions late emissions and binds the same full source ID into app and worker", async () => {
     const { buildId, root } = cleanSite();
     let discovery: Parameters<NonNullable<PrecachePluginOptions["groups"]>>[0] | undefined;

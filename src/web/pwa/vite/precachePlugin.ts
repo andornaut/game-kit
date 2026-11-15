@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { Plugin } from "vite";
+import type { Plugin, ResolvedConfig } from "vite";
 
 import { isBuildId } from "../../build/buildVersion.ts";
 import { contentHash } from "../../build/vite/contentHash.ts";
@@ -16,6 +16,7 @@ import {
   rootRelativeUrls,
   webManifestIconUrls,
 } from "../precacheList.ts";
+import { assertClassicWorker, classicWorker } from "./classicWorker.ts";
 
 // Hashed files the page loads at runtime rather than links, such as a game's art: the URLs to
 // precache, and sound files by format, for the worker to store the format the page plays.
@@ -60,6 +61,7 @@ export function precachePlugin({
   serviceWorkerSource,
 }: PrecachePluginOptions): Plugin {
   let root: string;
+  let config: ResolvedConfig;
   const checkIdentity = () => {
     if (!isBuildId(buildId) || gitBuildMetadata(root, process.env).buildId !== buildId) {
       throw new Error("precache: grouped builds require a matching clean source and full buildId");
@@ -75,10 +77,15 @@ export function precachePlugin({
             }
             return true;
           },
-    buildStart() {
-      this.emitFile({ fileName: serviceWorkerFileName, id: serviceWorkerSource, type: "chunk" });
+    async buildStart() {
+      const worker = await classicWorker(config, serviceWorkerFileName, serviceWorkerSource);
+      for (const file of worker.watchFiles) {
+        this.addWatchFile(file);
+      }
+      this.emitFile({ fileName: serviceWorkerFileName, source: worker.code, type: "asset" });
     },
-    configResolved(config) {
+    configResolved(resolved) {
+      config = resolved;
       root = config.root;
       if (groups !== undefined) {
         checkIdentity();
@@ -237,17 +244,19 @@ export function precachePlugin({
 
         const serviceWorker = bundle[serviceWorkerFileName];
         if (
-          serviceWorker?.type !== "chunk" ||
-          !serviceWorker.code.includes(PRECACHE_MANIFEST_PLACEHOLDER)
+          serviceWorker?.type !== "asset" ||
+          typeof serviceWorker.source !== "string" ||
+          !serviceWorker.source.includes(PRECACHE_MANIFEST_PLACEHOLDER)
         ) {
           this.error(
             `precache: ${serviceWorkerFileName} has no ${PRECACHE_MANIFEST_PLACEHOLDER} to replace`,
           );
         }
-        serviceWorker.code = serviceWorker.code.replaceAll(
+        serviceWorker.source = serviceWorker.source.replaceAll(
           PRECACHE_MANIFEST_PLACEHOLDER,
           JSON.stringify(manifest),
         );
+        assertClassicWorker(serviceWorkerFileName, serviceWorker.source);
       },
       order: "post",
     },
