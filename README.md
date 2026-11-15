@@ -18,7 +18,7 @@ Pure imports need no runtime peers. Phaser, TypeScript, Vite and Vitest are opti
 
 ## API namespaces and migration
 
-Canonical imports use `@andornaut/game-kit/runtime/...`, `@andornaut/game-kit/build/...` or `@andornaut/game-kit/test/...`. Every path is explicit in `package.json`; there are no root barrels or wildcard exports. The `package.json` metadata export is unchanged.
+Version 0.47.0 adds canonical imports using `@andornaut/game-kit/runtime/...`, `@andornaut/game-kit/build/...` or `@andornaut/game-kit/test/...`. Every path is explicit in `package.json`; there are no root barrels or wildcard exports. The `package.json` metadata export is unchanged.
 
 | Namespace  | Use                                                                                                             | Dependency direction                                           |
 | ---------- | --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
