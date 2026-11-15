@@ -185,6 +185,15 @@ import type { LayoutColumnSizing, LayoutColumnTrack, LayoutNode } from '@andorna
 import {
   mountLoadingFailure, type LoadingFailureLayout,
 } from '@andornaut/game-kit/runtime/web/progress/dom/loadingFailure';
+import type {
+  InstallationIdentity, InstallationState, OfflinePlay, OfflinePlayOptions,
+} from '@andornaut/game-kit/runtime/web/pwa/dom/offlinePlay';
+export const installationIdentity: InstallationIdentity = {attempt:1,operationId:undefined,version:undefined};
+export const installation: InstallationState = {...installationIdentity,kind:'failed',stage:'installation',error:new Error('failed')};
+export function mountInstallationFailure(offline: OfflinePlay, parent: HTMLElement): OfflinePlayOptions['onInstallationState'] {
+  const failure = mountLoadingFailure({onRetry:async () => { await offline.retryInstallation(); }},parent);
+  return state => failure.update(state);
+}
 export const tracks: readonly LayoutColumnTrack[] = [{kind:'fraction'},{kind:'intrinsic'},{kind:'fixed',size:3}];
 export const columnSizing: LayoutColumnSizing = {mode:'tracks',tracks};
 export const columns: LayoutNode<{text:{props:{label:string};slots:never}}> = {
@@ -295,4 +304,55 @@ assert.deepEqual(
 `,
 );
 execFileSync(process.execPath, ["vite-bootstrap.mjs"], { cwd: consumer, stdio: "inherit" });
-console.log("Packed artifact native Node, declarations and parent Vite bootstrap passed.");
+// A pending retry owns disabled state while the registry truthfully remains failed.
+symlinkSync(resolve(root, "node_modules/happy-dom"), join(consumer, "node_modules/happy-dom"));
+writeFileSync(
+  join(consumer, "loading-failure.mjs"),
+  `
+import assert from 'node:assert/strict';
+import { Window } from 'happy-dom';
+import { createRequiredLoading } from '@andornaut/game-kit/runtime/load/loadingAttempts';
+import { mountLoadingFailure } from '@andornaut/game-kit/runtime/web/progress/dom/loadingFailure';
+const window = new Window();
+let finish;
+const pending = new Promise(resolve => { finish = resolve; });
+let retries = 0;
+let activations = 0;
+let flight;
+const registry = createRequiredLoading([{
+  status: () => 'failed',
+  retry: () => { retries += 1; return pending; },
+}]);
+const view = mountLoadingFailure({onRetry: () => {
+  activations += 1;
+  return flight = registry.retry();
+}}, window.document.body);
+const stop = registry.subscribe(state => view.update(state));
+try {
+  const button = view.element.querySelector('button');
+  assert.ok(button);
+  button.click();
+  assert.equal(registry.state.kind, 'failed');
+  assert.equal(button.disabled, true);
+  view.update(registry.state);
+  button.click();
+  assert.equal(button.disabled, true);
+  assert.equal(retries, 1);
+  assert.equal(activations, 1);
+  finish();
+  await flight;
+  await Promise.resolve();
+  assert.equal(registry.state.kind, 'failed');
+  assert.equal(button.disabled, false);
+} finally {
+  stop();
+  view.dispose();
+  registry.dispose();
+  finish();
+  await flight;
+  window.close();
+}
+`,
+);
+execFileSync(process.execPath, ["loading-failure.mjs"], { cwd: consumer, stdio: "inherit" });
+console.log("Packed artifact native Node, declarations, parent Vite and loading retry passed.");
