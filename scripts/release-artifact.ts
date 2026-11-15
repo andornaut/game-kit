@@ -184,6 +184,7 @@ export const fixture = storageFixture();
 import type { LayoutColumnSizing, LayoutColumnTrack, LayoutNode } from '@andornaut/game-kit/runtime/ui/layoutTree';
 import {
   mountLoadingFailure, type LoadingFailureLayout,
+  type LoadingFailurePresentation, type LoadingFailurePresentationView,
 } from '@andornaut/game-kit/runtime/web/progress/dom/loadingFailure';
 import type {
   InstallationIdentity, InstallationState, OfflinePlay, OfflinePlayOptions,
@@ -197,6 +198,13 @@ export function mountInstallationFailure(
 ): OfflinePlayOptions['onInstallationState'] {
   const failure = mountLoadingFailure({onRetry:async () => { await offline.retryInstallation(); }},parent);
   return state => failure.update(state);
+}
+export function configuredFailure(
+  presentation: LoadingFailurePresentation, parent: HTMLElement,
+): LoadingFailurePresentationView {
+  const view = mountLoadingFailure({presentation,onRetry(){}},parent);
+  view.setPresentation(presentation);
+  return view;
 }
 export const tracks: readonly LayoutColumnTrack[] = [{kind:'fraction'},{kind:'intrinsic'},{kind:'fixed',size:3}];
 export const columnSizing: LayoutColumnSizing = {mode:'tracks',tracks};
@@ -378,4 +386,74 @@ try {
 `,
 );
 execFileSync(process.execPath, ["loading-failure.mjs"], { cwd: consumer, stdio: "inherit" });
-console.log("Packed artifact native Node, declarations, parent Vite and loading retry passed.");
+writeFileSync(
+  join(consumer, "loading-presentation.mjs"),
+  `
+import assert from 'node:assert/strict';
+import { Window } from 'happy-dom';
+import { mountLoadingFailure } from '@andornaut/game-kit/runtime/web/progress/dom/loadingFailure';
+const window = new Window();
+const frame = window.document.createElement('div');
+frame.style.width = '360px';
+frame.style.height = '560px';
+window.document.body.append(frame);
+const presentation = {
+  panel: {maxWidthPx:328,safeInsetPx:16,paddingTopPx:24,paddingXPx:16,paddingBottomPx:16,
+    titleBodyGapPx:16,bodyActionGapPx:24,borderWidthPx:1,lipHeightPx:4,shadowOffsetPx:4},
+  text: {title:{sizePx:24,weight:700,lineHeight:1.2},body:{sizePx:18,weight:400,lineHeight:1.45},
+    action:{sizePx:18,weight:700,lineHeight:1.2}},
+  action: {widthPx:80,heightPx:30,paddingXPx:7.5,paddingBottomPx:2.5,borderWidthPx:1,
+    highlightHeightPx:1,shadeHeightPx:2.5},
+  palette: {panel:'#ead4aa',text:'#3e2731',action:'#63c74d',actionText:'#181425',border:'#181425',
+    lip:'#e4a672',shadow:'#181425',highlight:'#fee761',shade:'#265c42'},
+};
+let finish;
+const pending = new Promise(resolve => { finish = resolve; });
+let retries = 0;
+const view = mountLoadingFailure({presentation,onRetry:()=>{retries += 1; return pending;}},frame);
+const leaked = [];
+const onKey = event => leaked.push(event.key);
+window.addEventListener('keyup',onKey);
+try {
+  view.update({attempt:1,kind:'failed',error:undefined});
+  const button = view.element.querySelector('button');
+  assert.ok(button);
+  assert.equal(view.element.querySelector('h2').style.fontSize,'24px');
+  assert.equal(view.element.querySelector('p').style.fontSize,'18px');
+  assert.equal(button.style.fontSize,'18px');
+  assert.equal(button.style.height,'30px');
+  button.focus();
+  button.dispatchEvent(new window.KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
+  button.click();
+  assert.equal(button.disabled,true);
+  const resized = {...presentation,panel:{...presentation.panel,maxWidthPx:300},
+    action:{...presentation.action,widthPx:64,heightPx:24}};
+  view.setPresentation(resized);
+  assert.equal(view.element.querySelector('button'),button);
+  assert.equal(button.disabled,true);
+  assert.equal(button.style.height,'24px');
+  assert.equal(button.style.fontSize,'18px');
+  assert.equal(retries,1);
+  const before = view.element.getAttribute('style');
+  assert.throws(()=>view.setPresentation({...resized,panel:{...resized.panel,maxWidthPx:NaN}}),RangeError);
+  assert.equal(view.element.getAttribute('style'),before);
+  button.blur();
+  window.document.body.dispatchEvent(new window.KeyboardEvent('keyup',{key:'Enter',bubbles:true}));
+  assert.deepEqual(leaked,[]);
+  finish();
+  await pending;
+  await Promise.resolve();
+  assert.equal(button.disabled,false);
+} finally {
+  finish();
+  await pending;
+  view.dispose();
+  window.removeEventListener('keyup',onKey);
+  window.close();
+}
+`,
+);
+execFileSync(process.execPath, ["loading-presentation.mjs"], { cwd: consumer, stdio: "inherit" });
+console.log(
+  "Packed artifact native Node, declarations, parent Vite, retry and presentation passed.",
+);

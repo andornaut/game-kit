@@ -57,6 +57,18 @@ Every legacy API path remains available unchanged as a deprecated compatibility 
 
 The precache plugin builds the worker through Vite's isolated worker pipeline as one self-contained classic script. Shared page modules cannot split the worker into ESM chunks. Builds reject worker imports or additional emitted files; games retain their existing classic registration and runtime policies.
 
+## Configured failure presentation in 0.50.0
+
+`runtime/web/progress/dom/loadingFailure` exports `LoadingFailurePresentation` and `LoadingFailureTextStyle`. Pass optional `presentation` to `mountLoadingFailure` to configure the existing hardened fallback. Omission retains the previous native fallback and optional `layout` behaviour. `layout` and `presentation` are mutually exclusive. Invalid configurations fail before DOM mutation; configurations are captured rather than retaining caller objects.
+
+All geometry is explicit CSS pixels. The `panel` group supplies `maxWidthPx`, `safeInsetPx`, top/horizontal/bottom padding, title-to-body and body-to-action gaps, border width, bottom lip height and shadow offset. The maximum width is configurable rather than a renderer constant. Mount inside a caller-owned frame with definite dimensions; that frame owns placement and centring. The panel bounds its width and height against that frame and scrolls overflowing content. It neither discovers a game frame nor controls the viewport or loading bar.
+
+The `text` group supplies title, body and action styles, each with `sizePx`, `weight` and unitless `lineHeight`. Configured text uses `system-ui, sans-serif` independently of game scale and needs no font or artwork download. The `action` group supplies explicit `widthPx` and `heightPx`, horizontal/bottom padding, border width and highlight/shade heights. Callers convert their normal logical button size through their own fit exactly once; the renderer adds no CSS height floor, device-pixel multiplier or font shrinking. The `palette` group supplies explicit hex colours for the panel, text, action, action text, border, lip, shadow, highlight and shade. Configured properties remain hardened against inherited page styles.
+
+A mount with a required `presentation` returns a configured view with `setPresentation(next)`. Use it from the existing fit/resize subscription to update CSS dimensions without replacing the button or resetting retry, state, focus or held-key tracking. Validation completes before updates are applied. Dispose the view and caller subscription with their existing lifecycle. Presentation never controls retry classification, required-resource priority, activation, saves, mute or modal policy.
+
+Explicit button dimensions and fixed text can conflict in very short frames. Scrolling does not prove that a label fits its button. Callers must qualify their supported frames and report an unavailable fit rather than silently changing the requested font or dimensions. Existing Retry singleflight, keyboard containment, exact messages and native accessibility remain unchanged.
+
 ## Retry keyboard containment in 0.49.1
 
 The loading-failure Retry button contains Enter and Space keydown, keypress and keyup propagation while preserving native button activation and accessibility. Matching repeats and release redirected to a neutral document target after disabling or blurring Retry remain contained while focus stays on Retry or neutral. New presses at neutral targets, other controls, focus transfer and window blur end that tracking. Disposal removes its listeners.
