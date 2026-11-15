@@ -24,7 +24,7 @@ it("rejects denied opens without creating an in-memory durable record", async ()
   const store = createGroupStore(context({ open } as unknown as IDBFactory), "denied");
   await expect(store.commit("build", ["ui"])).rejects.toBe(failure);
   await expect(store.snapshot()).rejects.toBe(failure);
-  expect(open).toHaveBeenCalledTimes(1);
+  expect(open).toHaveBeenCalledTimes(2);
   store.close();
 });
 
@@ -43,14 +43,30 @@ function opening() {
   return { close, open, request, store, transaction };
 }
 
-it("rejects a blocked open and closes a connection that succeeds after rejection", async () => {
+it("retries blocked opens and closes stale late success without replacing the new connection", async () => {
   const target = opening();
+  const failure = new Error("New connection schema unavailable");
+  const next = {
+    ...target.request,
+    result: {
+      close: vi.fn(),
+      transaction: vi.fn(() => {
+        throw failure;
+      }),
+    },
+  };
+  target.open.mockReturnValueOnce(target.request).mockReturnValueOnce(next);
   const pending = target.store.freeze("next", "token", 1);
   target.request.onblocked();
   await expect(pending).rejects.toThrow("open is blocked");
+  const retry = target.store.read("build");
   target.request.onsuccess();
+  next.onsuccess();
+  await expect(retry).rejects.toBe(failure);
+  expect(target.open).toHaveBeenCalledTimes(2);
   expect(target.close).toHaveBeenCalledOnce();
   expect(target.transaction).not.toHaveBeenCalled();
+  expect(next.result.transaction).toHaveBeenCalledOnce();
   target.store.close();
 });
 
@@ -123,6 +139,39 @@ export async function proveNativeGroupStore(indexedDB: IDBFactory): Promise<read
   const first = createGroupStore(settings, name);
   const second = createGroupStore(settings, name);
   try {
+    let opens = 0;
+    const retrying = createGroupStore(
+      {
+        indexedDB: {
+          open(database: string, version?: number) {
+            opens += 1;
+            if (opens === 1) {
+              throw new Error("Temporary storage denial");
+            }
+            return indexedDB.open(database, version);
+          },
+        } as IDBFactory,
+        now: settings.now,
+      },
+      `${name}-retry`,
+    );
+    try {
+      const failed = await retrying.commit("build", ["ui"]).then(
+        () => false,
+        () => true,
+      );
+      check(failed, "transient open denial must reject without reporting stored");
+      same(
+        await retrying.commit("build", ["ui"]),
+        "stored",
+        "explicit retry reopens native IndexedDB",
+      );
+      same(await retrying.read("build"), ["ui"], "reopened native connection persists groups");
+      same(opens, 2, "successful native connection is retained after recovery");
+      passed.push("explicit retry after transient open denial uses a real native connection");
+    } finally {
+      retrying.close();
+    }
     same(await first.read("old"), undefined, "absent build must differ from committed base");
     await first.commit("old", []);
     same(await first.read("old"), [], "empty group set records committed base");

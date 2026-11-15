@@ -93,7 +93,10 @@ export function createGroupStore(
     if (closed) {
       return Promise.reject(new Error("Group store is closed"));
     }
-    connection ??= new Promise<IDBDatabase>((resolve, reject) => {
+    if (connection !== undefined) {
+      return connection;
+    }
+    const opening = new Promise<IDBDatabase>((resolve, reject) => {
       if (context.indexedDB === undefined) {
         reject(new Error("IndexedDB is unavailable"));
         return;
@@ -104,7 +107,10 @@ export function createGroupStore(
         rejected = true;
         reject(new Error("Group store open is blocked"));
       };
-      request.onerror = () => reject(request.error ?? new Error("Group store open failed"));
+      request.onerror = () => {
+        rejected = true;
+        reject(request.error ?? new Error("Group store open failed"));
+      };
       request.onupgradeneeded = () => {
         request.result.createObjectStore(STORE);
       };
@@ -122,7 +128,13 @@ export function createGroupStore(
         resolve(database);
       };
     });
-    return connection;
+    connection = opening;
+    void opening.catch(() => {
+      if (connection === opening) {
+        connection = undefined;
+      }
+    });
+    return opening;
   };
   const transact = async <T>(
     mode: IDBTransactionMode,
@@ -177,7 +189,7 @@ export function createGroupStore(
         () => {},
       );
     },
-    commit(build, ids, token) {
+    async commit(build, ids, token) {
       // Copy caller data before opening a database or yielding to another writer.
       const addition = [...ids];
       return transact("readwrite", (state) => {
