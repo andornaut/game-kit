@@ -15,6 +15,11 @@ import {
   staleCacheNames,
   strategyFor,
 } from "../cachePolicy.ts";
+import {
+  createDownloadProgress,
+  DOWNLOAD_PROGRESS_MESSAGE,
+  type DownloadProgress,
+} from "../downloadProgress.ts";
 import type { PrecacheManifest } from "../precacheList.ts";
 import type { SoundFormatParam } from "../serviceWorkerUrl.ts";
 import type { SkipWaitingMessage } from "../updateReady.ts";
@@ -67,13 +72,14 @@ const ROUTING_CAPABILITY = "game-kit-routing-capability";
 async function fetchAndStore(
   cache: Cache,
   contentHash: string | undefined,
+  byteSize: number | undefined,
   key: string,
   request: Request,
 ): Promise<Response> {
   const response = await fetch(request);
   if (
-    contentHash !== undefined &&
-    (response.status !== 200 || (await responseContentHash(response)) !== contentHash)
+    (contentHash !== undefined || byteSize !== undefined) &&
+    (response.status !== 200 || !(await responseMatches(contentHash, byteSize, response)))
   ) {
     throw new TypeError(`Response does not match the active build for ${key}`);
   }
@@ -123,11 +129,23 @@ async function mapBounded<T, R>(
   return results;
 }
 
-// The content hash of a stored response's bytes (cachePolicy's digestContentHash), read from a
-// clone so the response can still be stored.
-async function responseContentHash(response: Response): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", await response.clone().arrayBuffer());
-  return digestContentHash(new Uint8Array(digest));
+// Check recorded size and content identity from one clone, leaving the response reusable.
+async function responseMatches(
+  contentHash: string | undefined,
+  byteSize: number | undefined,
+  response: Response,
+): Promise<boolean> {
+  if (contentHash === undefined && byteSize === undefined) {
+    return true;
+  }
+  const body = await response.clone().arrayBuffer();
+  if (byteSize !== undefined && body.byteLength !== byteSize) {
+    return false;
+  }
+  return (
+    contentHash === undefined ||
+    digestContentHash(new Uint8Array(await crypto.subtle.digest("SHA-256", body))) === contentHash
+  );
 }
 
 // The first copy of url that holders still store and, where contentHash is given, whose bytes
@@ -135,8 +153,9 @@ async function responseContentHash(response: Response): Promise<string> {
 // caches it replaces.
 async function storedCopy(
   holders: readonly Cache[],
-  url: string,
   contentHash: string | undefined,
+  byteSize: number | undefined,
+  url: string,
 ): Promise<Response | undefined> {
   for (const old of holders) {
     // Earlier caches are tried in turn, stopping at the first copy that qualifies.
@@ -146,7 +165,7 @@ async function storedCopy(
       continue;
     }
     // eslint-disable-next-line no-await-in-loop
-    if (contentHash === undefined || (await responseContentHash(response)) === contentHash) {
+    if (await responseMatches(contentHash, byteSize, response)) {
       return response;
     }
   }
@@ -157,6 +176,27 @@ const wait = (ms: number) =>
   new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
   });
+
+// Cache writes have no AbortSignal parameter. A late file alone never publishes readiness.
+function untilAborted<T>(signal: AbortSignal, pending: Promise<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) {
+      abort();
+    }
+    void pending.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      },
+    );
+  });
+}
 
 interface PrecacheFailure {
   readonly error: unknown;
@@ -173,6 +213,8 @@ async function fetchIntoCache(
   policy: CachePolicy,
   contentHashes: Readonly<Record<string, string>>,
   cache: Cache,
+  byteSize: number | undefined,
+  progress: ReturnType<typeof createDownloadProgress>,
   url: string,
 ): Promise<PrecacheFailure | undefined> {
   let error: unknown;
@@ -183,6 +225,7 @@ async function fetchIntoCache(
       await wait(PRECACHE_RETRY_DELAYS_MS[attempt - 1] as number);
     }
     const abort = new AbortController();
+    progress.attempt(url);
     const timer = setTimeout(() => {
       abort.abort(new Error(`No answer within ${PRECACHE_TIMEOUT_MS} ms for ${url}`));
     }, PRECACHE_TIMEOUT_MS);
@@ -199,23 +242,121 @@ async function fetchIntoCache(
         throw new Error(`HTTP ${response.status} for ${url}`);
       }
       const expected = contentHashes[url];
-      if (expected !== undefined) {
-        // eslint-disable-next-line no-await-in-loop
-        const actual = await responseContentHash(response);
-        if (actual !== expected) {
-          throw new Error(`Content hash ${actual} for ${url}, expected ${expected}`);
-        }
-      }
+      // Read a clone once for streamed accounting and the existing hash check. Cache.put keeps
+      // the original response, including its headers and status, without another network fetch.
       // eslint-disable-next-line no-await-in-loop
-      await cache.put(url, response);
+      await readDownload(
+        {
+          expectedHash: expected,
+          expectedSize: byteSize,
+          onReceived: (bytes) => progress.received(url, bytes),
+          signal: abort.signal,
+          url,
+        },
+        response,
+      );
+      // eslint-disable-next-line no-await-in-loop
+      await untilAborted(abort.signal, cache.put(url, response));
+      if (abort.signal.aborted) {
+        throw abort.signal.reason;
+      }
+      progress.stored(url);
       return undefined;
     } catch (caught) {
       error = caught;
+      // A size mismatch can be detected before EOF. Abort the unused original response too.
+      if (!abort.signal.aborted) {
+        abort.abort(caught);
+      }
+      progress.retry(url);
     } finally {
       clearTimeout(timer);
     }
   }
   return { error, url };
+}
+
+async function readDownload(
+  {
+    expectedHash,
+    expectedSize,
+    onReceived,
+    signal,
+    url,
+  }: {
+    expectedHash: string | undefined;
+    expectedSize: number | undefined;
+    onReceived: (bytes: number) => void;
+    signal: AbortSignal;
+    url: string;
+  },
+  response: Response,
+): Promise<void> {
+  const reader = response.clone().body?.getReader();
+  let bytes = 0;
+  const chunks: Uint8Array[] = [];
+  let onAbort: () => void = () => undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => {
+      void reader?.cancel(signal.reason).catch(() => undefined);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+    }
+  });
+  try {
+    await Promise.race([
+      (async () => {
+        if (reader !== undefined) {
+          while (true) {
+            // A single response stream must be read in order.
+            // eslint-disable-next-line no-await-in-loop
+            const chunk = await reader.read();
+            if (signal.aborted) {
+              throw signal.reason;
+            }
+            if (chunk.done) {
+              break;
+            }
+            bytes += chunk.value.byteLength;
+            if (expectedSize !== undefined && bytes > expectedSize) {
+              throw new Error("Downloaded body exceeds its manifest size");
+            }
+            if (expectedHash !== undefined) {
+              chunks.push(chunk.value);
+            }
+            onReceived(bytes);
+          }
+        }
+        if (expectedSize !== undefined && bytes !== expectedSize) {
+          throw new Error("Downloaded body does not match its manifest size");
+        }
+        if (expectedHash !== undefined) {
+          const body = new Uint8Array(bytes);
+          let offset = 0;
+          for (const chunk of chunks) {
+            body.set(chunk, offset);
+            offset += chunk.byteLength;
+          }
+          const digest = await crypto.subtle.digest("SHA-256", body);
+          const actual = digestContentHash(new Uint8Array(digest));
+          if (actual !== expectedHash) {
+            throw new Error(`Content hash ${actual} for ${url}, expected ${expectedHash}`);
+          }
+        }
+        if (signal.aborted) {
+          throw signal.reason;
+        }
+      })(),
+      aborted,
+    ]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+    // Release a still-open clone branch on mismatch, without waiting for the original branch.
+    void reader?.cancel().catch(() => undefined);
+  }
 }
 
 // Stages the selected sound format and all common files in a separate build cache. Installation
@@ -226,6 +367,31 @@ async function fetchIntoCache(
 export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest): void {
   const worker = self as unknown as WorkerScope;
   const cacheName = cacheNameFor(policy, manifest.version);
+  const progressPorts = new Set<MessagePort>();
+  const progress = createDownloadProgress(
+    {
+      now: () => Date.now(),
+      operationId: crypto.randomUUID(),
+      report: (snapshot: DownloadProgress) => {
+        for (const port of progressPorts) {
+          try {
+            port.postMessage(snapshot);
+          } catch {
+            progressPorts.delete(port);
+            port.close();
+          }
+        }
+        if (snapshot.phase === "complete" || snapshot.phase === "failed") {
+          for (const port of progressPorts) {
+            port.close();
+          }
+          progressPorts.clear();
+        }
+      },
+      version: manifest.version,
+    },
+    manifest.byteSizes,
+  );
   // Routing records are private and cannot be mistaken for a version cache.
   const routingName = `game-kit-routing:${policy.cacheNamePrefix}`;
   const recordUrl = (kind: "build" | "client" | "selection", id: string) =>
@@ -277,10 +443,12 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
   const precache = async () => {
     const soundFormat = new URL(worker.location.href).searchParams.get(SOUND_FORMAT_PARAM);
     const cache = await caches.open(cacheName);
-    const listedUrls = installUrls(manifest, soundFormat);
+    const listedUrls = [...new Set(installUrls(manifest, soundFormat))];
     const kept = await mapBounded(
       REUSE_CONCURRENCY,
-      async (url) => (await storedCopy([cache], url, manifest.contentHashes[url])) !== undefined,
+      async (url) =>
+        (await storedCopy([cache], manifest.contentHashes[url], manifest.byteSizes?.[url], url)) !==
+        undefined,
       listedUrls,
     );
     const urls = listedUrls.filter((_, index) => kept[index] !== true);
@@ -304,7 +472,12 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     const unreused = await mapBounded(
       REUSE_CONCURRENCY,
       async ([url, contentHash]) => {
-        const response = await storedCopy(holders.get(url) ?? [], url, contentHash);
+        const response = await storedCopy(
+          holders.get(url) ?? [],
+          contentHash,
+          manifest.byteSizes?.[url],
+          url,
+        );
         if (response === undefined) {
           return [url];
         }
@@ -314,9 +487,19 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
       reusable,
     );
     const fetched = [...plan.fetch, ...unreused.flat()];
+    // Reused and already verified files consume no network bytes in this operation.
+    progress.begin(fetched);
     const outcomes = await mapBounded(
       PRECACHE_CONCURRENCY,
-      (url) => fetchIntoCache(policy, manifest.contentHashes, cache, url),
+      (url) =>
+        fetchIntoCache(
+          policy,
+          manifest.contentHashes,
+          cache,
+          manifest.byteSizes?.[url],
+          progress,
+          url,
+        ),
       fetched,
     );
     const failures = outcomes.filter((outcome) => outcome !== undefined);
@@ -330,19 +513,30 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
       console.error(`${message}. Last error:`, last.error);
       throw new Error(message, { cause: last.error });
     }
+    progress.verifying();
     await writeRecord("build", cacheName, { manifest, urls: listedUrls });
+    progress.complete();
   };
 
   const currentBuild: BuildRecord = {
     manifest,
-    urls: installUrls(manifest, new URL(worker.location.href).searchParams.get(SOUND_FORMAT_PARAM)),
+    urls: [
+      ...new Set(
+        installUrls(manifest, new URL(worker.location.href).searchParams.get(SOUND_FORMAT_PARAM)),
+      ),
+    ],
   };
   const completeBuild = async (name: string, build: BuildRecord): Promise<boolean> => {
     const cache = await caches.open(name);
     const complete = await mapBounded(
       REUSE_CONCURRENCY,
       async (url) =>
-        (await storedCopy([cache], url, build.manifest.contentHashes[url])) !== undefined,
+        (await storedCopy(
+          [cache],
+          build.manifest.contentHashes[url],
+          build.manifest.byteSizes?.[url],
+          url,
+        )) !== undefined,
       build.urls,
     );
     return complete.every(Boolean);
@@ -481,7 +675,7 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     const key = cacheKeyFor(pathname);
     const response =
       (await cache.match(key)) ??
-      (await fetchAndStore(cache, build.contentHashes[key], key, request));
+      (await fetchAndStore(cache, build.contentHashes[key], build.byteSizes?.[key], key, request));
     // The new document cannot request any resources until its pin has been persisted.
     if (navigation && resultingClientId) {
       await writeRecord("client", resultingClientId, pinned);
@@ -534,7 +728,14 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     }
   };
 
-  worker.addEventListener("install", (event) => event.waitUntil(precache()));
+  worker.addEventListener("install", (event) =>
+    event.waitUntil(
+      precache().catch((error: unknown) => {
+        progress.fail();
+        throw error;
+      }),
+    ),
+  );
   worker.addEventListener("activate", (event) =>
     event.waitUntil(
       (async () => {
@@ -545,6 +746,19 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     ),
   );
   worker.addEventListener("message", (event) => {
+    if ((event.data as { type?: unknown } | null)?.type === DOWNLOAD_PROGRESS_MESSAGE) {
+      const port = event.ports[0];
+      if (port !== undefined) {
+        const snapshot = progress.snapshot();
+        port.postMessage(snapshot);
+        if (snapshot.phase === "complete" || snapshot.phase === "failed") {
+          port.close();
+        } else {
+          progressPorts.add(port);
+        }
+      }
+      return;
+    }
     if (event.data === ROUTING_CAPABILITY) {
       event.waitUntil(
         routing()

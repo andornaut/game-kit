@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { DOWNLOAD_PROGRESS_MESSAGE, type DownloadProgress } from "../downloadProgress.ts";
 import { type RequiredUpdateState, RESUME_CHECK_MS, SKIP_WAITING_MESSAGE } from "../updateReady.ts";
 import {
   INTERACTION_EVENTS,
@@ -134,8 +135,14 @@ function openPage(
   {
     autoLaunch = true,
     offline = false,
+    onDownloadProgress,
     session,
-  }: { offline?: boolean; session?: SessionLike | undefined; autoLaunch?: boolean } = {},
+  }: {
+    offline?: boolean;
+    session?: SessionLike | undefined;
+    autoLaunch?: boolean;
+    onDownloadProgress?: (snapshot: DownloadProgress) => void;
+  } = {},
 ) {
   const registration = deployed === "fails" ? undefined : new FakeRegistration(deployed);
   const container = new FakeContainer(
@@ -164,6 +171,7 @@ function openPage(
     {
       ...OPTIONS,
       ...(onOfflineActivity === undefined ? {} : { onOfflineActivity }),
+      ...(onDownloadProgress === undefined ? {} : { onDownloadProgress }),
       onRequireNewer: (state) => required.push(state),
       onUpdateShown: (visible) => shown.push(visible),
     },
@@ -451,6 +459,54 @@ describe("startOfflinePlay", () => {
     expect(activities).toEqual(["idle", "precaching"]);
     endInstall(registration, worker, "installed");
     expect(activities).toEqual(["idle", "precaching", "idle"]);
+  });
+
+  it("resumes measured progress without changing the prepared-frame or activation boundaries", async () => {
+    const snapshots: DownloadProgress[] = [];
+    let received!: () => void;
+    let current = new Promise<void>((resolve) => {
+      received = resolve;
+    });
+    const { clock, container, play, registration, visibilitySource } = openPage(
+      false,
+      "installing",
+      undefined,
+      {
+        onDownloadProgress: (snapshot) => {
+          snapshots.push(snapshot);
+          received();
+        },
+      },
+    );
+    const worker = startInstall(registration);
+    const ports: MessagePort[] = [];
+    let value = 0.25;
+    const post = vi.spyOn(worker, "postMessage").mockImplementation((message, transfer) => {
+      expect(message).toEqual({ type: DOWNLOAD_PROGRESS_MESSAGE });
+      const port = transfer?.[0] as MessagePort;
+      ports.push(port);
+      port.postMessage({ operationId: "one", phase: "downloading", value, version: "build" });
+    });
+    expect(container.registered).toEqual([]);
+    expect(post).not.toHaveBeenCalled();
+    play.registrationReady();
+    await current;
+    expect(snapshots.at(-1)?.value).toBe(0.25);
+    visibilitySource.setVisibility("hidden");
+    value = 0.75;
+    current = new Promise<void>((resolve) => {
+      received = resolve;
+    });
+    visibilitySource.setVisibility("visible");
+    await current;
+    expect(snapshots.at(-1)?.value).toBe(0.75);
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(container.registered).toHaveLength(1);
+    expect(clock.reloads).toBe(0);
+    endInstall(registration, worker, "installed");
+    for (const port of ports) {
+      port.close();
+    }
   });
 
   it("ends a first visit's precache when registration fails", async () => {

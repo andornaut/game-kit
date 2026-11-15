@@ -1,3 +1,5 @@
+import type { DownloadProgress } from "../downloadProgress.ts";
+import { watchDownloadProgress } from "./downloadProgress.ts";
 import {
   activateWaitingWorker,
   type ContainerLike,
@@ -21,6 +23,9 @@ export const INTERACTION_EVENTS = ["keydown", "pointerdown"] as const;
 export type OfflineActivity = "idle" | "precaching" | "updating";
 
 export interface OfflinePlayOptions extends UpdateReports {
+  // Optional relative bar progress for the installing worker. No byte or numeric labels.
+  // Visibility and activity remain caller-owned; verification stays indeterminate until ready.
+  readonly onDownloadProgress?: (snapshot: DownloadProgress) => void;
   // What the service worker is doing, with no byte or percentage claim. "precaching" is the
   // first-visit precache: only on a page whose container had no controller at start, from the
   // registration request until the first installation ends (its worker leaves the "installing"
@@ -111,6 +116,9 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
   };
   reportActivity("idle");
   let readInstallation: (() => void) | undefined;
+  let progressWorker: ServiceWorkerLike | undefined;
+  let stopProgress: (() => void) | undefined;
+  let visible = page.visibilitySource.visibilityState !== "hidden";
   const watchInstallation = (registration: RegistrationLike) => {
     const watched = new WeakSet<ServiceWorkerLike>();
     const read = () => {
@@ -120,6 +128,16 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
         worker.addEventListener("statechange", read);
       }
       const installing = worker !== null && worker.state === "installing";
+      const reporting =
+        visible && installing && options.onDownloadProgress !== undefined ? worker : undefined;
+      if (progressWorker !== reporting) {
+        stopProgress?.();
+        progressWorker = reporting;
+        stopProgress =
+          reporting === undefined || options.onDownloadProgress === undefined
+            ? undefined
+            : watchDownloadProgress(options.onDownloadProgress, reporting);
+      }
       // A registration installs one worker at a time, so the precache ends when none is installing.
       precaching &&= installing;
       if (installing) {
@@ -165,7 +183,13 @@ export function startOfflinePlay(options: OfflinePlayOptions, page: OfflinePage)
   };
   const flow = createUpdateFlow(page, register, options);
   eventTarget.addEventListener("online", () => flow.noteOnline());
-  watchVisibility(eventTarget, page.visibilitySource, (visible) => {
+  watchVisibility(eventTarget, page.visibilitySource, (nextVisible) => {
+    visible = nextVisible;
+    if (!visible) {
+      stopProgress?.();
+      stopProgress = undefined;
+      progressWorker = undefined;
+    }
     if (visible) {
       readInstallation?.();
     }

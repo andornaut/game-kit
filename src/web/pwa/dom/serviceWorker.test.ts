@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
+import { setImmediate as yieldIO } from "node:timers/promises";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { cacheNameFor, type CachePolicy } from "../cachePolicy.ts";
+import { DOWNLOAD_PROGRESS_MESSAGE, type DownloadProgress } from "../downloadProgress.ts";
 import type { PrecacheManifest } from "../precacheList.ts";
 import { runServiceWorker } from "./serviceWorker.ts";
 
@@ -261,7 +263,11 @@ async function withTimersRun(promise: Promise<unknown>): Promise<unknown> {
   // Each step lets the pending backoff waits and the work after them run.
   const advance = async (): Promise<void> => {
     if (!settled) {
-      await vi.advanceTimersByTimeAsync(1000);
+      // Stream and WebCrypto I/O must settle before advancing the simulated network deadline.
+      await yieldIO();
+      if (!settled) {
+        await vi.advanceTimersByTimeAsync(1000);
+      }
       await advance();
     }
   };
@@ -296,6 +302,190 @@ const without = (path: string, files: Readonly<Record<string, string>>) =>
 
 const OLD = cacheNameFor(POLICY, "v1");
 const NEW = cacheNameFor(POLICY, "v2");
+
+function collectProgress(worker: ReturnType<typeof startWorker>) {
+  const snapshots: DownloadProgress[] = [];
+  const close = vi.fn();
+  worker.nativeWorker.postMessage({ type: DOWNLOAD_PROGRESS_MESSAGE }, [
+    {
+      close,
+      postMessage: (snapshot: DownloadProgress) => snapshots.push(snapshot),
+    } as unknown as MessagePort,
+  ]);
+  return { close, snapshots };
+}
+
+describe("streamed precache progress", () => {
+  beforeEach(() => vi.stubGlobal("Request", PrioritizedRequest));
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const manifest = (files: Record<string, string>): PrecacheManifest => ({
+    byteSizes: Object.fromEntries(
+      Object.entries(files).map(([url, body]) => [url, new TextEncoder().encode(body).byteLength]),
+    ),
+    contentHashes: Object.fromEntries(
+      Object.entries(files).map(([url, body]) => [url, hashOf(body)]),
+    ),
+    sounds: {},
+    urls: Object.keys(files),
+    version: "v2",
+  });
+
+  it("reports decoded chunks rather than Content-Length and completes only after the build record", async () => {
+    const files = { "/file": "abcdefgh" };
+    const server = new FakeServer(files);
+    let body!: ReadableStreamDefaultController<Uint8Array>;
+    let started!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    vi.spyOn(server, "fetch").mockImplementation(
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              body = controller;
+              started();
+            },
+          }),
+          { headers: { "Content-Encoding": "gzip", "Content-Length": "2" } },
+        ),
+    );
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const worker = startWorker(server, {}, manifest(files));
+    const { close, snapshots } = collectProgress(worker);
+    const install = worker.install();
+    await ready;
+    now = 100;
+    body.enqueue(new TextEncoder().encode("abcd"));
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+    expect(snapshots.at(-1)).toMatchObject({ phase: "downloading", value: 0.5 });
+    expect(snapshots.some((snapshot) => snapshot.phase === "complete")).toBe(false);
+    body.enqueue(new TextEncoder().encode("efgh"));
+    body.close();
+    await install;
+    expect(snapshots.at(-1)).toMatchObject({ phase: "complete", value: 1 });
+    expect(
+      await worker.storage.named
+        .get("game-kit-routing:game-")
+        ?.match("/.game-kit-routing/build/game-v2"),
+    ).toBeDefined();
+    expect(close).toHaveBeenCalledOnce();
+    expect(collectProgress(worker).snapshots).toEqual([snapshots.at(-1)]);
+  });
+
+  it("excludes verified cache reuse and alternative sound formats from the download", async () => {
+    const files = { "/cached": "kept", "/new": "new", "/sound.mp3": "mp3", "/sound.ogg": "ogg" };
+    const selected = {
+      ...manifest(files),
+      sounds: { mp3: ["/sound.mp3"], ogg: ["/sound.ogg", "/sound.ogg"] },
+      urls: ["/cached", "/new", "/sound.ogg"],
+    };
+    const server = new FakeServer(files);
+    const worker = startWorker(server, { [NEW]: { "/cached": "kept" } }, selected);
+    const { snapshots } = collectProgress(worker);
+    await worker.install();
+    expect(server.fetched.sort()).toEqual(["/new", "/sound.ogg"]);
+    expect(snapshots.at(-1)).toMatchObject({ phase: "complete", value: 1 });
+  });
+
+  it("refetches a named cached asset whose recorded byte size is wrong", async () => {
+    const files = { "/assets/picture-hash.png": "good" };
+    const server = new FakeServer(files);
+    const worker = startWorker(
+      server,
+      { [NEW]: { "/assets/picture-hash.png": "x" } },
+      { ...manifest(files), contentHashes: {} },
+    );
+    await worker.install();
+    expect(server.fetched).toEqual(["/assets/picture-hash.png"]);
+    expect(await worker.storage.named.get(NEW)?.texts()).toEqual(files);
+  });
+
+  it("reports failure rather than readiness when the final durable build record cannot be written", async () => {
+    const files = { "/file": "body" };
+    const storage = new FakeCaches();
+    const records = await storage.open("game-kit-routing:game-");
+    vi.spyOn(records, "put").mockRejectedValue(new Error("quota"));
+    const worker = startWorker(new FakeServer(files), {}, manifest(files), storage);
+    const { snapshots } = collectProgress(worker);
+    await expect(worker.install()).rejects.toThrow("quota");
+    expect(snapshots.at(-1)).toMatchObject({ phase: "failed", value: undefined });
+    expect(snapshots.some((snapshot) => snapshot.phase === "complete")).toBe(false);
+  });
+
+  it("keeps legacy manifest progress indeterminate instead of inventing a byte total", async () => {
+    const worker = startWorker(new FakeServer(FILES), {}, MANIFEST);
+    const { snapshots } = collectProgress(worker);
+    await worker.install();
+    expect(
+      snapshots
+        .filter((snapshot) => snapshot.phase !== "complete")
+        .every((snapshot) => snapshot.value === undefined),
+    ).toBe(true);
+    expect(snapshots.at(-1)?.value).toBe(1);
+  });
+
+  it("bounds a stalled response body, retries and ends failed without false completion", async () => {
+    vi.useFakeTimers();
+    const files = { "/file": "body" };
+    const server = new FakeServer(files);
+    const fetched = vi
+      .spyOn(server, "fetch")
+      .mockImplementation(async () => new Response(new ReadableStream()));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const worker = startWorker(server, {}, manifest(files));
+    const { snapshots } = collectProgress(worker);
+    await expect(withTimersRun(worker.install())).rejects.toThrow("Precache failed");
+    expect(fetched).toHaveBeenCalledTimes(3);
+    expect(snapshots.at(-1)?.phase).toBe("failed");
+    expect(snapshots.some((snapshot) => snapshot.phase === "complete")).toBe(false);
+  });
+
+  it("does not leave verification pending forever when a cache write stalls", async () => {
+    vi.useFakeTimers();
+    const files = { "/file": "body" };
+    const storage = new FakeCaches();
+    const cache = await storage.open(NEW);
+    let started!: () => void;
+    const nextWrite = () =>
+      new Promise<void>((resolve) => {
+        started = resolve;
+      });
+    const put = vi.spyOn(cache, "put").mockImplementation(() => {
+      started();
+      return new Promise<void>(() => {
+        /* The cache write deliberately never settles. */
+      });
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const worker = startWorker(new FakeServer(files), {}, manifest(files), storage);
+    const { snapshots } = collectProgress(worker);
+    const first = nextWrite();
+    const failed = expect(worker.install()).rejects.toThrow("Precache failed");
+    await first;
+    const expireAndRetry = async (delay: number) => {
+      const following = nextWrite();
+      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(delay);
+      await following;
+    };
+    await expireAndRetry(1000);
+    await expireAndRetry(3000);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await failed;
+    expect(put).toHaveBeenCalledTimes(3);
+    expect(snapshots.at(-1)?.phase).toBe("failed");
+    expect(snapshots.some((snapshot) => snapshot.phase === "complete")).toBe(false);
+  });
+});
 
 describe("runServiceWorker's install", () => {
   beforeEach(() => {
@@ -496,6 +686,13 @@ describe("runServiceWorker's install", () => {
 
   it("retries bytes that lack the recorded content hash, then fails without storing them", async () => {
     vi.useFakeTimers();
+    // Compute real SHA-256 without racing a native crypto thread against virtual deadlines.
+    vi.spyOn(crypto.subtle, "digest").mockImplementation(async (_algorithm, input) => {
+      const bytes = ArrayBuffer.isView(input)
+        ? new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+        : new Uint8Array(input);
+      return new Uint8Array(createHash("sha256").update(bytes).digest()).buffer;
+    });
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const server = new FakeServer({ ...FILES, "/art/same.png": "same, a newer deploy" });
     const { install, storage } = startWorker(server, {}, MANIFEST);
