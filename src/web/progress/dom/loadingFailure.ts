@@ -13,6 +13,10 @@ export interface LoadingFailureTextStyle {
   readonly lineHeight: number;
 }
 
+export interface LoadingFailureActionTextStyle extends LoadingFailureTextStyle {
+  readonly synthesis?: "none" | "weight";
+}
+
 export interface LoadingFailurePresentation {
   readonly panel: {
     readonly maxWidthPx: number;
@@ -29,7 +33,7 @@ export interface LoadingFailurePresentation {
   readonly text: {
     readonly title: LoadingFailureTextStyle;
     readonly body: LoadingFailureTextStyle;
-    readonly action: LoadingFailureTextStyle;
+    readonly action: LoadingFailureActionTextStyle;
   };
   readonly action: {
     readonly widthPx: number;
@@ -190,7 +194,15 @@ function checkedPresentation(
     }
     return style;
   };
-  const text = { action: textStyle("action"), body: textStyle("body"), title: textStyle("title") };
+  const synthesis = presentationRecord(textRecord.action).synthesis;
+  if (synthesis !== undefined && synthesis !== "none" && synthesis !== "weight") {
+    throw new RangeError("presentation.text.action.synthesis must be none or weight");
+  }
+  const actionText: LoadingFailureActionTextStyle = {
+    ...textStyle("action"),
+    ...(synthesis === undefined ? {} : { synthesis }),
+  };
+  const text = { action: actionText, body: textStyle("body"), title: textStyle("title") };
   if (!Number.isFinite(panel.safeInsetPx * 2)) {
     throw new RangeError("Presentation safe inset must have a finite combined extent");
   }
@@ -343,6 +355,11 @@ export function mountLoadingFailure(
       body,
     );
     font(text.action, palette.actionText, retry);
+    if (text.action.synthesis === undefined) {
+      retry.style.removeProperty("font-synthesis");
+    } else {
+      retry.style.setProperty("font-synthesis", text.action.synthesis, "important");
+    }
     styles(
       {
         "align-items": "center",

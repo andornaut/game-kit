@@ -51,6 +51,72 @@ function presentationFixture(unit = 1): LoadingFailurePresentation {
 }
 
 describe("mountLoadingFailure", () => {
+  it("applies and resets only the action synthesis policy without replacing a busy view", async () => {
+    const parent = document.createElement("div");
+    parent.style.setProperty("font-synthesis", "none");
+    document.body.append(parent);
+    const presentation = presentationFixture();
+    const action = { ...presentation.text.action, synthesis: "weight" as const };
+    const configured = { ...presentation, text: { ...presentation.text, action } };
+    let finish!: () => void;
+    const work = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const onRetry = vi.fn(() => work);
+    const view = mountLoadingFailure({ onRetry, presentation: configured }, parent);
+    const button = view.element.querySelector("button")!;
+    const siblings = [...view.element.querySelectorAll<HTMLElement>("h2, p")];
+    const siblingStyles = siblings.map((node) => node.style.cssText);
+    try {
+      expect(button.style.getPropertyValue("font-synthesis")).toBe("weight");
+      expect(button.style.getPropertyPriority("font-synthesis")).toBe("important");
+      (action as { synthesis: string }).synthesis = "none";
+      view.update({ attempt: 1, error: undefined, kind: "failed" });
+      expect(button.style.getPropertyValue("font-synthesis")).toBe("weight");
+      button.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+      button.click();
+      expect(button.disabled).toBe(true);
+      const element = view.element;
+      const next = {
+        ...presentation,
+        text: { ...presentation.text, action: { ...action, synthesis: "none" as const } },
+      };
+      view.setPresentation(next);
+      expect(view.element).toBe(element);
+      expect(element.querySelector("button")).toBe(button);
+      expect(button.disabled).toBe(true);
+      expect(button.style.getPropertyValue("font-synthesis")).toBe("none");
+      expect(button.style.getPropertyPriority("font-synthesis")).toBe("important");
+      const beforeInvalid = element.outerHTML;
+      for (const synthesis of ["auto", "style", "invalid", null, 1]) {
+        const invalid = {
+          ...presentation,
+          text: { ...presentation.text, action: { ...presentation.text.action, synthesis } },
+        };
+        expect(() =>
+          view.setPresentation(invalid as unknown as LoadingFailurePresentation),
+        ).toThrow(RangeError);
+        expect(element.outerHTML).toBe(beforeInvalid);
+      }
+      view.setPresentation(presentation);
+      expect(button.style.getPropertyValue("font-synthesis")).toBe("");
+      expect(button.style.getPropertyPriority("font-synthesis")).toBe("");
+      expect(button.disabled).toBe(true);
+      expect(siblings.map((node) => node.style.cssText)).toEqual(siblingStyles);
+      expect(parent.style.getPropertyValue("font-synthesis")).toBe("none");
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(onRetry).toHaveBeenCalledOnce();
+      finish();
+      await work;
+      await Promise.resolve();
+      expect(button.disabled).toBe(false);
+    } finally {
+      finish();
+      view.dispose();
+      parent.remove();
+    }
+  });
+
   it("hardens a caller presentation after reset and snapshots its geometry, type and palette", async () => {
     const presentation = presentationFixture(0.5);
     const mutable = presentation as {
@@ -202,6 +268,13 @@ describe("mountLoadingFailure", () => {
       invalid.push({
         ...presentationFixture(),
         palette: { ...presentationFixture().palette, panel: value },
+      });
+    }
+    for (const synthesis of ["auto", "style", "invalid", null, 1]) {
+      const original = presentationFixture();
+      invalid.push({
+        ...original,
+        text: { ...original.text, action: { ...original.text.action, synthesis } },
       });
     }
     for (const path of ["title", "body", "action"] as const) {
