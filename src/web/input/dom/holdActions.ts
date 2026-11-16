@@ -19,6 +19,8 @@ export interface HoldAction {
 }
 
 export interface HoldActionsOptions {
+  // Opt in to nonprimary touch contacts, retaining one owned UI gesture at a time.
+  readonly allowNonPrimaryTouch?: boolean;
   readonly guard: PressGuard;
   // Resolve both a descendant event target and the original control itself. Return null to opt out.
   readonly resolve: (target: EventTarget | null) => HoldAction | null;
@@ -70,6 +72,13 @@ export function bindHoldActions(
   if (view === null) {
     throw new Error("Hold actions require a document window");
   }
+  const allowNonPrimaryTouch = options.allowNonPrimaryTouch;
+  if (allowNonPrimaryTouch !== undefined && typeof allowNonPrimaryTouch !== "boolean") {
+    throw new RangeError("allowNonPrimaryTouch must be a boolean");
+  }
+  const eligible = (event: PointerEvent) =>
+    event.button === 0 &&
+    (event.isPrimary || (allowNonPrimaryTouch === true && event.pointerType === "touch"));
   const releaseOptions = "activation" in options ? options : undefined;
   if (
     releaseOptions !== undefined &&
@@ -223,19 +232,14 @@ export function bindHoldActions(
     if (invalidatedRelease?.pointerId === event.pointerId) {
       invalidatedRelease = undefined;
     }
-    if (
-      releaseOptions !== undefined &&
-      active?.press.state === "moved" &&
-      event.isPrimary &&
-      event.button === 0
-    ) {
+    if (releaseOptions !== undefined && active?.press.state === "moved" && eligible(event)) {
       cancel();
     }
     downRevision += 1;
     clearRelease();
   };
   const onDown = (event: PointerEvent) => {
-    if (disposed || active !== undefined || !event.isPrimary || event.button !== 0 || !passes()) {
+    if (disposed || active !== undefined || !eligible(event) || !passes()) {
       return;
     }
     const action =

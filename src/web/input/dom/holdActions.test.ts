@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { createModalInputGate } from "../../../input/modalInput.ts";
 import { guardClicks } from "../../ui/dom/domPress.ts";
-import { bindHoldActions, type HoldAction } from "./holdActions.ts";
+import { bindHoldActions, type HoldAction, type HoldActionsOptions } from "./holdActions.ts";
 
 function pointer(type: string, target: EventTarget, init: PointerEventInit = {}) {
   const event = new PointerEvent(type, {
@@ -308,6 +308,171 @@ function bindRelease(
     root,
   );
 }
+
+it("opts a nonprimary touch into one UI tap or hold while three outside fingers remain down", () => {
+  const world = document.createElement("canvas");
+  document.body.append(world);
+  const worldDown = vi.fn();
+  world.addEventListener("pointerdown", worldDown);
+  try {
+    for (const allowNonPrimaryTouch of [undefined, false, true]) {
+      const activate = vi.fn();
+      const hold = vi.fn();
+      action = { ...action, activate, hold };
+      bindRelease({
+        ...(allowNonPrimaryTouch === undefined ? {} : { allowNonPrimaryTouch }),
+        pointerTarget: document,
+      });
+      for (const pointerId of [1, 2, 3]) {
+        pointer("pointerdown", world, {
+          clientX: 100,
+          isPrimary: pointerId === 1,
+          pointerId,
+          pointerType: "touch",
+        });
+      }
+      const touch = { isPrimary: false, pointerId: 4, pointerType: "touch" };
+      pointer("pointerdown", child, touch);
+      pointer("pointerup", child, touch);
+      expect(activate).toHaveBeenCalledTimes(allowNonPrimaryTouch === true ? 1 : 0);
+      if (allowNonPrimaryTouch === true) {
+        expect(click(child, 4).defaultPrevented).toBe(true);
+      }
+      pointer("pointerdown", child, touch);
+      pointer("pointerdown", child, { ...touch, pointerId: 5 });
+      pointer("pointerup", child, { ...touch, pointerId: 5 });
+      vi.advanceTimersByTime(100);
+      expect(hold).toHaveBeenCalledTimes(allowNonPrimaryTouch === true ? 1 : 0);
+      pointer("pointerup", child, touch);
+      if (allowNonPrimaryTouch === true) {
+        expect(click(child, 4).defaultPrevented).toBe(true);
+      }
+      expect(activate).toHaveBeenCalledTimes(allowNonPrimaryTouch === true ? 1 : 0);
+      for (const pointerId of [1, 2, 3]) {
+        pointer("pointerup", world, {
+          clientX: 100,
+          isPrimary: pointerId === 1,
+          pointerId,
+          pointerType: "touch",
+        });
+      }
+    }
+    expect(worldDown).toHaveBeenCalledTimes(9);
+    expect(original).not.toHaveBeenCalled();
+  } finally {
+    world.remove();
+  }
+});
+
+it("releases moved or canceled nonprimary ownership for a fresh touch without admitting other pointer kinds", () => {
+  const activate = vi.fn();
+  action = { ...action, activate };
+  bindRelease({ allowNonPrimaryTouch: true });
+  const touch = { isPrimary: false, pointerId: 4, pointerType: "touch" };
+  pointer("pointerdown", child, touch);
+  pointer("pointermove", child, { ...touch, clientX: 20 });
+  pointer("pointerdown", child, { ...touch, pointerId: 5 });
+  pointer("pointerup", child, touch);
+  pointer("pointerup", child, { ...touch, pointerId: 5 });
+  expect(activate).toHaveBeenCalledOnce();
+  expect(click(child, 5).defaultPrevented).toBe(true);
+  pointer("pointerdown", child, { ...touch, pointerId: 6 });
+  pointer("pointercancel", child, { ...touch, pointerId: 6 });
+  pointer("pointerdown", child, { ...touch, pointerId: 7 });
+  pointer("pointerup", child, { ...touch, pointerId: 7 });
+  expect(activate).toHaveBeenCalledTimes(2);
+  expect(click(child, 7).defaultPrevented).toBe(true);
+  for (const init of [
+    { button: 0, isPrimary: false, pointerType: "mouse" },
+    { button: 0, isPrimary: false, pointerType: "pen" },
+    { button: 2, isPrimary: true, pointerType: "mouse" },
+    { button: 2, isPrimary: false, pointerType: "touch" },
+  ]) {
+    pointer("pointerdown", child, init);
+    vi.advanceTimersByTime(100);
+    pointer("pointerup", child, init);
+  }
+  expect(activate).toHaveBeenCalledTimes(2);
+  expect(vi.getTimerCount()).toBeLessThanOrEqual(1);
+});
+
+it("keeps disabled, availability and captured modal guards on opted-in touch dispatch", () => {
+  const activate = vi.fn();
+  action = { ...action, activate };
+  bindRelease({ allowNonPrimaryTouch: true });
+  for (const reason of ["disabled", "unavailable", "modal"]) {
+    const touch = { isPrimary: false, pointerId: 4, pointerType: "touch" };
+    pointer("pointerdown", child, touch);
+    button.disabled = reason === "disabled";
+    enabled = reason !== "unavailable";
+    const modal = reason === "modal" ? gate.open() : undefined;
+    vi.advanceTimersByTime(100);
+    pointer("pointerup", child, touch);
+    expect(activate).not.toHaveBeenCalled();
+    button.disabled = false;
+    enabled = true;
+    modal?.close();
+  }
+  const fresh = { isPrimary: false, pointerId: 5, pointerType: "touch" };
+  pointer("pointerdown", child, fresh);
+  pointer("pointerup", child, fresh);
+  expect(activate).toHaveBeenCalledOnce();
+});
+
+it("snapshots the optional policy in native-click mode and validates both modes before listeners", () => {
+  stop();
+  stopGuard();
+  const hold = vi.fn();
+  action = { ...action, hold };
+  const options = { allowNonPrimaryTouch: true, guard: { gate }, resolve: () => action };
+  stop = bindHoldActions(options, root);
+  options.allowNonPrimaryTouch = false;
+  const touch = { isPrimary: false, pointerId: 4, pointerType: "touch" };
+  pointer("pointerdown", child, touch);
+  vi.advanceTimersByTime(100);
+  pointer("pointerup", child, touch);
+  expect(hold).toHaveBeenCalledOnce();
+  expect(click(child, 4).defaultPrevented).toBe(true);
+  expect(click(child, undefined, 0).defaultPrevented).toBe(false);
+  expect(original).toHaveBeenCalledOnce();
+  stop();
+  stop = bindHoldActions(options, root);
+  pointer("pointerdown", child, touch);
+  vi.advanceTimersByTime(100);
+  pointer("pointerup", child, touch);
+  expect(hold).toHaveBeenCalledOnce();
+  pointer("pointerdown", child, { pointerType: "mouse" });
+  vi.advanceTimersByTime(100);
+  pointer("pointerup", child, { pointerType: "mouse" });
+  expect(hold).toHaveBeenCalledTimes(2);
+  stop();
+  const adds = [
+    vi.spyOn(root, "addEventListener"),
+    vi.spyOn(document, "addEventListener"),
+    vi.spyOn(window, "addEventListener"),
+  ];
+  try {
+    for (const invalid of [null, 0, 1, "true"]) {
+      for (const release of [false, true]) {
+        const bad = {
+          ...options,
+          allowNonPrimaryTouch: invalid,
+          ...(release ? { activation: "pointer-release", resolvePointer: () => action } : {}),
+        };
+        expect(() => bindHoldActions(bad as unknown as HoldActionsOptions, root)).toThrow(
+          RangeError,
+        );
+      }
+    }
+    for (const add of adds) {
+      expect(add).not.toHaveBeenCalled();
+    }
+  } finally {
+    for (const add of adds) {
+      add.mockRestore();
+    }
+  }
+});
 
 it("owns short releases and holds once while preserving native keyboard and unrelated clicks", () => {
   bindRelease();
