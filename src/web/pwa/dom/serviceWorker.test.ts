@@ -722,7 +722,7 @@ describe("runServiceWorker's install", () => {
   });
 
   it("keeps what a failed attempt stored, and the next attempt fetches only what is missing", async () => {
-    vi.useFakeTimers();
+    virtualNetworkClock();
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const storage = new FakeCaches();
     const first = new FakeServer(FILES);
@@ -731,6 +731,10 @@ describe("runServiceWorker's install", () => {
       withTimersRun(startWorker(first, {}, MANIFEST, storage).install()),
     ).rejects.toThrow("/art/new.png");
     expect(error).toHaveBeenCalledTimes(1);
+    expect(first.fetched.filter((path) => path === "/art/new.png")).toHaveLength(3);
+    expect(first.fetched.filter((path) => path !== "/art/new.png").sort()).toEqual(
+      Object.keys(without("/art/new.png", FILES)).sort(),
+    );
     expect(await storage.named.get(NEW)?.texts()).toEqual(without("/art/new.png", FILES));
     const second = new FakeServer(FILES);
     await startWorker(second, {}, MANIFEST, storage).install();
