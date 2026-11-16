@@ -278,6 +278,12 @@ export const verifiedFamily: VerifiedFamily = {
 export const bodyOptions: Pick<PrecachePluginOptions, 'verifiedJsonBodies'> = {
   verifiedJsonBodies: () => [verifiedFamily.urls],
 };
+export const profiledFamily: VerifiedFamily = {
+  ...verifiedFamily, responseProfile:'fetch-json-data-v1',
+};
+export const profiledBodyOptions: Pick<PrecachePluginOptions, 'verifiedJsonBodies'> = {
+  verifiedJsonBodies: () => [{urls:profiledFamily.urls,responseProfile:'fetch-json-data-v1'}],
+};
 import { storageFixture } from '@andornaut/game-kit/test/storageFixture';
 export const image: RgbaImage = { data: new Uint8Array(4), height: 1, width: 1 };
 export const manifest: PrecacheManifest = { contentHashes: {}, sounds: {}, urls: [], version: 'proof' };
