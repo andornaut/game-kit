@@ -121,6 +121,20 @@ for (const mode of [undefined, 'inactivity']) {
     assert.equal(requests,1);
   } finally { groups.dispose(); }
 }
+import { runServiceWorker } from '@andornaut/game-kit/runtime/web/pwa/dom/serviceWorker';
+const previousSelf = globalThis.self;
+try {
+  for (const input of [{contentHashes:{},sounds:{},urls:[],version:'legacy-proof'},
+    [1,'0123456789abcdef',null,[],[],[],null,[],null,null]]) {
+    const listeners = [];
+    globalThis.self = {location:{href:'https://fixture.invalid/sw.js',origin:'https://fixture.invalid'},
+      addEventListener(type){listeners.push(type);}};
+    runServiceWorker({cacheNamePrefix:'proof-',hashedAssetPrefix:'/assets/'},input);
+    assert.deepEqual(listeners,['install','activate','message','fetch']);
+  }
+} finally {
+  if (previousSelf === undefined) delete globalThis.self; else globalThis.self = previousSelf;
+}
 import { precacheFingerprint } from '@andornaut/game-kit/build/precacheList';
 import { createHash } from 'node:crypto';
 const jsonBody = '{}';
@@ -135,7 +149,8 @@ const bodyPolicy = {cacheNamePrefix:'proof-',hashedAssetPrefix:'/assets/'};
 const legacyFingerprint = precacheFingerprint(bodyPolicy, bodyHashes, bodySizes);
 assert.equal(precacheFingerprint(bodyPolicy, bodyHashes, bodySizes, undefined, undefined), legacyFingerprint);
 assert.notEqual(precacheFingerprint(bodyPolicy, bodyHashes, bodySizes, undefined, [verifiedFamily]), legacyFingerprint);
-for (const privateHelper of ['runtime/web/pwa/verifiedJsonBody', 'web/pwa/verifiedJsonBody']) {
+for (const privateHelper of ['runtime/web/pwa/verifiedJsonBody', 'web/pwa/verifiedJsonBody',
+  'runtime/web/pwa/precacheWire', 'web/pwa/precacheWire']) {
   assert.throws(() => import.meta.resolve('@andornaut/game-kit/' + privateHelper), {
     code: 'ERR_PACKAGE_PATH_NOT_EXPORTED'
   });
@@ -221,6 +236,7 @@ import { splitBalancedGraphemes } from '@andornaut/game-kit/runtime/lines';
 export const balancedText: readonly [string,string] | undefined = splitBalancedGraphemes(text=>text.length,'abcde');
 import type { RgbaImage } from '@andornaut/game-kit/runtime/art/rgbaImage';
 import type { PrecacheManifest } from '@andornaut/game-kit/runtime/web/pwa/precacheManifest';
+import { runServiceWorker } from '@andornaut/game-kit/runtime/web/pwa/dom/serviceWorker';
 import type { PrecacheManifest as LegacyManifest } from '@andornaut/game-kit/web/pwa/precacheList';
 import type { PrecachePluginOptions } from '@andornaut/game-kit/build/precachePlugin';
 import type { AssetGroupsOptions } from '@andornaut/game-kit/runtime/web/pwa/dom/assetGroups';
@@ -238,6 +254,7 @@ export const bodyOptions: Pick<PrecachePluginOptions, 'verifiedJsonBodies'> = {
 import { storageFixture } from '@andornaut/game-kit/test/storageFixture';
 export const image: RgbaImage = { data: new Uint8Array(4), height: 1, width: 1 };
 export const manifest: PrecacheManifest = { contentHashes: {}, sounds: {}, urls: [], version: 'proof' };
+export function bootWorker(policy: Parameters<typeof runServiceWorker>[0]):void { runServiceWorker(policy,manifest); }
 export const legacyManifest: LegacyManifest = { ...manifest, verifiedJsonBodies: [verifiedFamily] };
 export const fixture = storageFixture();
 import type { LayoutColumnSizing, LayoutColumnTrack, LayoutNode } from '@andornaut/game-kit/runtime/ui/layoutTree';

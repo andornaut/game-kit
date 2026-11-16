@@ -55,6 +55,8 @@ Every legacy API path remains available unchanged as a deprecated compatibility 
 
 ## Classic service-worker output
 
+The emitted worker carries an internal, versioned compact manifest with one shared URL table. The plugin fingerprints the semantic manifest before encoding; every URL, sound alternative, group, initial group order, hash, byte size, build ID and verified JSON family is retained. Optional fields distinguish absence from empty values. Worker entries pass `GAME_KIT_PRECACHE_MANIFEST` directly to `runServiceWorker`, which decodes and validates it before cache access or listener registration. No caller decoder is required. Durable build records remain semantic manifests for installed-worker compatibility; semantic input remains accepted. Unknown wire versions and invalid references or metadata fail closed.
+
 The precache plugin builds the worker through Vite's isolated worker pipeline as one self-contained classic script. Shared page modules cannot split the worker into ESM chunks. Builds reject worker imports or additional emitted files; games retain their existing classic registration and runtime policies.
 
 ## Action font synthesis in 0.51.0
