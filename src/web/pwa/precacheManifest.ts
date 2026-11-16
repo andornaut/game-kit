@@ -1,4 +1,5 @@
 import type { PrecacheGroups } from "./precacheGroups.ts";
+import type { VerifiedJsonBody } from "./verifiedJsonBody.ts";
 
 // The service worker's precache: every URL the game needs to boot offline, each sound file by
 // format (the worker stores the one format the page plays, named on its URL by
@@ -15,5 +16,6 @@ export interface PrecacheManifest {
   groups?: PrecacheGroups;
   sounds: Record<string, string[]>;
   urls: string[];
+  verifiedJsonBodies?: readonly VerifiedJsonBody[];
   version: string;
 }

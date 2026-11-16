@@ -1,6 +1,7 @@
 import { isBuildId } from "./buildIdentity.ts";
 import { type CachePolicy, isHashedAssetUrl } from "./cachePolicy.ts";
 import { type PrecacheGroups, validatePrecacheGroups } from "./precacheGroups.ts";
+import { validateVerifiedJsonBodies, type VerifiedJsonBody } from "./verifiedJsonBody.ts";
 
 export type { PrecacheManifest } from "./precacheManifest.ts";
 
@@ -72,6 +73,7 @@ export function precacheFingerprint(
   contentHashes: ReadonlyMap<string, string>,
   byteSizes?: ReadonlyMap<string, number>,
   grouped?: { readonly buildId: string; readonly groups: PrecacheGroups },
+  verifiedJsonBodies?: readonly VerifiedJsonBody[],
 ): string {
   if (byteSizes !== undefined && byteSizes.size !== contentHashes.size) {
     throw new RangeError("Precache byte sizes must cover exactly the listed URLs");
@@ -104,5 +106,16 @@ export function precacheFingerprint(
       return `${entry} ${size}`;
     })
     .join("\n");
-  return metadata === undefined ? files : `${files}\n${JSON.stringify(metadata)}`;
+  const legacy = metadata === undefined ? files : `${files}\n${JSON.stringify(metadata)}`;
+  return verifiedJsonBodies === undefined
+    ? legacy
+    : `${legacy}\n${JSON.stringify({
+        verifiedJsonBodies: validateVerifiedJsonBodies(
+          {
+            urls,
+            ...(byteSizes === undefined ? {} : { byteSizes: Object.fromEntries(byteSizes) }),
+          },
+          verifiedJsonBodies,
+        ),
+      })}`;
 }

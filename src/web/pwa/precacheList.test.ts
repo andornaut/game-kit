@@ -202,3 +202,28 @@ describe("precacheFingerprint", () => {
     ).toThrow(/content hash/);
   });
 });
+
+it("fingerprints canonical full-body reuse metadata without changing the absent legacy form", () => {
+  const policy = { cacheNamePrefix: "game-", hashedAssetPrefix: "/assets/" };
+  const hashes = new Map([
+    ["/a.json", "short"],
+    ["/b.json", "short"],
+  ]);
+  const sizes = new Map([
+    ["/a.json", 12],
+    ["/b.json", 12],
+  ]);
+  const family = { byteSize: 12, sha256: "a".repeat(64), urls: ["/b.json", "/a.json"] };
+  const old = precacheFingerprint(policy, hashes, sizes);
+  expect(precacheFingerprint(policy, hashes, sizes, undefined, undefined)).toBe(old);
+  const enabled = precacheFingerprint(policy, hashes, sizes, undefined, [family]);
+  expect(enabled).not.toBe(old);
+  expect(
+    precacheFingerprint(policy, hashes, sizes, undefined, [
+      { ...family, urls: [...family.urls].reverse() },
+    ]),
+  ).toBe(enabled);
+  expect(
+    precacheFingerprint(policy, hashes, sizes, undefined, [{ ...family, sha256: "b".repeat(64) }]),
+  ).not.toBe(enabled);
+});

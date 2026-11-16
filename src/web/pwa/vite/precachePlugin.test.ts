@@ -75,6 +75,7 @@ function site(icon: string, placeholder = true): string {
 interface Build {
   readonly buildId?: string | undefined;
   readonly groups?: PrecachePluginOptions["groups"];
+  readonly verifiedJsonBodies?: PrecachePluginOptions["verifiedJsonBodies"];
   readonly lateEmitted?: Readonly<Record<string, string>>;
   // Files a plugin before the precache writes into the build output, by file name.
   readonly emitted?: Readonly<Record<string, string | Uint8Array>>;
@@ -112,6 +113,7 @@ async function precache({
   placeholder,
   root = site("icon", placeholder),
   unreadable,
+  verifiedJsonBodies,
 }: Build) {
   if (missing !== undefined) {
     rmSync(join(root, "public", missing));
@@ -136,6 +138,7 @@ async function precache({
         pageHtmlFile: "index.html",
         policy: POLICY,
         serviceWorkerSource: join(root, "sw.js"),
+        ...(verifiedJsonBodies === undefined ? {} : { verifiedJsonBodies }),
       }),
       { ...emitPlugin(lateEmitted), enforce: "post", name: "late-art-json" },
     ],
@@ -171,6 +174,35 @@ async function precache({
 }
 
 describe("precachePlugin", { timeout: 60_000 }, () => {
+  it("records full identity only for explicitly selected identical final JSON bodies", async () => {
+    const text = '{"values":[1,2,3]}';
+    const root = site("icon");
+    const emitted = { "a.json": text, "b.json": text };
+    const options = {
+      hashedFiles: () => ({ sounds: {}, urls: ["/a.json", "/b.json"] }),
+      lateEmitted: emitted,
+      root,
+      verifiedJsonBodies: () => [["/b.json", "/a.json"]],
+    };
+    const manifest = await precache(options);
+    expect(manifest.verifiedJsonBodies).toEqual([
+      {
+        byteSize: Buffer.byteLength(text),
+        sha256: createHash("sha256").update(text).digest("hex"),
+        urls: ["/a.json", "/b.json"],
+      },
+    ]);
+    expect(manifest.urls).toEqual(expect.arrayContaining(["/a.json", "/b.json"]));
+    expect(manifest.byteSizes?.["/a.json"]).toBe(Buffer.byteLength(text));
+    expect(manifest.contentHashes["/b.json"]).toBe(contentHash(Buffer.from(text)));
+    const legacy = await precache({ hashedFiles: options.hashedFiles, lateEmitted: emitted, root });
+    expect(legacy).not.toHaveProperty("verifiedJsonBodies");
+    expect(legacy.version).not.toBe(manifest.version);
+    await expect(
+      precache({ ...options, lateEmitted: { ...emitted, "b.json": '{"values":[1,2,4]}' } }),
+    ).rejects.toThrow(/bodies differ/);
+  });
+
   it("isolates a classic worker when page and worker share the byte-progress runtime", async () => {
     const root = site("icon");
     const shared = fileURLToPath(new URL("../downloadProgress.ts", import.meta.url));

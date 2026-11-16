@@ -103,7 +103,12 @@ class FakeCache {
   }
 
   match(key: Request | string): Promise<Response | undefined> {
-    return Promise.resolve(this.bodies.get(pathOf(key))?.clone());
+    const source = this.bodies.get(pathOf(key));
+    const response = source?.clone();
+    if (response !== undefined && source!.url !== "") {
+      Object.defineProperty(response, "url", { value: source!.url });
+    }
+    return Promise.resolve(response);
   }
 
   put(key: Request | string, response: Response): Promise<void> {
@@ -125,8 +130,8 @@ class FakeCache {
 class PrioritizedRequest extends Request {
   readonly priorityHint: RequestPriority | undefined;
 
-  constructor(input: string, init?: RequestInit) {
-    super(new URL(input, ORIGIN), init);
+  constructor(input: string | Request, init?: RequestInit) {
+    super(typeof input === "string" ? new URL(input, ORIGIN) : input, init);
     this.priorityHint = init?.priority;
   }
 }
@@ -143,7 +148,10 @@ class FakeServer {
   readonly priorities: (RequestPriority | undefined)[] = [];
   readonly statuses = new Map<string, number>();
 
-  constructor(readonly files: Readonly<Record<string, string>>) {}
+  constructor(
+    readonly files: Readonly<Record<string, string>>,
+    readonly jsonResponses = false,
+  ) {}
 
   async fetch(request: Request): Promise<Response> {
     const path = pathOf(request);
@@ -167,7 +175,21 @@ class FakeServer {
         }
         throw new TypeError(`Failed to fetch ${path}`);
       }
-      return new Response(this.files[path] ?? "", { status: this.statuses.get(path) ?? 200 });
+      const response = new Response(this.files[path] ?? "", {
+        ...(this.jsonResponses
+          ? {
+              headers: {
+                "content-type": "application/json; charset=utf-8",
+                "x-content-type-options": "nosniff",
+              },
+            }
+          : {}),
+        status: this.statuses.get(path) ?? 200,
+      });
+      if (this.jsonResponses) {
+        Object.defineProperty(response, "url", { value: request.url });
+      }
+      return response;
     } finally {
       this.inFlight -= 1;
     }
@@ -1518,5 +1540,314 @@ describe("grouped precache dispatcher", () => {
     await next.activate();
     expect(durable.builds.get(NEW)).toEqual(["first", "second"]);
     expect(durable.builds.has(OLD)).toBe(false);
+  });
+});
+
+describe("explicit verified JSON body reuse", () => {
+  beforeEach(() => {
+    virtualNetworkClock();
+    vi.stubGlobal("Request", PrioritizedRequest);
+    durable.builds.clear();
+    durable.barrier = undefined;
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+  const fixture = (counts = [4, 4, 3]) => {
+    const files: Record<string, string> = {};
+    const verifiedJsonBodies = counts.map((count, index) => {
+      const body = JSON.stringify({ values: Array.from({ length: index + 1 }, () => index) });
+      const urls = Array.from({ length: count }, (_, item) => `/family-${index}/item-${item}.json`);
+      for (const url of urls) {
+        files[url] = body;
+      }
+      return {
+        byteSize: Buffer.byteLength(body),
+        sha256: createHash("sha256").update(body).digest("hex"),
+        urls,
+      };
+    });
+    const manifest: PrecacheManifest = {
+      byteSizes: Object.fromEntries(
+        Object.entries(files).map(([url, text]) => [url, Buffer.byteLength(text)]),
+      ),
+      contentHashes: Object.fromEntries(
+        Object.entries(files).map(([url, text]) => [url, hashOf(text)]),
+      ),
+      sounds: {},
+      urls: Object.keys(files),
+      verifiedJsonBodies,
+      version: "reuse",
+    };
+    return { files, manifest, server: new FakeServer(files, true) };
+  };
+
+  it("fetches three representatives for eleven URLs and preserves complete offline coverage", async () => {
+    const f = fixture();
+    const fetch = f.server.fetch.bind(f.server);
+    vi.spyOn(f.server, "fetch").mockImplementation(async (request) => {
+      expect(request.credentials).toBe("omit");
+      expect(request.redirect).toBe("error");
+      const response = await fetch(request);
+      response.headers.set("content-encoding", "gzip");
+      response.headers.set("content-length", "1");
+      return response;
+    });
+    const worker = startWorker(f.server, {}, f.manifest);
+    const { snapshots } = collectProgress(worker);
+    await withTimersRun(worker.install());
+    expect(f.server.fetched).toHaveLength(3);
+    expect(f.server.maxInFlight).toBeLessThanOrEqual(4);
+    const cached = worker.storage.named.get("game-reuse")!;
+    expect(await cached.texts()).toEqual(f.files);
+    await Promise.all(
+      f.manifest.verifiedJsonBodies!.map(async (family) => {
+        const alias = await cached.match(family.urls[1]!);
+        expect(alias?.url).toBe("");
+        expect([...alias!.headers]).toEqual([
+          ["content-type", "application/json; charset=utf-8"],
+          ["x-content-type-options", "nosniff"],
+        ]);
+      }),
+    );
+    expect(snapshots.at(-1)).toMatchObject({ phase: "complete", value: 1 });
+    await worker.activate();
+    await Promise.all(
+      Object.entries(f.files).map(async ([url, text]) => {
+        expect(await worker.respond(new Request(`${ORIGIN}${url}`))).toBe(text);
+      }),
+    );
+    expect(f.server.fetched).toHaveLength(3);
+  });
+
+  it("fully reverifies canonical empty-URL family sources from earlier caches", async () => {
+    const f = fixture();
+    const storage = new FakeCaches();
+    const previous = await storage.open("game-old");
+    for (const family of f.manifest.verifiedJsonBodies!) {
+      previous.bodies.set(
+        family.urls[0]!,
+        new Response(f.files[family.urls[0]!]!, {
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "x-content-type-options": "nosniff",
+          },
+        }),
+      );
+    }
+    const worker = startWorker(f.server, {}, f.manifest, storage);
+    await withTimersRun(worker.install());
+    expect(f.server.fetched).toEqual([]);
+    expect(await storage.named.get("game-reuse")!.texts()).toEqual(f.files);
+  });
+
+  it("rejects a short-hash collision in cache and rechecks full identity before activation", async () => {
+    const f = fixture([2]);
+    const full = (text: string) => {
+      const bytes = createHash("sha256").update(text).digest();
+      bytes.fill(0, 0, 6);
+      return bytes;
+    };
+    vi.spyOn(crypto.subtle, "digest").mockImplementation(async (_algorithm, input) => {
+      const bytes = ArrayBuffer.isView(input)
+        ? new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+        : new Uint8Array(input);
+      const digest = createHash("sha256").update(bytes).digest();
+      digest.fill(0, 0, 6);
+      return new Uint8Array(digest).buffer;
+    });
+    const family = f.manifest.verifiedJsonBodies![0]!;
+    f.manifest.verifiedJsonBodies = [
+      { ...family, sha256: full(f.files[family.urls[0]!]!).toString("hex") },
+    ];
+    f.manifest.contentHashes = Object.fromEntries(family.urls.map((url) => [url, "AAAAAAAA"]));
+    const storage = new FakeCaches();
+    const cache = await storage.open("game-reuse");
+    const corrupt = f.files[family.urls[0]!]!.replace("0", "9");
+    for (const url of family.urls) {
+      cache.bodies.set(
+        url,
+        new Response(corrupt, {
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "x-content-type-options": "nosniff",
+          },
+        }),
+      );
+    }
+    const worker = startWorker(f.server, {}, f.manifest, storage);
+    await withTimersRun(worker.install());
+    expect(f.server.fetched).toHaveLength(1);
+    expect(await cache.texts()).toEqual(f.files);
+    cache.bodies.set(
+      family.urls[1]!,
+      new Response(corrupt, {
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "x-content-type-options": "nosniff",
+        },
+      }),
+    );
+    await worker.activate();
+    await expect(
+      worker.respond(requestFor(family.urls[0]!, true), "", "new-document"),
+    ).rejects.toThrow(/complete/);
+  });
+
+  it("rejects conflicting full/logical metadata before opening a build cache", () => {
+    const f = fixture([2]);
+    f.manifest.contentHashes[f.manifest.urls[1]!] = "conflict";
+    const storage = new FakeCaches();
+    expect(() => startWorker(f.server, {}, f.manifest, storage)).toThrow(/conflicts/);
+    expect(storage.named.size).toBe(0);
+    expect(f.server.fetched).toEqual([]);
+  });
+
+  it("does not commit readiness while a verified alias write is pending", async () => {
+    const f = fixture([2]);
+    const storage = new FakeCaches();
+    const cache = await storage.open("game-reuse");
+    const alias = f.manifest.verifiedJsonBodies![0]!.urls[1]!;
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const writing = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const put = cache.put.bind(cache);
+    vi.spyOn(cache, "put").mockImplementation(async (key, response) => {
+      if (pathOf(key) === alias) {
+        entered();
+        await gate;
+      }
+      await put(key, response);
+    });
+    const worker = startWorker(f.server, {}, f.manifest, storage);
+    const { snapshots } = collectProgress(worker);
+    const installing = worker.install();
+    await writing;
+    expect(snapshots.some(({ phase }) => phase === "complete")).toBe(false);
+    expect(
+      storage.named
+        .get("game-kit-routing:game-")
+        ?.bodies.has("/.game-kit-routing/build/game-reuse") ?? false,
+    ).toBe(false);
+    release();
+    await installing;
+    expect(snapshots.at(-1)?.phase).toBe("complete");
+    expect(await cache.texts()).toEqual(f.files);
+  });
+
+  it("retains successes after a family 503 and serializes parallel group Retry", async () => {
+    const f = fixture();
+    f.manifest.buildId = "a".repeat(40);
+    f.manifest.groups = { initial: [], urls: { later: [...f.manifest.urls] } };
+    const failed = f.manifest.verifiedJsonBodies![1]!.urls[0]!;
+    f.server.statuses.set(failed, 503);
+    const worker = startWorker(f.server, {}, f.manifest, undefined, [{ id: "page" }]);
+    await withTimersRun(worker.install());
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const first = await withTimersRun(worker.requestGroups(f.manifest.buildId, ["later"]));
+    expect(first).toEqual({ reason: "failed", status: "unavailable" });
+    expect(durable.builds.get("game-reuse")).toEqual([]);
+    expect(worker.storage.named.get("game-reuse")!.bodies.size).toBe(7);
+    const fetched = f.server.fetched.length;
+    f.server.statuses.delete(failed);
+    const retry = await withTimersRun(
+      Promise.all([
+        worker.requestGroups(f.manifest.buildId, ["later"]),
+        worker.requestGroups(f.manifest.buildId, ["later"]),
+      ]),
+    );
+    expect(retry).toEqual([
+      expect.objectContaining({ status: "available" }),
+      expect.objectContaining({ status: "available" }),
+    ]);
+    expect(f.server.fetched.length - fetched).toBe(1);
+    expect(await worker.storage.named.get("game-reuse")!.texts()).toEqual(f.files);
+  });
+
+  it.each([
+    "header",
+    "mime",
+    "redirect",
+    "origin",
+    "partial",
+    "size",
+    "hash",
+    "aborted",
+    "private",
+    "vary",
+    "length",
+    "empty-url",
+    "full-without-short",
+  ])("rejects an invalid body source without alias or readiness commit: %s", async (reason) => {
+    const f = fixture([2]);
+    if (reason === "full-without-short") {
+      f.manifest.contentHashes = {};
+    }
+    const url = f.manifest.verifiedJsonBodies![0]!.urls[0]!;
+    const original = f.server.fetch.bind(f.server);
+    if (reason === "aborted") {
+      f.server.stalls.set(url, 3);
+    }
+    vi.spyOn(f.server, "fetch").mockImplementation(async (request) => {
+      const response = await original(request);
+      if (reason === "aborted") {
+        return response;
+      }
+      const text = f.files[url]!;
+      const headers: Record<string, string> = {
+        "content-type": "application/json; charset=utf-8",
+        "x-content-type-options": "nosniff",
+      };
+      if (reason === "header") {
+        headers["content-location"] = "/other.json";
+      }
+      if (reason === "mime") {
+        headers["content-type"] = "text/plain";
+      }
+      if (reason === "private") {
+        headers["cache-control"] = "private";
+      }
+      if (reason === "vary") {
+        headers.vary = "Accept-Language";
+      }
+      if (reason === "length") {
+        headers["content-length"] = "1";
+      }
+      const body =
+        reason === "size"
+          ? `${text} `
+          : reason === "hash" || reason === "full-without-short"
+            ? text.replace("0", "9")
+            : text;
+      const changed = new Response(body, { headers, status: reason === "partial" ? 206 : 200 });
+      Object.defineProperty(changed, "url", {
+        value:
+          reason === "origin"
+            ? "https://other.test/x.json"
+            : reason === "empty-url"
+              ? ""
+              : request.url,
+      });
+      if (reason === "redirect") {
+        Object.defineProperty(changed, "redirected", { value: true });
+      }
+      return changed;
+    });
+    const worker = startWorker(f.server, {}, f.manifest);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(withTimersRun(worker.install())).rejects.toThrow(/Precache failed/);
+    expect(worker.storage.named.get("game-reuse")!.bodies.size).toBe(0);
+    expect(
+      worker.storage.named
+        .get("game-kit-routing:game-")
+        ?.bodies.has("/.game-kit-routing/build/game-reuse") ?? false,
+    ).toBe(false);
   });
 });

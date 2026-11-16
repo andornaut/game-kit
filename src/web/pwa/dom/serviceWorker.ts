@@ -29,6 +29,7 @@ import { basePrecacheUrls, precacheGroupUrls, validatePrecacheGroups } from "../
 import type { PrecacheManifest } from "../precacheManifest.ts";
 import type { SoundFormatParam } from "../serviceWorkerUrl.ts";
 import type { SkipWaitingMessage } from "../updateReady.ts";
+import { validateVerifiedJsonBodies, type VerifiedJsonBody } from "../verifiedJsonBody.ts";
 import { createGroupStore } from "./groupStore.ts";
 
 interface LifecycleEvent extends Event {
@@ -74,6 +75,79 @@ const SOUND_FORMAT_PARAM: SoundFormatParam = "sound";
 const SKIP_WAITING: SkipWaitingMessage = "skip-waiting";
 const ROUTING_CAPABILITY = "game-kit-routing-capability";
 
+interface VerifiedSource {
+  readonly family: VerifiedJsonBody;
+  readonly origin: string;
+}
+const JSON_HEADERS = {
+  "content-type": "application/json; charset=utf-8",
+  "x-content-type-options": "nosniff",
+};
+const JSON_SOURCE_HEADERS = new Set([
+  "age",
+  "cache-control",
+  "cf-cache-status",
+  "cf-ray",
+  "content-encoding",
+  "content-length",
+  "content-type",
+  "date",
+  "etag",
+  "expires",
+  "last-modified",
+  "server",
+  "vary",
+  "x-content-type-options",
+]);
+function safeJsonSource(verified: VerifiedSource, url: string, response: Response): boolean {
+  const headers = response.headers;
+  if (
+    response.status !== 200 ||
+    response.redirected ||
+    !/^application\/json(?:\s*;\s*charset\s*=\s*(?:"utf-8"|utf-8))?\s*$/i.test(
+      headers.get("content-type") ?? "",
+    ) ||
+    [...headers.keys()].some((name) => !JSON_SOURCE_HEADERS.has(name)) ||
+    /(?:^|,)\s*(?:private|no-store)(?:\s|,|=|$)/i.test(headers.get("cache-control") ?? "") ||
+    (headers.get("vary") ?? "")
+      .split(",")
+      .some((name) => name.trim() !== "" && name.trim().toLowerCase() !== "accept-encoding") ||
+    (headers.has("x-content-type-options") &&
+      headers.get("x-content-type-options")?.toLowerCase() !== "nosniff")
+  ) {
+    return false;
+  }
+  const encoding = headers.get("content-encoding")?.toLowerCase();
+  if (encoding !== undefined && !["identity", "gzip", "br", "deflate"].includes(encoding)) {
+    return false;
+  }
+  const length = headers.get("content-length");
+  if (
+    length !== null &&
+    (!/^\d+$/.test(length) ||
+      !Number.isSafeInteger(Number(length)) ||
+      ((encoding === undefined || encoding === "identity") &&
+        Number(length) !== verified.family.byteSize))
+  ) {
+    return false;
+  }
+  if (response.url === "") {
+    // An empty URL is not provenance: only the canonical header profile can qualify, and the
+    // caller must still re-read and fully verify the body. Real fetches require a source URL.
+    return (
+      [...headers].length === Object.keys(JSON_HEADERS).length &&
+      Object.entries(JSON_HEADERS).every(([name, value]) => headers.get(name) === value)
+    );
+  }
+  return (
+    new URL(response.url).origin === verified.origin &&
+    response.url === new URL(url, verified.origin).href
+  );
+}
+const digestHex = (digest: ArrayBuffer) =>
+  [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+const jsonResponse = (body: ArrayBuffer) => new Response(body, { headers: JSON_HEADERS });
+
 // Only a whole response is stored: Cache.put rejects a 206, which an audio element's range
 // request can get. Validate before answering, even when the cache write cannot succeed.
 async function fetchAndStore(
@@ -81,12 +155,20 @@ async function fetchAndStore(
   contentHash: string | undefined,
   byteSize: number | undefined,
   key: string,
+  verified: VerifiedSource | undefined,
   request: Request,
 ): Promise<Response> {
-  const response = await fetch(request);
+  const response = await fetch(
+    verified === undefined
+      ? request
+      : new Request(request, { credentials: "omit", redirect: "error" }),
+  );
+  if (verified !== undefined && (response.url === "" || !safeJsonSource(verified, key, response))) {
+    throw new TypeError("Unsafe verified JSON response semantics");
+  }
   if (
     (contentHash !== undefined || byteSize !== undefined) &&
-    (response.status !== 200 || !(await responseMatches(contentHash, byteSize, response)))
+    (response.status !== 200 || !(await responseMatches(contentHash, byteSize, verified, response)))
   ) {
     throw new TypeError(`Response does not match the active build for ${key}`);
   }
@@ -140,18 +222,26 @@ async function mapBounded<T, R>(
 async function responseMatches(
   contentHash: string | undefined,
   byteSize: number | undefined,
+  verified: VerifiedSource | undefined,
   response: Response,
 ): Promise<boolean> {
-  if (contentHash === undefined && byteSize === undefined) {
+  if (verified !== undefined && !safeJsonSource(verified, response.url || "/", response)) {
+    return false;
+  }
+  if (contentHash === undefined && byteSize === undefined && verified === undefined) {
     return true;
   }
   const body = await response.clone().arrayBuffer();
   if (byteSize !== undefined && body.byteLength !== byteSize) {
     return false;
   }
+  if (contentHash === undefined && verified === undefined) {
+    return true;
+  }
+  const digest = await crypto.subtle.digest("SHA-256", body);
   return (
-    contentHash === undefined ||
-    digestContentHash(new Uint8Array(await crypto.subtle.digest("SHA-256", body))) === contentHash
+    (verified === undefined || digestHex(digest) === verified.family.sha256) &&
+    (contentHash === undefined || digestContentHash(new Uint8Array(digest)) === contentHash)
   );
 }
 
@@ -162,6 +252,7 @@ async function storedCopy(
   holders: readonly Cache[],
   contentHash: string | undefined,
   byteSize: number | undefined,
+  verified: VerifiedSource | undefined,
   url: string,
 ): Promise<Response | undefined> {
   for (const old of holders) {
@@ -171,8 +262,14 @@ async function storedCopy(
     if (response === undefined) {
       continue;
     }
+
+    if (verified !== undefined && !safeJsonSource(verified, url, response)) {
+      continue;
+    }
+    // The cache search reads one candidate at a time.
     // eslint-disable-next-line no-await-in-loop
-    if (await responseMatches(contentHash, byteSize, response)) {
+    const matches = await responseMatches(contentHash, byteSize, verified, response);
+    if (matches) {
       return response;
     }
   }
@@ -222,6 +319,7 @@ async function fetchIntoCache(
   cache: Cache,
   byteSize: number | undefined,
   progress: ReturnType<typeof createDownloadProgress>,
+  verified: VerifiedSource | undefined,
   url: string,
 ): Promise<PrecacheFailure | undefined> {
   let error: unknown;
@@ -241,6 +339,9 @@ async function fetchIntoCache(
       const response = await fetch(
         new Request(url, {
           ...precacheFetchOptions(policy, url),
+          ...(verified === undefined
+            ? {}
+            : { credentials: "omit" as const, redirect: "error" as const }),
           priority: "low",
           signal: abort.signal,
         }),
@@ -248,12 +349,19 @@ async function fetchIntoCache(
       if (!response.ok) {
         throw new Error(`HTTP ${response.status} for ${url}`);
       }
+      if (
+        verified !== undefined &&
+        (response.url === "" || !safeJsonSource(verified, url, response))
+      ) {
+        throw new TypeError("Unsafe verified JSON response semantics");
+      }
       const expected = contentHashes[url];
       // Read a clone once for streamed accounting and the existing hash check. Cache.put keeps
       // the original response, including its headers and status, without another network fetch.
       // eslint-disable-next-line no-await-in-loop
       await readDownload(
         {
+          expectedFullHash: verified?.family.sha256,
           expectedHash: expected,
           expectedSize: byteSize,
           onReceived: (bytes) => progress.received(url, bytes),
@@ -285,6 +393,7 @@ async function fetchIntoCache(
 
 async function readDownload(
   {
+    expectedFullHash,
     expectedHash,
     expectedSize,
     onReceived,
@@ -292,6 +401,7 @@ async function readDownload(
     url,
   }: {
     expectedHash: string | undefined;
+    expectedFullHash?: string | undefined;
     expectedSize: number | undefined;
     onReceived: (bytes: number) => void;
     signal: AbortSignal;
@@ -331,7 +441,7 @@ async function readDownload(
             if (expectedSize !== undefined && bytes > expectedSize) {
               throw new Error("Downloaded body exceeds its manifest size");
             }
-            if (expectedHash !== undefined) {
+            if (expectedHash !== undefined || expectedFullHash !== undefined) {
               chunks.push(chunk.value);
             }
             onReceived(bytes);
@@ -340,7 +450,7 @@ async function readDownload(
         if (expectedSize !== undefined && bytes !== expectedSize) {
           throw new Error("Downloaded body does not match its manifest size");
         }
-        if (expectedHash !== undefined) {
+        if (expectedHash !== undefined || expectedFullHash !== undefined) {
           const body = new Uint8Array(bytes);
           let offset = 0;
           for (const chunk of chunks) {
@@ -349,7 +459,10 @@ async function readDownload(
           }
           const digest = await crypto.subtle.digest("SHA-256", body);
           const actual = digestContentHash(new Uint8Array(digest));
-          if (actual !== expectedHash) {
+          if (expectedFullHash !== undefined && digestHex(digest) !== expectedFullHash) {
+            throw new Error(`Full body SHA-256 mismatch for ${url}`);
+          }
+          if (expectedHash !== undefined && actual !== expectedHash) {
             throw new Error(`Content hash ${actual} for ${url}, expected ${expectedHash}`);
           }
         }
@@ -373,6 +486,34 @@ async function readDownload(
 // only at a client-free activation; missing visibility or metadata preserves old builds.
 export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest): void {
   const worker = self as unknown as WorkerScope;
+  const verifiedFamilies = (build: PrecacheManifest) => {
+    const families = validateVerifiedJsonBodies(
+      {
+        urls: [...build.urls, ...Object.values(build.sounds).flat()],
+        ...(build.byteSizes === undefined ? {} : { byteSizes: build.byteSizes }),
+      },
+      build.verifiedJsonBodies ?? [],
+    );
+    for (const family of families) {
+      const digest = Uint8Array.from(family.sha256.match(/../g)!, (hex) =>
+        Number.parseInt(hex, 16),
+      );
+      const logical = digestContentHash(digest);
+      if (
+        family.urls.some(
+          (url) => build.contentHashes[url] !== undefined && build.contentHashes[url] !== logical,
+        )
+      ) {
+        throw new TypeError("Verified JSON identity conflicts with a logical content hash");
+      }
+    }
+    return families;
+  };
+  const verifiedFor = (build: PrecacheManifest, url: string): VerifiedSource | undefined => {
+    const family = build.verifiedJsonBodies?.find((candidate) => candidate.urls.includes(url));
+    return family === undefined ? undefined : { family, origin: worker.location.origin };
+  };
+  verifiedFamilies(manifest);
   const cacheName = cacheNameFor(policy, manifest.version);
   if (manifest.groups !== undefined) {
     if (!isBuildId(manifest.buildId)) {
@@ -453,7 +594,9 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     if (response === undefined) {
       throw new TypeError("Missing document build manifest");
     }
-    return (await response.json()) as BuildRecord;
+    const build = (await response.json()) as BuildRecord;
+    verifiedFamilies(build.manifest);
+    return build;
   };
   // The install stores every URL in this version's cache (cacheName) in three steps:
   // - A URL the cache already holds, from an earlier failed attempt to install this same version
@@ -475,12 +618,18 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     listedUrls: readonly string[],
     tracker: ReturnType<typeof createDownloadProgress>,
   ) => {
+    const families = verifiedFamilies(build);
     const cache = await caches.open(name);
     const kept = await mapBounded(
       REUSE_CONCURRENCY,
       async (url) =>
-        (await storedCopy([cache], build.contentHashes[url], build.byteSizes?.[url], url)) !==
-        undefined,
+        (await storedCopy(
+          [cache],
+          build.contentHashes[url],
+          build.byteSizes?.[url],
+          verifiedFor(build, url),
+          url,
+        )) !== undefined,
       listedUrls,
     );
     const urls = listedUrls.filter((_, index) => kept[index] !== true);
@@ -513,6 +662,7 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
           holders.get(url) ?? [],
           contentHash,
           build.byteSizes?.[url],
+          verifiedFor(build, url),
           url,
         );
         if (response === undefined) {
@@ -523,13 +673,90 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
       },
       reusable,
     );
-    const fetched = [...plan.fetch, ...unreused.flat()];
+    const missing = new Set([...plan.fetch, ...unreused.flat()]);
+    const aliases = new Map<string, readonly string[]>();
+    const fill = async (targets: readonly string[], response: Response) => {
+      const body = await response.arrayBuffer();
+      for (const url of targets) {
+        // Each logical URL gets its own canonical response only after source verification.
+        // eslint-disable-next-line no-await-in-loop
+        await cache.put(url, jsonResponse(body));
+      }
+    };
+    for (const family of families) {
+      const targets = family.urls.filter((url) => missing.has(url));
+      if (targets.length === 0) {
+        continue;
+      }
+      let source: Response | undefined;
+      for (const url of family.urls) {
+        // Current and earlier caches may hold a different, explicitly eligible member.
+        // eslint-disable-next-line no-await-in-loop
+        source = await storedCopy(
+          [cache, ...earlier],
+          build.contentHashes[url],
+          family.byteSize,
+          { family, origin: worker.location.origin },
+          url,
+        );
+        if (source !== undefined) {
+          break;
+        }
+      }
+      if (source !== undefined) {
+        // Families are bounded by explicit caller selection and processed one at a time.
+        // eslint-disable-next-line no-await-in-loop
+        await fill(targets, source);
+        for (const url of targets) {
+          missing.delete(url);
+        }
+      } else {
+        const representative = targets[0]!;
+        aliases.set(representative, targets.slice(1));
+        for (const url of targets.slice(1)) {
+          missing.delete(url);
+        }
+      }
+    }
+    const fetched = [...missing];
     // Reused and already verified files consume no network bytes in this operation.
     tracker.begin(fetched);
     const outcomes = await mapBounded(
       PRECACHE_CONCURRENCY,
-      (url) =>
-        fetchIntoCache(policy, build.contentHashes, cache, build.byteSizes?.[url], tracker, url),
+      async (url) => {
+        const verified = verifiedFor(build, url);
+        const failure = await fetchIntoCache(
+          policy,
+          build.contentHashes,
+          cache,
+          build.byteSizes?.[url],
+          tracker,
+          verified,
+          url,
+        );
+        if (failure !== undefined) {
+          return failure;
+        }
+        try {
+          const targets = aliases.get(url) ?? [];
+          if (targets.length > 0) {
+            const source = await storedCopy(
+              [cache],
+              build.contentHashes[url],
+              build.byteSizes?.[url],
+              verified,
+              url,
+            );
+            if (source === undefined) {
+              throw new Error("Verified family source disappeared");
+            }
+            await fill(targets, source);
+          }
+          return undefined;
+        } catch (error) {
+          return { error, url };
+        }
+      },
       fetched,
     );
     const failures = outcomes.filter((outcome) => outcome !== undefined);
@@ -628,6 +855,7 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
           [cache],
           build.manifest.contentHashes[url],
           build.manifest.byteSizes?.[url],
+          verifiedFor(build.manifest, url),
           url,
         )) !== undefined,
       requiredUrls(build, ready),
@@ -769,9 +997,25 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     }
     const cache = await caches.open(pinned);
     const key = cacheKeyFor(pathname);
+    const verified = verifiedFor(build, key);
     const response =
-      (await cache.match(key)) ??
-      (await fetchAndStore(cache, build.contentHashes[key], build.byteSizes?.[key], key, request));
+      (verified === undefined
+        ? await cache.match(key)
+        : await storedCopy(
+            [cache],
+            build.contentHashes[key],
+            build.byteSizes?.[key],
+            verified,
+            key,
+          )) ??
+      (await fetchAndStore(
+        cache,
+        build.contentHashes[key],
+        build.byteSizes?.[key],
+        key,
+        verified,
+        request,
+      ));
     // The new document cannot request any resources until its pin has been persisted.
     if (navigation && resultingClientId) {
       await writeRecord("client", resultingClientId, pinned);

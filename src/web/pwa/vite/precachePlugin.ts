@@ -16,6 +16,7 @@ import {
   rootRelativeUrls,
   webManifestIconUrls,
 } from "../precacheList.ts";
+import { validateVerifiedJsonBodies } from "../verifiedJsonBody.ts";
 import { assertClassicWorker, classicWorker } from "./classicWorker.ts";
 
 // Hashed files the page loads at runtime rather than links, such as a game's art: the URLs to
@@ -27,6 +28,8 @@ export interface HashedFiles {
 
 export interface PrecachePluginOptions {
   readonly buildId?: string | undefined;
+  // Explicit public, URL-independent JSON families selected from final emitted discovery.
+  readonly verifiedJsonBodies?: (files: HashedFiles) => readonly (readonly string[])[];
   // Called on the complete final normalized discovery, including public links and all sounds.
   readonly groups?: (files: HashedFiles) => PrecacheGroups;
   // The hashed files beyond what the page links, read once the bundle is written: bundleFile
@@ -59,6 +62,7 @@ export function precachePlugin({
   policy,
   serviceWorkerFileName = "sw.js",
   serviceWorkerSource,
+  verifiedJsonBodies,
 }: PrecachePluginOptions): Plugin {
   let root: string;
   let config: ResolvedConfig;
@@ -198,22 +202,46 @@ export function precachePlugin({
           ]),
         );
         let grouped: { buildId: string; groups: PrecacheGroups } | undefined;
+        const discovery: HashedFiles = Object.freeze({
+          sounds: Object.freeze(
+            Object.fromEntries(
+              Object.entries(sounds).map(([format, urls]) => [format, Object.freeze([...urls])]),
+            ),
+          ),
+          urls: Object.freeze([...contents.keys()].sort()),
+        });
         if (groups !== undefined) {
           checkIdentity();
-          const discovery: HashedFiles = Object.freeze({
-            sounds: Object.freeze(
-              Object.fromEntries(
-                Object.entries(sounds).map(([format, urls]) => [format, Object.freeze([...urls])]),
-              ),
-            ),
-            urls: Object.freeze([...contents.keys()].sort()),
-          });
           grouped = {
             buildId: buildId!,
             groups: validatePrecacheGroups([...listed.keys()], groups(discovery)),
           };
         }
         const byteSizes = new Map([...listed].map(([url, bytes]) => [url, bytes.byteLength]));
+        const verified =
+          verifiedJsonBodies === undefined
+            ? undefined
+            : validateVerifiedJsonBodies(
+                { byteSizes: Object.fromEntries(byteSizes), urls: [...listed.keys()] },
+                verifiedJsonBodies(discovery).map((urls) => {
+                  const body = listed.get(urls[0] ?? "");
+                  if (body === undefined) {
+                    throw new Error("precache: missing verified JSON family body");
+                  }
+                  JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
+                  for (const url of urls) {
+                    const other = listed.get(url);
+                    if (
+                      other === undefined ||
+                      other.byteLength !== body.byteLength ||
+                      other.some((byte, i) => byte !== body[i])
+                    ) {
+                      throw new Error("precache: verified JSON family bodies differ");
+                    }
+                  }
+                  return { byteSize: body.byteLength, sha256: sha256Hex(body), urls };
+                }),
+              );
         const contentHashes = new Map(
           [...listed]
             .filter(([url]) => grouped !== undefined || !isHashedAssetUrl(policy, url))
@@ -226,6 +254,7 @@ export function precachePlugin({
               new Map([...listed.keys()].map((url) => [url, contentHashes.get(url) ?? ""])),
               byteSizes,
               grouped,
+              verified,
             ),
           ),
         );
@@ -238,6 +267,7 @@ export function precachePlugin({
             [...contentHashes.keys()].sort().map((url) => [url, contentHashes.get(url) ?? ""]),
           ),
           sounds,
+          ...(verified === undefined ? {} : { verifiedJsonBodies: verified }),
           urls: [...contents.keys()].sort(),
           version: fingerprint.slice(0, 16),
         };
