@@ -103,6 +103,7 @@ export function bindHoldActions(
   }
   let active: Gesture | undefined;
   let released: Release | undefined;
+  let legacyRelease = false;
   let invalidatedRelease: Release | undefined;
   let releaseTimer: number | undefined;
   let downRevision = 0;
@@ -151,6 +152,7 @@ export function bindHoldActions(
   };
   const clearRelease = () => {
     released = undefined;
+    legacyRelease = false;
     view.clearTimeout(releaseTimer);
     releaseTimer = undefined;
   };
@@ -240,7 +242,11 @@ export function bindHoldActions(
   const rememberRelease = (release: Release) => {
     clearRelease();
     released = release;
-    releaseTimer = view.setTimeout(clearRelease, 0);
+    legacyRelease = true;
+    releaseTimer = view.setTimeout(() => {
+      legacyRelease = false;
+      releaseTimer = undefined;
+    }, 0);
   };
   const onAnyDown = (event: PointerEvent) => {
     if (invalidatedRelease?.pointerId === event.pointerId) {
@@ -356,7 +362,7 @@ export function bindHoldActions(
         revision === downRevision &&
         (gesture.press.state === "held" || releaseOptions !== undefined)
       ) {
-        // A release witness cannot consume a later task's click, even when no click follows up.
+        // Pointer identity follows native compatibility clicks across task boundaries.
         rememberRelease({ element: gesture.element, pointerId: gesture.pointerId });
       }
     }
@@ -402,13 +408,32 @@ export function bindHoldActions(
     }
   };
   const onClick = (event: MouseEvent) => {
-    if (event.detail === 0 || released === undefined || !inside(released.element, event.target)) {
+    const witness = released;
+    if (witness === undefined) {
       return;
     }
-    if ("pointerId" in event && event.pointerId !== released.pointerId) {
+    if (!root.isConnected || !witness.element.isConnected || !root.contains(witness.element)) {
+      clearRelease();
       return;
     }
-    clearRelease();
+    if (event.detail === 0) {
+      return;
+    }
+    if ("pointerId" in event) {
+      if (event.pointerId !== witness.pointerId) {
+        return;
+      }
+      clearRelease();
+      if (!inside(witness.element, event.target)) {
+        return;
+      }
+    } else {
+      // Without pointer identity only the pointerup dispatch task establishes ownership.
+      if (!legacyRelease || !inside(witness.element, event.target)) {
+        return;
+      }
+      clearRelease();
+    }
     event.preventDefault();
     event.stopImmediatePropagation();
   };

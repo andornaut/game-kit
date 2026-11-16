@@ -36,7 +36,7 @@ let action: HoldAction;
 let enabled: boolean;
 let optedIn: boolean;
 let drawnMs: number | null;
-let stop: () => void;
+let stop: ReturnType<typeof bindHoldActions>;
 let stopGuard: () => void;
 let original: ReturnType<typeof vi.fn<() => void>>;
 let gate: ReturnType<typeof createModalInputGate>;
@@ -220,6 +220,62 @@ it("never consumes another control or a later task's MouseEvent click, and new d
   expect(original).toHaveBeenCalledTimes(5);
 });
 
+it("keeps pointer-specific release ownership across tasks without extending mouse fallback", () => {
+  stopGuard();
+  pointer("pointerdown", child);
+  vi.advanceTimersByTime(100);
+  pointer("pointerup", child);
+  vi.advanceTimersByTime(0);
+  expect(click(child, 99).defaultPrevented).toBe(false);
+  expect(click(child, 4, 0).defaultPrevented).toBe(false);
+  expect(click(child).defaultPrevented).toBe(false);
+  expect(original).toHaveBeenCalledTimes(4);
+  expect(click(child, 4).defaultPrevented).toBe(true);
+  expect(original).toHaveBeenCalledTimes(4);
+  expect(click(child, 4).defaultPrevented).toBe(false);
+});
+
+it("retires an observed pointer click on another control and clears ownership on a new body press", () => {
+  stopGuard();
+  const other = document.createElement("button");
+  root.append(other);
+  pointer("pointerdown", child);
+  vi.advanceTimersByTime(100);
+  pointer("pointerup", child);
+  vi.advanceTimersByTime(0);
+  expect(click(other, 4).defaultPrevented).toBe(false);
+  expect(click(child, 4).defaultPrevented).toBe(false);
+  pointer("pointerdown", child);
+  vi.advanceTimersByTime(100);
+  pointer("pointerup", child);
+  pointer("pointerdown", document.body);
+  expect(click(child, 4).defaultPrevented).toBe(false);
+});
+
+it.each(["blur", "hidden", "dispose", "disconnect"] as const)(
+  "clears cross-task release ownership on %s",
+  (reason) => {
+    bindRelease();
+    pointer("pointerdown", child);
+    pointer("pointerup", child);
+    expect(original).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(0);
+    if (reason === "blur") {
+      window.dispatchEvent(new Event("blur"));
+    } else if (reason === "hidden") {
+      const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+      document.dispatchEvent(new Event("visibilitychange"));
+      hidden.mockRestore();
+    } else if (reason === "dispose") {
+      stop();
+    } else {
+      root.remove();
+    }
+    expect(click(child, 4).defaultPrevented).toBe(false);
+    expect(original).toHaveBeenCalledTimes(2);
+  },
+);
+
 it("leaves continuous or otherwise excluded controls alone and refuses disabled starts", () => {
   optedIn = false;
   pointer("pointerdown", child);
@@ -308,6 +364,57 @@ function bindRelease(
     root,
   );
 }
+
+it("consumes the delayed native click after a sub-slop physical exit and admits a fresh press", () => {
+  bindRelease();
+  pointer("pointerdown", child, { clientX: 29 });
+  pointer("pointermove", child, { clientX: 30 });
+  vi.advanceTimersByTime(100);
+  pointer("pointerup", child, { clientX: 30 });
+  vi.advanceTimersByTime(0);
+  expect(click(child, 4).defaultPrevented).toBe(true);
+  expect(original).not.toHaveBeenCalled();
+  pointer("pointerdown", child);
+  pointer("pointerup", child);
+  vi.advanceTimersByTime(0);
+  expect(click(child, 4).defaultPrevented).toBe(true);
+  expect(original).toHaveBeenCalledOnce();
+});
+
+it.each([
+  ["identity replacement", false],
+  ["identity replacement", true],
+  ["null resolver", false],
+  ["null resolver", true],
+  ["modal invalidation", false],
+  ["modal invalidation", true],
+] as const)("retains old gesture release ownership after %s (later task: %s)", (change, later) => {
+  const held = vi.fn(() => {
+    if (change === "identity replacement") {
+      action = { ...action, activate: vi.fn(), identity: {} };
+    } else if (change === "null resolver") {
+      optedIn = false;
+    } else {
+      gate.open();
+    }
+  });
+  action = { ...action, hold: held };
+  bindRelease();
+  const unsubscribe = gate.subscribe(stop.cancel);
+  try {
+    pointer("pointerdown", child);
+    vi.advanceTimersByTime(100);
+    expect(held).toHaveBeenCalledOnce();
+    pointer("pointerup", child);
+    if (later) {
+      vi.advanceTimersByTime(0);
+    }
+    expect(click(child, 4).defaultPrevented).toBe(true);
+    expect(original).not.toHaveBeenCalled();
+  } finally {
+    unsubscribe();
+  }
+});
 
 it("opts only own ARIA into the original refusal callback and explicit hold override", () => {
   const feedback = vi.fn();
