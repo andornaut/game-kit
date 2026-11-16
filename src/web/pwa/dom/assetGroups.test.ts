@@ -156,3 +156,89 @@ it("rejects a success reply that omits a requested group", async () => {
   await expect(pending).resolves.toEqual({ reason: "failed", status: "unavailable" });
   controller.dispose();
 });
+
+it("expires progressing work at the absolute deadline and can later observe its durable result", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  let delivered!: () => void;
+  const report = vi.fn(() => delivered());
+  const controller = createAssetGroups({ ...f.options, onDownloadProgress: report });
+  const pending = controller.ensureGroups(["a"]);
+  const progress = async (value: number) => {
+    const received = new Promise<void>((resolve) => {
+      delivered = resolve;
+    });
+    f.requests[0]!.port.postMessage({
+      progress: { operationId: "active", phase: "downloading", value, version: "one" },
+      type: "progress",
+    });
+    await received;
+  };
+  await vi.advanceTimersByTimeAsync(500);
+  await progress(0.25);
+  await vi.advanceTimersByTimeAsync(400);
+  await progress(0.75);
+  await vi.advanceTimersByTimeAsync(100);
+  await expect(pending).resolves.toEqual({ reason: "timeout", status: "unavailable" });
+  expect(report).toHaveBeenCalledTimes(2);
+  expect(f.requests).toHaveLength(1);
+  // Worker-side work may commit after the client closes its port; no cancellation was sent.
+  f.result(0);
+  const read = controller.readState();
+  expect(f.requests).toHaveLength(2);
+  f.result(1);
+  await expect(read).resolves.toMatchObject({ status: "available", version: "one" });
+  controller.dispose();
+});
+
+it("charges registration lookup time before a worker can receive the request", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  let finish!: (registration: { active: typeof f.worker }) => void;
+  const controller = createAssetGroups({
+    ...f.options,
+    container: {
+      controller: null,
+      getRegistration: () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    },
+  });
+  const pending = controller.ensureGroups(["a"]);
+  await vi.advanceTimersByTimeAsync(1000);
+  await expect(pending).resolves.toEqual({ reason: "timeout", status: "unavailable" });
+  finish({ active: f.worker });
+  await Promise.resolve();
+  expect(f.requests).toHaveLength(0);
+  controller.dispose();
+});
+
+it("bounds queueing and verification without treating phase notifications as completion", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  let delivered!: () => void;
+  const controller = createAssetGroups({ ...f.options, onDownloadProgress: () => delivered() });
+  const pending = controller.readState();
+  // A serialized job has no progress notification until its staging/check work runs.
+  await vi.advanceTimersByTimeAsync(600);
+  const phase = async (name: "checking" | "verifying") => {
+    const received = new Promise<void>((resolve) => {
+      delivered = resolve;
+    });
+    f.requests[0]!.port.postMessage({
+      progress: { operationId: "checking", phase: name, value: undefined, version: "one" },
+      type: "progress",
+    });
+    await received;
+  };
+  await phase("checking");
+  await vi.advanceTimersByTimeAsync(250);
+  await phase("verifying");
+  await vi.advanceTimersByTimeAsync(100);
+  await phase("verifying");
+  await vi.advanceTimersByTimeAsync(50);
+  await expect(pending).resolves.toEqual({ reason: "timeout", status: "unavailable" });
+  expect(f.requests).toHaveLength(1);
+  controller.dispose();
+});
