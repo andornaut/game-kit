@@ -121,10 +121,11 @@ function showCrashScreen(page: CrashPage, options: CrashScreenOptions, report: C
   body.id = "crash-body";
   const actions: Parameters<HoldActionBinding>[0][] = [];
   const reload = button(document, actions, view.reload, () => page.location.reload());
-  const panel = el(document, "div", "crash-panel", title, body, reload);
+  const panel = el(document, "div", "crash-panel", title, body);
   if (view.details !== undefined) {
     panel.append(detailsSection(page, actions, `${options.buildLabel}\n${view.details}`));
   }
+  panel.append(reload);
   const screen = el(document, "div", "crash", panel);
   const { colours } = options;
   for (const [name, colour] of [

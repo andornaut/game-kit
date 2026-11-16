@@ -59,6 +59,10 @@ The emitted worker carries an internal, versioned compact manifest with one shar
 
 The precache plugin builds the worker through Vite's isolated worker pipeline as one self-contained classic script. Shared page modules cannot split the worker into ESM chunks. Builds reject worker imports or additional emitted files; games retain their existing classic registration and runtime policies.
 
+## Caller action order
+
+Layout primitives retain the caller's keyed order and action roles. Callers place the existing primary action last in vertical groups and rightmost in horizontal groups, retaining secondary order and hidden-control identities. The crash screen keeps Reload after its optional developer details. Its action callbacks and focus remain unchanged.
+
 ## Explicit pointer-release actions
 
 `runtime/web/input/dom/holdActions.bindHoldActions` accepts optional `activation: "pointer-release"` with `resolvePointer(event)`, `pointerTarget` and `onPressChange(actionOrNull)`. This mode owns both short-release activation and hold dispatch; replace any parallel custom pointerup action listener. The default mode continues to add holds to caller-owned native clicks. Both use the caller's explicit `HoldRule`; there is no numeric duration default.
