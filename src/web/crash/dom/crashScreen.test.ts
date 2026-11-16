@@ -201,3 +201,55 @@ describe("installCrashScreen", () => {
     logged.mockRestore();
   });
 });
+
+it("exposes only Reload and dev Copy native closures once per crash", async () => {
+  const writeText = vi.fn(async () => undefined);
+  const fake = fakePage({ clipboard: { writeText } });
+  const actions: Parameters<import("../../input/dom/holdActions.ts").HoldActionBinding>[0][] = [];
+  const bind = vi.fn((action: (typeof actions)[number]) => {
+    actions.push(action);
+    return vi.fn();
+  });
+  installCrashScreen(fake.page, { ...OPTIONS, bindHoldAction: bind, dev: true });
+  fake.error(privateError());
+  fake.error(privateError());
+  expect(bind).toHaveBeenCalledTimes(2);
+  const reload = actions.find((action) => action.element.textContent === OPTIONS.words.reload)!;
+  const copy = actions.find((action) => action.element.textContent === "Copy")!;
+  expect(reload.available()).toBe(true);
+  reload.activate();
+  reload.element.dispatchEvent(new Event("click"));
+  expect(fake.reload).toHaveBeenCalledTimes(2);
+  copy.activate();
+  copy.element.dispatchEvent(new Event("click"));
+  await Promise.resolve();
+  expect(writeText).toHaveBeenCalledTimes(2);
+  expect(actions.every((action) => action.element.className === "crash-button")).toBe(true);
+});
+
+it("cleans completed bindings after a later binding throws and retains native crash actions", () => {
+  const fake = fakePage();
+  const stop = vi.fn();
+  const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const bind = vi
+    .fn()
+    .mockReturnValueOnce(stop)
+    .mockImplementationOnce(() => {
+      throw new Error("binding failed");
+    });
+  try {
+    installCrashScreen(fake.page, { ...OPTIONS, bindHoldAction: bind, dev: true });
+    fake.error(privateError());
+    fake.error(privateError());
+    expect(bind).toHaveBeenCalledTimes(2);
+    expect(stop).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledWith("Crash screen: action binding failed", expect.any(Error));
+    const reload = descendants(fake.body).find(
+      (element) => element.textContent === OPTIONS.words.reload,
+    )!;
+    reload.dispatchEvent(new Event("click"));
+    expect(fake.reload).toHaveBeenCalledOnce();
+  } finally {
+    log.mockRestore();
+  }
+});

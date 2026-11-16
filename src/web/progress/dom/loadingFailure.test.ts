@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createLoadingAttempts, createRequiredLoading } from "../../../load/loadingAttempts.ts";
+import { bindHoldActions } from "../../input/dom/holdActions.ts";
 import {
   type LoadingFailureLayout,
   type LoadingFailurePresentation,
@@ -834,5 +835,103 @@ describe("mountLoadingFailure", () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
     expect(parent.children).toHaveLength(0);
     expect(view.element.outerHTML).toBe(detached);
+  });
+});
+
+describe("loading failure hold binding", () => {
+  it("routes the real Retry closure through holds with busy and disposal guards", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const retry = vi.fn(() => pending);
+    let action!: Parameters<import("../../input/dom/holdActions.ts").HoldActionBinding>[0];
+    const disposeBinding = vi.fn();
+    const view = mountLoadingFailure(
+      {
+        bindHoldAction: (current) => {
+          action = current;
+          const resolve = () => ({ ...current, rule: { holdMs: 100, slopPx: 5 } });
+          const stop = bindHoldActions(
+            {
+              activation: "pointer-release",
+              guard: { gate: { accepts: () => true, capture: () => () => true } },
+              resolve,
+              resolvePointer: resolve,
+            },
+            current.element,
+          );
+          return () => {
+            disposeBinding();
+            stop();
+          };
+        },
+        onRetry: retry,
+      },
+      parent,
+    );
+    const pointer = (type: string) =>
+      action.element.dispatchEvent(
+        new PointerEvent(type, { bubbles: true, button: 0, isPrimary: true, pointerId: 1 }),
+      );
+    try {
+      expect(action.available()).toBe(false);
+      view.update({ attempt: 1, error: new Error("load failed"), kind: "failed" });
+      pointer("pointerdown");
+      vi.advanceTimersByTime(100);
+      expect(retry).toHaveBeenCalledOnce();
+      expect(action.available()).toBe(false);
+      action.activate();
+      pointer("pointerup");
+      action.element.dispatchEvent(
+        new PointerEvent("click", { bubbles: true, cancelable: true, detail: 1, pointerId: 1 }),
+      );
+      expect(retry).toHaveBeenCalledOnce();
+      finish();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(action.available()).toBe(true);
+      action.activate();
+      expect(retry).toHaveBeenCalledTimes(2);
+      view.dispose();
+      view.dispose();
+      expect(disposeBinding).toHaveBeenCalledOnce();
+      expect(action.available()).toBe(false);
+      action.activate();
+      expect(retry).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      view.dispose();
+      parent.remove();
+      vi.useRealTimers();
+    }
+  });
+
+  it("removes mounted DOM and owned listeners when binding throws", () => {
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    const remove = vi.spyOn(document, "removeEventListener");
+    try {
+      expect(() =>
+        mountLoadingFailure(
+          {
+            bindHoldAction: () => {
+              throw new Error("binding failed");
+            },
+            onRetry: vi.fn(),
+          },
+          parent,
+        ),
+      ).toThrow("binding failed");
+      expect(parent.children).toHaveLength(0);
+      expect(remove).toHaveBeenCalledWith("focusin", expect.any(Function));
+      expect(remove).toHaveBeenCalledWith("keydown", expect.any(Function));
+    } finally {
+      parent.remove();
+      remove.mockRestore();
+    }
   });
 });

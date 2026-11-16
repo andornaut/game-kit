@@ -291,3 +291,304 @@ it("disposes pending gestures, release witnesses and all registered listeners", 
   expect(vi.getTimerCount()).toBe(0);
   vi.restoreAllMocks();
 });
+
+function bindRelease(
+  extra: Partial<import("./holdActions.ts").PointerReleaseHoldActionsOptions> = {},
+) {
+  stop();
+  stopGuard();
+  stop = bindHoldActions(
+    {
+      activation: "pointer-release",
+      guard: { gate, tapGuard: { drawnMs: () => drawnMs, guardMs: 50 } },
+      resolve: (target) => (optedIn && target === button ? action : null),
+      resolvePointer: (event) => (optedIn && event.clientX < 30 ? action : null),
+      ...extra,
+    },
+    root,
+  );
+}
+
+it("owns short releases and holds once while preserving native keyboard and unrelated clicks", () => {
+  bindRelease();
+  pointer("pointerdown", child);
+  pointer("pointerup", child);
+  expect(original).toHaveBeenCalledOnce();
+  expect(click(child, 4).defaultPrevented).toBe(true);
+  expect(original).toHaveBeenCalledOnce();
+  expect(click(child, undefined, 0).defaultPrevented).toBe(false);
+  expect(original).toHaveBeenCalledTimes(2);
+  pointer("pointerdown", child);
+  vi.advanceTimersByTime(100);
+  pointer("pointerup", child);
+  expect(original).toHaveBeenCalledTimes(3);
+  expect(click(child, 99).defaultPrevented).toBe(false);
+  expect(original).toHaveBeenCalledTimes(4);
+  expect(click(child, 4).defaultPrevented).toBe(true);
+  expect(original).toHaveBeenCalledTimes(4);
+  const other = document.createElement("button");
+  root.append(other);
+  expect(click(other, 4).defaultPrevented).toBe(false);
+});
+
+it("observes pass-through coordinates without intercepting canvas pointers or compatibility clicks", () => {
+  const canvas = document.createElement("canvas");
+  document.body.append(canvas);
+  root.style.pointerEvents = "none";
+  const down = vi.fn(),
+    up = vi.fn(),
+    nativeClick = vi.fn();
+  canvas.addEventListener("pointerdown", down);
+  canvas.addEventListener("pointerup", up);
+  canvas.addEventListener("click", nativeClick);
+  const capture = vi.fn();
+  Object.assign(canvas, { releasePointerCapture: capture, setPointerCapture: capture });
+  const show = vi.fn();
+  bindRelease({ onPressChange: show, pointerTarget: document });
+  try {
+    expect(pointer("pointerdown", canvas).defaultPrevented).toBe(false);
+    // A second finger cannot replace the followed logical action.
+    pointer("pointerdown", canvas, { isPrimary: false, pointerId: 9 });
+    pointer("pointerup", canvas, { pointerId: 9 });
+    vi.advanceTimersByTime(100);
+    expect(original).toHaveBeenCalledOnce();
+    expect(pointer("pointerup", canvas).defaultPrevented).toBe(false);
+    expect(click(canvas, 4).defaultPrevented).toBe(false);
+    expect(original).toHaveBeenCalledOnce();
+    expect(down).toHaveBeenCalledTimes(2);
+    expect(up).toHaveBeenCalledTimes(2);
+    expect(nativeClick).toHaveBeenCalledOnce();
+    expect(capture).not.toHaveBeenCalled();
+    expect(show.mock.calls.map(([value]) => value)).toEqual([action, null]);
+  } finally {
+    stop();
+    canvas.remove();
+  }
+});
+
+it("uses current callbacks but refuses logical replacement and conflicting coordinate resolution", () => {
+  const identity = {};
+  action = { ...action, identity };
+  bindRelease();
+  pointer("pointerdown", child);
+  const current = vi.fn();
+  action = { ...action, activate: current };
+  vi.advanceTimersByTime(100);
+  expect(current).toHaveBeenCalledOnce();
+  expect(original).not.toHaveBeenCalled();
+  pointer("pointerup", child);
+  pointer("pointerdown", child);
+  action = { ...action, identity: {} };
+  vi.advanceTimersByTime(100);
+  pointer("pointerup", child);
+  expect(current).toHaveBeenCalledOnce();
+  action = { ...action, identity: NaN };
+  bindRelease();
+  pointer("pointerdown", child);
+  action = { ...action, identity: NaN };
+  pointer("pointerup", child);
+  expect(current).toHaveBeenCalledTimes(2);
+  bindRelease({ resolve: () => ({ ...action, identity: "different" }) });
+  pointer("pointerdown", child);
+  vi.advanceTimersByTime(100);
+  pointer("pointerup", child);
+  expect(current).toHaveBeenCalledTimes(2);
+});
+
+it("cancels physical exit, drag, stale guard and hidden-page gestures and clears visuals", () => {
+  const show = vi.fn();
+  action = { ...action, rule: { holdMs: 100, slopPx: Infinity } };
+  bindRelease({ onPressChange: show });
+  pointer("pointerdown", child);
+  pointer("pointerout", child, { clientX: 40, relatedTarget: document.body });
+  pointer("pointerup", child);
+  expect(click(child, 4).defaultPrevented).toBe(true);
+  action = { ...action, rule: { holdMs: 100, slopPx: 5 } };
+  pointer("pointerdown", child);
+  pointer("pointermove", child, { clientX: 20 });
+  pointer("pointerup", child);
+  pointer("pointerdown", child);
+  gate.open().close();
+  vi.advanceTimersByTime(100);
+  pointer("pointerup", child);
+  pointer("pointerdown", child);
+  enabled = false;
+  pointer("pointerup", child);
+  enabled = true;
+  pointer("pointerdown", child);
+  const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+  document.dispatchEvent(new Event("visibilitychange"));
+  hidden.mockRestore();
+  vi.advanceTimersByTime(100);
+  pointer("pointerup", child);
+  expect(original).not.toHaveBeenCalled();
+  expect(show.mock.calls.filter(([value]) => value === null)).toHaveLength(5);
+  vi.runOnlyPendingTimers();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("handles visual disposal, replacement and release reentrancy before semantic dispatch", () => {
+  bindRelease({
+    onPressChange: (value) => {
+      if (value !== null) {
+        stop();
+      }
+    },
+  });
+  pointer("pointerdown", child);
+  vi.advanceTimersByTime(100);
+  pointer("pointerup", child);
+  expect(original).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+  bindRelease({
+    onPressChange: (value) => {
+      if (value !== null) {
+        button.remove();
+      }
+    },
+  });
+  pointer("pointerdown", child);
+  expect(vi.getTimerCount()).toBe(0);
+  root.append(button);
+  bindRelease({
+    onPressChange: (value) => {
+      if (value === null) {
+        stop();
+      }
+    },
+  });
+  pointer("pointerdown", child);
+  pointer("pointerup", child);
+  expect(original).not.toHaveBeenCalled();
+});
+
+it("does not dispatch an old release after its visual cleanup starts a fresh gesture", () => {
+  let reentered = false;
+  bindRelease({
+    onPressChange: (value) => {
+      if (value === null && !reentered) {
+        reentered = true;
+        pointer("pointerdown", child);
+      }
+    },
+  });
+  pointer("pointerdown", child);
+  pointer("pointerup", child);
+  expect(original).not.toHaveBeenCalled();
+  pointer("pointerup", child);
+  expect(original).toHaveBeenCalledOnce();
+  expect(click(child, 4).defaultPrevented).toBe(true);
+  expect(original).toHaveBeenCalledOnce();
+});
+
+it("validates pointer scope before listeners and disposes every opt-in listener despite visual errors", () => {
+  const add = vi.spyOn(document, "addEventListener");
+  expect(() =>
+    bindHoldActions(
+      {
+        activation: "pointer-release",
+        guard: { gate },
+        pointerTarget: document.body,
+        resolve: () => action,
+        resolvePointer: () => action,
+      },
+      root,
+    ),
+  ).toThrow(RangeError);
+  expect(add).not.toHaveBeenCalled();
+  add.mockRestore();
+  const added = vi.spyOn(document, "addEventListener");
+  const removed = vi.spyOn(document, "removeEventListener");
+  bindRelease({
+    onPressChange: (value) => {
+      if (value === null) {
+        throw new Error("visual gone");
+      }
+    },
+    pointerTarget: document,
+  });
+  const registered = [...added.mock.calls];
+  pointer("pointerdown", child);
+  expect(stop).toThrow("visual gone");
+  for (const call of registered) {
+    expect(removed).toHaveBeenCalledWith(...call);
+  }
+  expect(vi.getTimerCount()).toBe(0);
+  vi.restoreAllMocks();
+});
+
+it("invalidates synchronously across modal changes without losing the held release or blocking fresh presses", () => {
+  stop();
+  stopGuard();
+  const show = vi.fn();
+  let opened: ReturnType<typeof gate.open> | undefined;
+  action = {
+    ...action,
+    activate: () => {
+      original();
+      opened = gate.open();
+    },
+  };
+  const binding = bindHoldActions(
+    {
+      activation: "pointer-release",
+      guard: { gate },
+      onPressChange: show,
+      resolve: (target) => (target === button ? action : null),
+      resolvePointer: () => action,
+    },
+    root,
+  );
+  stop = binding;
+  const stopClicks = guardClicks({ gate }, root);
+  const underlying = document.createElement("button");
+  const underneath = vi.fn();
+  underlying.addEventListener("click", underneath);
+  root.append(underlying);
+  // The real modal subscription calls cancel immediately during subscription setup.
+  const unsubscribe = gate.subscribe(binding.cancel);
+  try {
+    pointer("pointerdown", child);
+    vi.advanceTimersByTime(60);
+    const interrupt = gate.open();
+    expect(show.mock.calls.at(-1)).toEqual([null]);
+    expect(vi.getTimerCount()).toBe(0);
+    interrupt.close();
+    pointer("pointerup", child);
+    expect(click(child, 4).defaultPrevented).toBe(true);
+    expect(original).not.toHaveBeenCalled();
+    pointer("pointerdown", child);
+    vi.advanceTimersByTime(100);
+    expect(original).toHaveBeenCalledOnce();
+    expect(show.mock.calls.at(-1)).toEqual([null]);
+    expect(vi.getTimerCount()).toBe(0);
+    opened!.close();
+    pointer("pointerup", underlying);
+    expect(click(underlying, 4).defaultPrevented).toBe(true);
+    expect(underneath).not.toHaveBeenCalled();
+    expect(click(child, 4).defaultPrevented).toBe(true);
+    expect(original).toHaveBeenCalledOnce();
+    action = { ...action, activate: original };
+    pointer("pointerdown", child);
+    pointer("pointerup", child);
+    expect(click(child, 4).defaultPrevented).toBe(true);
+    expect(original).toHaveBeenCalledTimes(2);
+    expect(show.mock.calls.map(([value]) => value === null)).toEqual([
+      false,
+      true,
+      false,
+      true,
+      false,
+      true,
+    ]);
+    binding();
+    const calls = show.mock.calls.length;
+    binding.cancel();
+    expect(show).toHaveBeenCalledTimes(calls);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    unsubscribe();
+    stopClicks();
+    binding();
+  }
+});

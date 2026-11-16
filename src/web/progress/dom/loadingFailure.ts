@@ -1,4 +1,5 @@
 import { LOADING_FAILURE_TEXT, type LoadingAttemptState } from "../../../load/loadingAttempts.ts";
+import type { HoldActionBinding } from "../../input/dom/holdActions.ts";
 
 export interface LoadingFailureLayout {
   readonly actionAlign: "start" | "center" | "end";
@@ -58,6 +59,7 @@ export interface LoadingFailurePresentation {
 }
 
 export interface LoadingFailureContext {
+  readonly bindHoldAction?: HoldActionBinding;
   readonly layout?: LoadingFailureLayout;
   readonly presentation?: LoadingFailurePresentation;
   readonly onRetry: () => void | PromiseLike<void>;
@@ -388,6 +390,7 @@ export function mountLoadingFailure(
   let state: LoadingAttemptState = { attempt: 0, kind: "idle" };
   let disposed = false;
   let busy = false;
+  let stopHold: (() => void) | undefined;
   let generation = 0;
   const render = () => {
     element.hidden = state.kind !== "failed";
@@ -479,6 +482,9 @@ export function mountLoadingFailure(
       document.defaultView?.removeEventListener("blur", clearKeys);
       retry.removeEventListener("click", onClick);
       element.remove();
+      const stop = stopHold;
+      stopHold = undefined;
+      stop?.();
     },
     element,
     update(next) {
@@ -489,6 +495,16 @@ export function mountLoadingFailure(
       render();
     },
   };
+  try {
+    stopHold = context.bindHoldAction?.({
+      activate: onClick,
+      available: () => !disposed && state.kind === "failed" && !busy,
+      element: retry,
+    });
+  } catch (error) {
+    view.dispose();
+    throw error;
+  }
   return presentation === undefined
     ? view
     : {

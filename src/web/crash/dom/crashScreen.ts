@@ -4,6 +4,7 @@
 // without 'unsafe-inline'), in the game's colours, which the screen sets as CSS variables. It
 // tracks the input modality from install and focuses Reload through focusTarget
 // (web/ui/dom/focusModality), so the ring shows only after keyboard input.
+import type { HoldActionBinding } from "../../input/dom/holdActions.ts";
 import { focusTarget, trackInputModality } from "../../ui/dom/focusModality.ts";
 import {
   crashGate,
@@ -26,6 +27,7 @@ export interface CrashColours {
 }
 
 export interface CrashScreenOptions {
+  readonly bindHoldAction?: HoldActionBinding;
   // A line naming the build (web/build/buildLabel), above the details.
   readonly buildLabel: string;
   readonly colours: CrashColours;
@@ -58,15 +60,25 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return element;
 }
 
-function button(document: Document, text: string, onClick: () => void): HTMLButtonElement {
+function button(
+  document: Document,
+  actions: Parameters<HoldActionBinding>[0][],
+  text: string,
+  onClick: () => void,
+): HTMLButtonElement {
   const element = el(document, "button", "crash-button", text);
   element.type = "button";
   element.addEventListener("click", onClick);
+  actions.push({ activate: onClick, available: () => !element.disabled, element });
   return element;
 }
 
 // The details are for developers, so their words are the kit's.
-function detailsSection(page: CrashPage, text: string): HTMLDetailsElement {
+function detailsSection(
+  page: CrashPage,
+  actions: Parameters<HoldActionBinding>[0][],
+  text: string,
+): HTMLDetailsElement {
   const { document } = page;
   const pre = el(document, "pre", "crash-stack", text);
   const status = el(document, "p", "crash-status");
@@ -95,7 +107,7 @@ function detailsSection(page: CrashPage, text: string): HTMLDetailsElement {
     "crash-details",
     el(document, "summary", "", "Error details"),
     pre,
-    button(document, "Copy", copy),
+    button(document, actions, "Copy", copy),
     status,
   );
 }
@@ -107,10 +119,11 @@ function showCrashScreen(page: CrashPage, options: CrashScreenOptions, report: C
   title.id = "crash-title";
   const body = el(document, "p", "crash-body", view.body);
   body.id = "crash-body";
-  const reload = button(document, view.reload, () => page.location.reload());
+  const actions: Parameters<HoldActionBinding>[0][] = [];
+  const reload = button(document, actions, view.reload, () => page.location.reload());
   const panel = el(document, "div", "crash-panel", title, body, reload);
   if (view.details !== undefined) {
-    panel.append(detailsSection(page, `${options.buildLabel}\n${view.details}`));
+    panel.append(detailsSection(page, actions, `${options.buildLabel}\n${view.details}`));
   }
   const screen = el(document, "div", "crash", panel);
   const { colours } = options;
@@ -135,6 +148,25 @@ function showCrashScreen(page: CrashPage, options: CrashScreenOptions, report: C
   }
   document.body.append(screen);
   focusTarget(reload);
+  // Both buttons share their native semantic closures. Summary and text selection stay native.
+  const stops: (() => void)[] = [];
+  try {
+    for (const action of actions) {
+      const stop = options.bindHoldAction?.(action);
+      if (stop !== undefined) {
+        stops.push(stop);
+      }
+    }
+  } catch (error) {
+    for (const stop of stops) {
+      try {
+        stop();
+      } catch {
+        /* Keep the native crash screen usable. */
+      }
+    }
+    console.error("Crash screen: action binding failed", error);
+  }
 }
 
 // Listens on page (the game's window) for uncaught errors and unhandled rejections and shows the
