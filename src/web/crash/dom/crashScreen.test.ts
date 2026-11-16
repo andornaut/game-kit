@@ -216,6 +216,8 @@ it("exposes only Reload and dev Copy native closures once per crash", async () =
   expect(bind).toHaveBeenCalledTimes(2);
   const reload = actions.find((action) => action.element.textContent === OPTIONS.words.reload)!;
   const copy = actions.find((action) => action.element.textContent === "Copy")!;
+  const copyRow = descendants(fake.body).find((element) => element.className === "crash-actions");
+  expect(copyRow?.children).toEqual([copy.element]);
   const panel = descendants(fake.body).find((element) => element.className === "crash-panel");
   expect(panel?.children.map((element) => element.className)).toEqual([
     "crash-title",

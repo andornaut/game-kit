@@ -239,6 +239,10 @@ import {
   type PointerReleaseHoldActionsOptions,
 } from '@andornaut/game-kit/runtime/web/input/dom/holdActions';
 import type { PressGuard } from '@andornaut/game-kit/runtime/web/ui/dom/domPress';
+import type { ModalOptions } from '@andornaut/game-kit/runtime/web/ui/dom/modalLayer';
+export function strictModalOptions(backdrop:HTMLElement):ModalOptions {
+  return {isolation:'dialog',backdrop};
+}
 import type { CrashScreenOptions } from '@andornaut/game-kit/runtime/web/crash/dom/crashScreen';
 import type { LoadingFailureContext } from '@andornaut/game-kit/runtime/web/progress/dom/loadingFailure';
 export function bindPointerAction(
@@ -577,6 +581,89 @@ try {
 `,
 );
 execFileSync(process.execPath, ["hold-actions.mjs"], { cwd: consumer, stdio: "inherit" });
+writeFileSync(
+  join(consumer, "modal-isolation.mjs"),
+  `
+import assert from 'node:assert/strict';
+import { Window } from 'happy-dom';
+import { createModalLayer } from '@andornaut/game-kit/runtime/web/ui/dom/modalLayer';
+const window=new Window();
+Object.assign(globalThis,{HTMLElement:window.HTMLElement,Node:window.Node,Element:window.Element});
+const {document}=window;
+const root=document.createElement('div');
+const scene=document.createElement('div');
+const hud=document.createElement('button');
+const backdrop=document.createElement('div');
+const other=document.createElement('button');
+const dialog=document.createElement('section');
+const ok=document.createElement('button');
+dialog.append(ok);
+backdrop.append(other,dialog);
+scene.append(hud,backdrop);
+root.append(scene);
+document.body.append(root);
+hud.style.display='block';
+const paintedStyle=hud.getAttribute('style');
+const layer=createModalLayer(root);
+let outside=0,backdrops=0,rootKeys=0;
+root.addEventListener('keydown',()=>rootKeys++);
+hud.addEventListener('click',()=>outside++);
+other.addEventListener('click',()=>outside++);
+backdrop.addEventListener('click',event=>{if(event.target===backdrop)backdrops++;});
+const click=target=>{
+  const event=new window.MouseEvent('click',{bubbles:true,cancelable:true,detail:1});
+  target.dispatchEvent(event);
+  return event;
+};
+try {
+  const close=layer.open({isolation:'dialog',backdrop,focus:ok},dialog);
+  assert.equal(hud.inert,true);
+  assert.equal(other.inert,true);
+  assert.equal(dialog.closest('[inert]'),null);
+  assert.equal(hud.getAttribute('style'),paintedStyle);
+  assert.equal(hud.isConnected,true);
+  assert.equal(click(hud).defaultPrevented,true);
+  assert.equal(click(other).defaultPrevented,true);
+  assert.equal(outside,0);
+  assert.equal(click(backdrop).defaultPrevented,false);
+  assert.equal(backdrops,1);
+  let leaked=0;
+  window.addEventListener('keydown',()=>leaked++);
+  const escape=new window.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true});
+  ok.dispatchEvent(escape);
+  assert.equal(escape.defaultPrevented,true);
+  assert.equal(leaked,0);
+  assert.equal(rootKeys,0);
+  const neutral=new window.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true});
+  document.body.dispatchEvent(neutral);
+  assert.equal(neutral.defaultPrevented,true);
+  assert.equal(leaked,0);
+  assert.equal(layer.back(),true);
+  assert.equal(dialog.getAttribute('aria-modal'),'true');
+  const child=document.createElement('section');
+  const childAction=document.createElement('button');
+  child.append(childAction);
+  dialog.append(child);
+  const closeChild=layer.open({isolation:'dialog',focus:childAction},child);
+  assert.equal(ok.inert,true);
+  closeChild();
+  assert.equal(ok.inert,false);
+  assert.equal(document.activeElement,ok);
+  close();
+  assert.equal(hud.inert,false);
+  assert.equal(other.inert,false);
+  assert.throws(()=>layer.open({isolation:'dialog',live:[hud]},dialog));
+  assert.equal(layer.back(),false);
+  const legacy=layer.open({},dialog);
+  assert.equal(hud.inert,false);
+  legacy();
+} finally {
+  layer.dispose();
+  window.close();
+}
+`,
+);
+execFileSync(process.execPath, ["modal-isolation.mjs"], { cwd: consumer, stdio: "inherit" });
 writeFileSync(
   join(consumer, "loading-presentation.mjs"),
   `

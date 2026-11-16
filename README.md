@@ -59,9 +59,19 @@ The emitted worker carries an internal, versioned compact manifest with one shar
 
 The precache plugin builds the worker through Vite's isolated worker pipeline as one self-contained classic script. Shared page modules cannot split the worker into ESM chunks. Builds reject worker imports or additional emitted files; games retain their existing classic registration and runtime policies.
 
+## Dialog-subtree isolation
+
+`runtime/web/ui/dom/modalLayer` accepts `ModalOptions.isolation: "dialog"` to keep only the top dialog subtree interactive. Omission or `"layer"` retains the existing containing-layer behaviour. Strict mode rejects nonempty `live` exceptions. Optional `backdrop` names the exact element allowed to receive pointer actions outside the dialog; its other descendants are not allowed. The caller retains the original outside-dismissal callback and mandatory-choice policy.
+
+Strict mode keeps the dialog's ancestor paths live and makes their other branches inert. It does not move, hide, style or dim the underlying UI. Only manager-owned inert marks are restored; nested close and focus restoration retain the existing stack. Owned-root capture guards block outside pointer and activation events, while a child-list observer updates inert branches for inserted controls. Keyboard focus and mapped actions stay within the top dialog, including close keys when no close callback exists.
+
+Handled action keys stop before later listeners on the same root. Mapped keys redirected to neutral document targets after focus loss are contained without activating or closing a dialog. Unmapped editing keys and legacy-mode handling remain unchanged.
+
+Configure and create the manager before delegated action listeners on its root. It cannot suppress an earlier listener on that root or an ancestor capture listener. Keep caller world/Phaser input scopes and cross-modal gesture guards. Dimming, visible layout, allowed navigation and actual backdrop selection remain caller-owned. Invalid strict configurations fail before stack, focus or inert changes.
+
 ## Caller action order
 
-Layout primitives retain the caller's keyed order and action roles. Callers place the existing primary action last in vertical groups and rightmost in horizontal groups, retaining secondary order and hidden-control identities. The crash screen keeps Reload after its optional developer details. Its action callbacks and focus remain unchanged.
+Layout primitives retain the caller's keyed order and action roles. Callers place the existing primary action last in vertical groups and rightmost in horizontal groups, retaining secondary order and hidden-control identities. The crash screen keeps Reload after its optional developer details and centres the sole Copy action in its own row. Its action callbacks and focus remain unchanged.
 
 ## Explicit pointer-release actions
 

@@ -77,6 +77,10 @@
   text-align: left;
 }
 
+.crash-actions {
+  text-align: center;
+}
+
 .crash-details summary {
   min-height: 44px;
   line-height: 44px;

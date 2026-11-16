@@ -107,7 +107,7 @@ function detailsSection(
     "crash-details",
     el(document, "summary", "", "Error details"),
     pre,
-    button(document, actions, "Copy", copy),
+    el(document, "div", "crash-actions", button(document, actions, "Copy", copy)),
     status,
   );
 }
