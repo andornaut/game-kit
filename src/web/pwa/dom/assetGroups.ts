@@ -18,6 +18,9 @@ export interface AssetGroupsOptions {
     getRegistration(): Promise<{ readonly active: GroupWorker | null } | undefined>;
   };
   readonly requestTimeoutMs: number;
+  // Absolute is the default whole-request deadline. Inactivity renews only on worker work,
+  // including work ahead in its serialized queue, never on download ratios or phases.
+  readonly timeoutMode?: "absolute" | "inactivity";
   readonly onDownloadProgress?: (snapshot: DownloadProgress) => void;
 }
 
@@ -30,7 +33,7 @@ export interface AssetGroups {
 // One instance belongs to one document/build. Controller replacement must not retarget its pin.
 // Calls use explicit lifecycle hooks owned by the caller; this installs no polling or registration.
 export function createAssetGroups(options: AssetGroupsOptions): AssetGroups {
-  const { buildId, container, onDownloadProgress, requestTimeoutMs } = options;
+  const { buildId, container, onDownloadProgress, requestTimeoutMs, timeoutMode } = options;
   if (!isBuildId(buildId)) {
     throw new TypeError("Asset groups require a full immutable release build ID");
   }
@@ -40,6 +43,9 @@ export function createAssetGroups(options: AssetGroupsOptions): AssetGroups {
     requestTimeoutMs > 2_147_483_647
   ) {
     throw new RangeError("Asset group request timeout must be a positive timer-safe integer");
+  }
+  if (timeoutMode !== undefined && timeoutMode !== "absolute" && timeoutMode !== "inactivity") {
+    throw new RangeError("Unknown asset group timeout mode");
   }
   let disposed = false;
   let version: string | undefined;
@@ -80,7 +86,7 @@ export function createAssetGroups(options: AssetGroupsOptions): AssetGroups {
         resolve(result);
       };
       const cancel = () => finish(unavailable("disposed"));
-      const timer = setTimeout(() => finish(unavailable("timeout")), requestTimeoutMs);
+      let timer = setTimeout(() => finish(unavailable("timeout")), requestTimeoutMs);
       pending.add(cancel);
       void (async () => {
         try {
@@ -97,9 +103,28 @@ export function createAssetGroups(options: AssetGroupsOptions): AssetGroups {
           channel = new MessageChannel();
           let operationId: string | undefined;
           let progressVersion: string | undefined;
+          let sequence = 0;
           channel.port1.onmessageerror = () => finish(unavailable("failed"));
           channel.port1.onmessage = ({ data }: MessageEvent<unknown>) => {
             if (done || !isAssetGroupsReply(data)) {
+              return;
+            }
+            if (data.type === "activity") {
+              if (
+                timeoutMode !== "inactivity" ||
+                data.buildId !== buildId ||
+                (version !== undefined && data.version !== version) ||
+                (progressVersion !== undefined && data.version !== progressVersion) ||
+                (operationId !== undefined && data.operationId !== operationId) ||
+                data.sequence <= sequence
+              ) {
+                return;
+              }
+              sequence = data.sequence;
+              operationId = data.operationId;
+              progressVersion = data.version;
+              clearTimeout(timer);
+              timer = setTimeout(() => finish(unavailable("timeout")), requestTimeoutMs);
               return;
             }
             if (data.type === "progress") {
@@ -138,6 +163,7 @@ export function createAssetGroups(options: AssetGroupsOptions): AssetGroups {
           };
           const message: AssetGroupsRequest = {
             buildId,
+            ...(timeoutMode === "inactivity" ? { activity: true as const } : {}),
             groups,
             type: ASSET_GROUPS_MESSAGE,
 

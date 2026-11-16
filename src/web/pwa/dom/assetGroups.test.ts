@@ -242,3 +242,115 @@ it("bounds queueing and verification without treating phase notifications as com
   expect(f.requests).toHaveLength(1);
   controller.dispose();
 });
+
+// A native-channel round trip drains messages without advancing the fake deadline.
+async function flushPort(port: MessagePort): Promise<void> {
+  const channel = new MessageChannel();
+  ports.push(channel.port1, channel.port2);
+  await new Promise<void>((resolve) => {
+    channel.port1.onmessage = () => {
+      // Both messages are native tasks, not fake-clock timers.
+      port.postMessage({ type: "flush" });
+      resolve();
+    };
+    channel.port2.postMessage(null);
+  });
+  await new Promise<void>((resolve) => {
+    channel.port1.onmessage = () => resolve();
+    channel.port2.postMessage(null);
+  });
+}
+
+it("renews inactivity for validated forward work beyond the absolute deadline, without bar progress", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const report = vi.fn();
+  const options = { ...f.options, onDownloadProgress: report, timeoutMode: "inactivity" as const };
+  const controller = createAssetGroups(options);
+  // Runtime mutation cannot change this owner's selected mode.
+  Object.assign(options, { timeoutMode: "absolute" });
+  const pending = controller.ensureGroups(["a"]);
+  expect(f.requests[0]!.message.activity).toBe(true);
+  const port = f.requests[0]!.port;
+  for (const sequence of [1, 2, 3]) {
+    // Each renewal must arrive before advancing to the next inactivity window.
+    // eslint-disable-next-line no-await-in-loop
+    await vi.advanceTimersByTimeAsync(700);
+    port.postMessage({
+      buildId: BUILD,
+      operationId: "work",
+      sequence,
+      type: "activity",
+      version: "one",
+    });
+    // eslint-disable-next-line no-await-in-loop
+    await flushPort(port);
+  }
+  expect(report).not.toHaveBeenCalled();
+  f.result(0);
+  await expect(pending).resolves.toMatchObject({ status: "available" });
+  controller.dispose();
+});
+
+it("ignores replay, foreign identity, malformed activity and unchanged phases, then closes late work", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const controller = createAssetGroups({ ...f.options, timeoutMode: "inactivity" });
+  const pending = controller.readState();
+  const port = f.requests[0]!.port;
+  const activity = {
+    buildId: BUILD,
+    operationId: "work",
+    sequence: 1,
+    type: "activity",
+    version: "one",
+  };
+  port.postMessage(activity);
+  await flushPort(port);
+  await vi.advanceTimersByTimeAsync(700);
+  for (const message of [
+    activity,
+    { ...activity, sequence: 0 },
+    { ...activity, sequence: 1.5 },
+    { ...activity, buildId: "b".repeat(40), sequence: 2 },
+    { ...activity, operationId: "other", sequence: 2 },
+    { ...activity, sequence: 2, version: "other" },
+    {
+      progress: { operationId: "work", phase: "verifying", value: undefined, version: "one" },
+      type: "progress",
+    },
+  ]) {
+    port.postMessage(message);
+  }
+  await flushPort(port);
+  await vi.advanceTimersByTimeAsync(300);
+  await expect(pending).resolves.toEqual({ reason: "timeout", status: "unavailable" });
+  f.result(0);
+  const retry = controller.readState();
+  controller.dispose();
+  await expect(retry).resolves.toEqual({ reason: "disposed", status: "unavailable" });
+  expect(f.requests).toHaveLength(2);
+});
+
+it("bounds inactivity lookup and legacy silent workers, and rejects an invalid mode atomically", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  expect(() => createAssetGroups({ ...f.options, timeoutMode: "unknown" as "absolute" })).toThrow(
+    RangeError,
+  );
+  expect(f.requests).toHaveLength(0);
+  const controller = createAssetGroups({ ...f.options, timeoutMode: "inactivity" });
+  const pending = controller.readState();
+  await vi.advanceTimersByTimeAsync(1000);
+  await expect(pending).resolves.toMatchObject({ reason: "timeout" });
+  controller.dispose();
+  const hanging = createAssetGroups({
+    ...f.options,
+    container: { controller: null, getRegistration: () => new Promise(() => {}) },
+    timeoutMode: "inactivity",
+  });
+  const lookup = hanging.readState();
+  await vi.advanceTimersByTimeAsync(1000);
+  await expect(lookup).resolves.toMatchObject({ reason: "timeout" });
+  hanging.dispose();
+});

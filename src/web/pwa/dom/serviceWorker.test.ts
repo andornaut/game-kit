@@ -7,6 +7,7 @@ import { ASSET_GROUPS_MESSAGE, type AssetGroupsResult } from "../assetGroups.ts"
 import { cacheNameFor, type CachePolicy } from "../cachePolicy.ts";
 import { DOWNLOAD_PROGRESS_MESSAGE, type DownloadProgress } from "../downloadProgress.ts";
 import type { PrecacheManifest } from "../precacheList.ts";
+import { createAssetGroups } from "./assetGroups.ts";
 import { runServiceWorker } from "./serviceWorker.ts";
 
 // Storage transactions have separate native IndexedDB coverage. These dispatcher scenarios
@@ -229,7 +230,12 @@ interface WorkerEvent {
   readonly resultingClientId?: string;
   readonly data?: unknown;
   readonly source?: unknown;
-  readonly ports?: readonly { close?(): void; postMessage(value: unknown): void }[];
+  readonly ports?: readonly {
+    addEventListener?(type: string, listener: () => void): void;
+    removeEventListener?(type: string, listener: () => void): void;
+    close?(): void;
+    postMessage(value: unknown): void;
+  }[];
   respondWith?(response: Promise<Response>): void;
   waitUntil(promise: Promise<unknown>): void;
 }
@@ -321,6 +327,16 @@ function startWorker(
     activate: () => dispatch("activate"),
     clients,
     controlled,
+    groupWorker: {
+      postMessage: (data: unknown, ports: Transferable[]) => {
+        listeners.get("message")?.({
+          data,
+          ports: ports as MessagePort[],
+          source: { id: "page" },
+          waitUntil: () => undefined,
+        });
+      },
+    },
     install: () => dispatch("install"),
     nativeWorker: {
       postMessage: (data: unknown, ports: Transferable[]) => {
@@ -361,7 +377,14 @@ function startWorker(
 
           ...(version === undefined ? {} : { version }),
         },
-        ports: [{ close: () => undefined, postMessage: (reply) => replies.push(reply) }],
+        ports: [
+          {
+            addEventListener: () => undefined,
+            close: () => undefined,
+            postMessage: (reply) => replies.push(reply),
+            removeEventListener: () => undefined,
+          },
+        ],
         source: { id: requester },
         waitUntil: (promise) => {
           done = promise;
@@ -1441,6 +1464,175 @@ describe("grouped precache dispatcher", () => {
     expect(server.fetched).not.toContain("/third");
   });
 
+  it("keeps a queued native client alive through predecessor chunks and verifies before readiness", async () => {
+    const server = new FakeServer(files);
+    const worker = startWorker(server, {}, grouped(), undefined, [{ id: "page" }]);
+    await worker.install();
+    vi.useFakeTimers();
+    let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const original = server.fetch.bind(server);
+    vi.stubGlobal("fetch", (request: Request) =>
+      pathOf(request) === "/second"
+        ? Promise.resolve(
+            new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  stream = controller;
+                },
+              }),
+            ),
+          )
+        : original(request),
+    );
+    const firstReports: DownloadProgress[] = [];
+    const firstClient = createAssetGroups({
+      buildId,
+      container: { controller: worker.groupWorker, getRegistration: async () => undefined },
+      onDownloadProgress: (snapshot) => firstReports.push(snapshot),
+      requestTimeoutMs: 1000,
+      timeoutMode: "inactivity",
+    });
+    const nextClient = createAssetGroups({
+      buildId,
+      container: { controller: worker.groupWorker, getRegistration: async () => undefined },
+      requestTimeoutMs: 1000,
+      timeoutMode: "inactivity",
+    });
+    const first = firstClient.ensureGroups(["second"]);
+    await nativeUntil(() => stream !== undefined);
+    const second = nextClient.ensureGroups(["third"]);
+    let settled = false;
+    void second.then(() => {
+      settled = true;
+    });
+    // Let the validated second request enter the same FIFO behind the streaming first job.
+    await nativeTurns(10);
+    for (const byte of new TextEncoder().encode("two")) {
+      // eslint-disable-next-line no-await-in-loop
+      await vi.advanceTimersByTimeAsync(700);
+      const reports = firstReports.length;
+      stream!.enqueue(new Uint8Array([byte]));
+      // eslint-disable-next-line no-await-in-loop
+      await nativeUntil(() => firstReports.length > reports);
+      // eslint-disable-next-line no-await-in-loop
+      await nativeTurn();
+      expect(settled).toBe(false);
+    }
+    expect(durable.builds.get(NEW)).not.toContain("second");
+    stream!.close();
+    await expect(first).resolves.toMatchObject({
+      readyGroups: ["first", "second"],
+      status: "available",
+    });
+    await expect(second).resolves.toMatchObject({
+      readyGroups: ["first", "second", "third"],
+      status: "available",
+    });
+    expect(worker.skipWaiting).not.toHaveBeenCalled();
+    firstClient.dispose();
+    nextClient.dispose();
+  });
+
+  it("renews on completed cache checks but expires a stalled verification without inventing readiness", async () => {
+    const server = new FakeServer(files);
+    const worker = startWorker(server, {}, grouped(), undefined, [{ id: "page" }]);
+    await worker.install();
+    await worker.requestGroups(buildId, ["second", "third"]);
+    virtualNetworkClock();
+    const cache = await worker.storage.open(NEW);
+    const original = cache.match.bind(cache);
+    const checks = new Map<string, () => void>();
+    const match = vi.spyOn(cache, "match").mockImplementation(async (key) => {
+      const response = await original(key);
+      return new Promise<Response | undefined>((resolve) => {
+        checks.set(pathOf(key), () => resolve(response));
+      });
+    });
+    const client = createAssetGroups({
+      buildId,
+      container: { controller: worker.groupWorker, getRegistration: async () => undefined },
+      requestTimeoutMs: 1000,
+      timeoutMode: "inactivity",
+    });
+    const pending = client.readState();
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await nativeUntil(() => checks.size === 4);
+    for (const url of ["/first", "/second", "/third"]) {
+      // Each completed body check must be observed before the next inactivity window.
+      // eslint-disable-next-line no-await-in-loop
+      await vi.advanceTimersByTimeAsync(700);
+      checks.get(url)!();
+      // eslint-disable-next-line no-await-in-loop
+      await nativeTurns(10);
+      expect(settled).toBe(false);
+    }
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(pending).resolves.toEqual({ reason: "timeout", status: "unavailable" });
+    checks.get("/play/")!();
+    match.mockRestore();
+    await nativeTurns(10);
+    // Expiry closes only this client. Verified durable coverage remains available to a retry.
+    await expect(client.readState()).resolves.toMatchObject({ status: "available" });
+    expect(server.fetched).toHaveLength(4);
+    expect(worker.skipWaiting).not.toHaveBeenCalled();
+    client.dispose();
+  });
+
+  it("expires a stalled FIFO and ignores unrelated fetches and later queued work without canceling it", async () => {
+    const server = new FakeServer(files);
+    const worker = startWorker(server, {}, grouped(), undefined, [{ id: "page" }]);
+    await worker.install();
+    vi.useFakeTimers();
+    let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const original = server.fetch.bind(server);
+    vi.stubGlobal("fetch", (request: Request) =>
+      pathOf(request) === "/second"
+        ? Promise.resolve(
+            new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  stream = controller;
+                },
+              }),
+            ),
+          )
+        : original(request),
+    );
+    const makeClient = () =>
+      createAssetGroups({
+        buildId,
+        container: { controller: worker.groupWorker, getRegistration: async () => undefined },
+        requestTimeoutMs: 1000,
+        timeoutMode: "inactivity",
+      });
+    const firstClient = makeClient(),
+      nextClient = makeClient(),
+      laterClient = makeClient();
+    const first = firstClient.ensureGroups(["second"]);
+    await nativeUntil(() => stream !== undefined);
+    const second = nextClient.ensureGroups(["third"]);
+    await nativeTurns(10);
+    await vi.advanceTimersByTimeAsync(700);
+    await worker.respond(requestFor("/first"));
+    const later = laterClient.readState();
+    await nativeTurns(10);
+    await vi.advanceTimersByTimeAsync(300);
+    await expect(first).resolves.toMatchObject({ reason: "timeout" });
+    await expect(second).resolves.toMatchObject({ reason: "timeout" });
+    laterClient.dispose();
+    await expect(later).resolves.toMatchObject({ reason: "disposed" });
+    // Closed clients do not cancel the worker's finite fetch/commit operation.
+    stream!.enqueue(new TextEncoder().encode("two"));
+    stream!.close();
+    await nativeUntil(() => durable.builds.get(NEW)?.includes("third") === true);
+    expect(worker.skipWaiting).not.toHaveBeenCalled();
+    firstClient.dispose();
+    nextClient.dispose();
+  });
+
   it("retains successful files for retry without committing partial groups", async () => {
     const manifest = grouped();
     manifest.groups = {
@@ -1851,3 +2043,31 @@ describe("explicit verified JSON body reuse", () => {
     ).toBe(false);
   });
 });
+
+async function nativeTurn(): Promise<void> {
+  const channel = new MessageChannel();
+  await new Promise<void>((resolve) => {
+    channel.port1.onmessage = () => resolve();
+    channel.port2.postMessage(null);
+  });
+  channel.port1.close();
+  channel.port2.close();
+}
+async function nativeUntil(predicate: () => boolean): Promise<void> {
+  for (let turn = 0; turn < 1000; turn += 1) {
+    if (predicate()) {
+      return;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await nativeTurn();
+  }
+  throw new Error("Native message or stream milestone was not reached");
+}
+
+async function nativeTurns(count: number): Promise<void> {
+  for (let turn = 0; turn < count; turn += 1) {
+    // Native tasks are drained in order without advancing the deadline.
+    // eslint-disable-next-line no-await-in-loop
+    await nativeTurn();
+  }
+}

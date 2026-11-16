@@ -1,3 +1,4 @@
+import { isBuildId } from "./buildIdentity.ts";
 import { type DownloadProgress, isDownloadProgress } from "./downloadProgress.ts";
 
 export const ASSET_GROUPS_MESSAGE = "game-kit-asset-groups";
@@ -21,9 +22,19 @@ export interface AssetGroupsRequest {
   readonly buildId: string;
   readonly version?: string;
   readonly groups: readonly string[];
+  readonly activity?: true;
+}
+
+export interface AssetGroupsActivity {
+  readonly type: "activity";
+  readonly buildId: string;
+  readonly version: string;
+  readonly operationId: string;
+  readonly sequence: number;
 }
 
 export type AssetGroupsReply =
+  | AssetGroupsActivity
   | { readonly type: "progress"; readonly progress: DownloadProgress }
   | { readonly type: "result"; readonly result: AssetGroupsResult };
 
@@ -40,6 +51,21 @@ const unavailableReasons: readonly string[] = [
 export function isAssetGroupsReply(value: unknown): value is AssetGroupsReply {
   if (value === null || typeof value !== "object") {
     return false;
+  }
+  if ("type" in value && value.type === "activity") {
+    return (
+      "buildId" in value &&
+      isBuildId(value.buildId) &&
+      "version" in value &&
+      typeof value.version === "string" &&
+      value.version.length > 0 &&
+      "operationId" in value &&
+      typeof value.operationId === "string" &&
+      value.operationId.length > 0 &&
+      "sequence" in value &&
+      Number.isSafeInteger(value.sequence) &&
+      Number(value.sequence) > 0
+    );
   }
   if ("type" in value && value.type === "progress") {
     return "progress" in value && isDownloadProgress(value.progress);

@@ -320,6 +320,7 @@ async function fetchIntoCache(
   byteSize: number | undefined,
   progress: ReturnType<typeof createDownloadProgress>,
   verified: VerifiedSource | undefined,
+  activity: () => void,
   url: string,
 ): Promise<PrecacheFailure | undefined> {
   let error: unknown;
@@ -331,6 +332,7 @@ async function fetchIntoCache(
     }
     const abort = new AbortController();
     progress.attempt(url);
+    activity();
     const timer = setTimeout(() => {
       abort.abort(new Error(`No answer within ${PRECACHE_TIMEOUT_MS} ms for ${url}`));
     }, PRECACHE_TIMEOUT_MS);
@@ -358,13 +360,20 @@ async function fetchIntoCache(
       const expected = contentHashes[url];
       // Read a clone once for streamed accounting and the existing hash check. Cache.put keeps
       // the original response, including its headers and status, without another network fetch.
+      let received = 0;
       // eslint-disable-next-line no-await-in-loop
       await readDownload(
         {
           expectedFullHash: verified?.family.sha256,
           expectedHash: expected,
           expectedSize: byteSize,
-          onReceived: (bytes) => progress.received(url, bytes),
+          onReceived: (bytes) => {
+            if (bytes > received) {
+              received = bytes;
+              activity();
+            }
+            progress.received(url, bytes);
+          },
           signal: abort.signal,
           url,
         },
@@ -375,6 +384,7 @@ async function fetchIntoCache(
       if (abort.signal.aborted) {
         throw abort.signal.reason;
       }
+      activity();
       progress.stored(url);
       return undefined;
     } catch (caught) {
@@ -617,19 +627,24 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     build: PrecacheManifest,
     listedUrls: readonly string[],
     tracker: ReturnType<typeof createDownloadProgress>,
+    activity: () => void,
   ) => {
     const families = verifiedFamilies(build);
     const cache = await caches.open(name);
     const kept = await mapBounded(
       REUSE_CONCURRENCY,
-      async (url) =>
-        (await storedCopy(
-          [cache],
-          build.contentHashes[url],
-          build.byteSizes?.[url],
-          verifiedFor(build, url),
-          url,
-        )) !== undefined,
+      async (url) => {
+        const kept =
+          (await storedCopy(
+            [cache],
+            build.contentHashes[url],
+            build.byteSizes?.[url],
+            verifiedFor(build, url),
+            url,
+          )) !== undefined;
+        activity();
+        return kept;
+      },
       listedUrls,
     );
     const urls = listedUrls.filter((_, index) => kept[index] !== true);
@@ -665,10 +680,12 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
           verifiedFor(build, url),
           url,
         );
+        activity();
         if (response === undefined) {
           return [url];
         }
         await cache.put(url, response);
+        activity();
         return [];
       },
       reusable,
@@ -681,6 +698,7 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
         // Each logical URL gets its own canonical response only after source verification.
         // eslint-disable-next-line no-await-in-loop
         await cache.put(url, jsonResponse(body));
+        activity();
       }
     };
     for (const family of families) {
@@ -699,6 +717,7 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
           { family, origin: worker.location.origin },
           url,
         );
+        activity();
         if (source !== undefined) {
           break;
         }
@@ -732,6 +751,7 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
           build.byteSizes?.[url],
           tracker,
           verified,
+          activity,
           url,
         );
         if (failure !== undefined) {
@@ -822,27 +842,68 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
   // Serialize staging within this worker to retain the shared four-request network bound.
   // Durable readiness transactions, rather than this local chain, serialize different workers.
   let staging: Promise<unknown> = Promise.resolve();
-  const serialized = <T>(work: () => Promise<T>): Promise<T> => {
-    const result = staging.then(work, work);
+  const jobs = new Set<Set<() => void>>();
+  const serialized = <T>(
+    work: (activity: () => void) => Promise<T>,
+    observer?: () => void,
+  ): Promise<T> => {
+    // Only predecessors already ahead in this FIFO may keep a queued request alive.
+    const predecessors = [...jobs];
+    const listeners = new Set<() => void>();
+    if (observer !== undefined) {
+      listeners.add(observer);
+      for (const previous of predecessors) {
+        previous.add(observer);
+      }
+    }
+    jobs.add(listeners);
+    const activity = () => {
+      for (const notify of listeners) {
+        notify();
+      }
+    };
+    const run = async () => {
+      for (const previous of predecessors) {
+        if (observer !== undefined) {
+          previous.delete(observer);
+        }
+      }
+      activity();
+      try {
+        return await work(activity);
+      } finally {
+        jobs.delete(listeners);
+        listeners.clear();
+      }
+    };
+    const result = staging.then(run, run);
     staging = result.catch(() => undefined);
+    // Validated queue admission is reported once, never by a timer.
+    observer?.();
     return result;
   };
   const precache = () =>
-    serialized(async () => {
+    serialized(async (activity) => {
       const ids =
         manifest.groups === undefined
           ? []
           : [...new Set([...manifest.groups.initial, ...(await installedUnion())])];
-      await stage(cacheName, manifest, requiredUrls(currentBuild, ids), progress);
+      await stage(cacheName, manifest, requiredUrls(currentBuild, ids), progress, activity);
       // Store immutable build metadata first. A crash before the transactional ready commit
       // leaves a resumable partial cache, never a falsely available group.
       await writeRecord("build", cacheName, currentBuild);
+      activity();
       if (manifest.groups !== undefined && (await groups.commit(cacheName, ids)) !== "stored") {
         throw new TypeError("An update currently prevents committing asset groups");
       }
+      activity();
       progress.complete();
     });
-  const completeBuild = async (name: string, build: BuildRecord): Promise<boolean> => {
+  const completeBuild = async (
+    name: string,
+    build: BuildRecord,
+    activity: () => void = () => undefined,
+  ): Promise<boolean> => {
     const ready = build.manifest.groups === undefined ? [] : await groups.read(name);
     if (ready === undefined) {
       return false;
@@ -850,14 +911,18 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     const cache = await caches.open(name);
     const complete = await mapBounded(
       REUSE_CONCURRENCY,
-      async (url) =>
-        (await storedCopy(
-          [cache],
-          build.manifest.contentHashes[url],
-          build.manifest.byteSizes?.[url],
-          verifiedFor(build.manifest, url),
-          url,
-        )) !== undefined,
+      async (url) => {
+        const complete =
+          (await storedCopy(
+            [cache],
+            build.manifest.contentHashes[url],
+            build.manifest.byteSizes?.[url],
+            verifiedFor(build.manifest, url),
+            url,
+          )) !== undefined;
+        activity();
+        return complete;
+      },
       requiredUrls(build, ready),
     );
     return complete.every(Boolean);
@@ -1033,13 +1098,22 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
       port.close();
     };
     let tracker: ReturnType<typeof createDownloadProgress> | undefined;
+    let listening = true;
+    let detachActivity = () => undefined;
+    const stopActivity = () => {
+      listening = false;
+      detachActivity();
+    };
+    port.addEventListener("close", stopActivity);
+    port.addEventListener("messageerror", stopActivity);
     try {
       const request = event.data as Partial<AssetGroupsRequest>;
       if (
         !isBuildId(request.buildId) ||
         (request.version !== undefined && typeof request.version !== "string") ||
         !Array.isArray(request.groups) ||
-        request.groups.some((id: unknown) => typeof id !== "string")
+        request.groups.some((id: unknown) => typeof id !== "string") ||
+        (request.activity !== undefined && request.activity !== true)
       ) {
         reply({ reason: "failed", status: "unavailable" });
         return;
@@ -1102,17 +1176,46 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
       if (pin === undefined) {
         await writeRecord("client", id, name);
       }
+      const operationId = crypto.randomUUID();
+      let sequence = 0;
+      const activity = () => {
+        if (!listening || request.activity !== true || sequence >= Number.MAX_SAFE_INTEGER) {
+          return;
+        }
+        try {
+          port.postMessage({
+            buildId: build.manifest.buildId,
+            operationId,
+            sequence: ++sequence,
+            type: "activity",
+            version: build.manifest.version,
+          });
+        } catch {
+          stopActivity();
+        }
+      };
+      detachActivity = () => {
+        for (const job of jobs) {
+          job.delete(activity);
+        }
+      };
       tracker = createDownloadProgress(
         {
           now: () => Date.now(),
-          operationId: crypto.randomUUID(),
-          report: (snapshot) => port.postMessage({ progress: snapshot, type: "progress" }),
+          operationId,
+          report: (snapshot) => {
+            try {
+              port.postMessage({ progress: snapshot, type: "progress" });
+            } catch {
+              stopActivity();
+            }
+          },
           version: build.manifest.version,
         },
         build.manifest.byteSizes,
       );
       const download = tracker;
-      await serialized(async () => {
+      await serialized(async (workActivity) => {
         const ready = await groups.read(name);
         if (ready === undefined) {
           throw new TypeError("Missing durable base readiness");
@@ -1120,15 +1223,16 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
         const combined = [...new Set([...ready, ...requested])];
         // Read-only state queries check durable bytes but never silently start a download.
         if (requested.length === 0) {
-          if (!(await completeBuild(name, build))) {
+          if (!(await completeBuild(name, build, workActivity))) {
             throw new TypeError("Committed asset groups are no longer complete");
           }
         } else {
-          await stage(name, build.manifest, requiredUrls(build, combined), download);
+          await stage(name, build.manifest, requiredUrls(build, combined), download, workActivity);
           if ((await groups.commit(name, combined)) !== "stored") {
             throw new TypeError("An update currently prevents committing asset groups");
           }
         }
+        workActivity();
         const committed = await groups.read(name);
         if (committed === undefined) {
           throw new TypeError("Missing committed asset group readiness");
@@ -1139,10 +1243,14 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
           status: "available",
           version: build.manifest.version,
         });
-      });
+      }, activity);
     } catch {
       tracker?.fail();
       reply({ reason: "failed", status: "unavailable" });
+    } finally {
+      stopActivity();
+      port.removeEventListener("close", stopActivity);
+      port.removeEventListener("messageerror", stopActivity);
     }
   };
 
@@ -1196,8 +1304,8 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
             ...(await installedUnion()),
           ]),
         ];
-        await serialized(async () => {
-          await stage(cacheName, manifest, requiredUrls(currentBuild, ids), progress);
+        await serialized(async (activity) => {
+          await stage(cacheName, manifest, requiredUrls(currentBuild, ids), progress, activity);
           if ((await groups.commit(cacheName, ids, barrierToken)) !== "stored") {
             throw new TypeError("Asset group activation barrier expired");
           }
@@ -1250,9 +1358,9 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
           try {
             // A client-free activation also retains groups completed after installation.
             // Functional fetch events wait until this activation promise settles.
-            await serialized(async () => {
+            await serialized(async (activity) => {
               const ids = [...new Set([...manifest.groups!.initial, ...(await installedUnion())])];
-              await stage(cacheName, manifest, requiredUrls(currentBuild, ids), progress);
+              await stage(cacheName, manifest, requiredUrls(currentBuild, ids), progress, activity);
               if ((await groups.commit(cacheName, ids)) !== "stored") {
                 throw new TypeError("Asset group activation could not commit readiness");
               }
