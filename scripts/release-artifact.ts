@@ -249,7 +249,7 @@ export function bindPointerAction(
   guard: PressGuard, action: HoldAction, root: HTMLElement,
 ): HoldActionsBinding {
   const options: PointerReleaseHoldActionsOptions = {
-    activation:'pointer-release',guard,pointerTarget:root.ownerDocument,
+    activation:'pointer-release',allowNonPrimaryTouch:true,guard,pointerTarget:root.ownerDocument,
     resolve:()=>action,resolvePointer:()=>action,
   };
   const binding = bindHoldActions(options,root);
@@ -521,9 +521,9 @@ let activations=0, canvasUps=0, nativeClicks=0, visual=null;
 let duration=100000;
 const activate=()=>{activations++;};
 let action={element:control,identity:{},rule:{holdMs:duration,slopPx:10},available:()=>true,activate};
-const pointer=(type,target)=>{
+const pointer=(type,target,init={})=>{
   const event=new window.PointerEvent(type,{
-    bubbles:true,cancelable:true,isPrimary:true,button:0,pointerId:4,clientX:5,clientY:5,
+    bubbles:true,cancelable:true,isPrimary:true,button:0,pointerId:4,clientX:5,clientY:5,...init,
   });
   target.dispatchEvent(event);
   assert.equal(event.defaultPrevented,false);
@@ -560,6 +560,20 @@ try {
   modal.close();
   binding();
   unsubscribe();
+  action={...action,rule:{holdMs:duration,slopPx:10},activate};
+  binding=bindHoldActions({activation:'pointer-release',allowNonPrimaryTouch:true,
+    guard:{gate},pointerTarget:document,
+    resolve:target=>target===control?action:null,
+    resolvePointer:event=>event.target===control?action:null,
+  },root);
+  const touch={pointerType:'touch',isPrimary:false};
+  pointer('pointerdown',canvas,{...touch,pointerId:1});
+  pointer('pointerdown',control,touch);
+  pointer('pointerup',control,touch);
+  assert.equal(activations,3);
+  assert.equal(click().defaultPrevented,true);
+  pointer('pointerup',canvas,{...touch,pointerId:1});
+  binding();
   let retries=0, semantic;
   failure=mountLoadingFailure({onRetry:()=>{retries++;},bindHoldAction:value=>{
     semantic=value;
