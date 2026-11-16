@@ -181,6 +181,76 @@ describe("createModalLayer dialog isolation", () => {
     }
   });
 
+  it("stops later same-root action listeners even when a modal callback pops the stack", () => {
+    const activate = vi.fn();
+    const leaked = vi.fn();
+    parts.first.addEventListener("click", activate);
+    parts.root.addEventListener("keydown", leaked);
+    let shut = layer.open({ focus: parts.first, isolation: "dialog" }, parts.dialog);
+    key("Enter");
+    expect(activate).toHaveBeenCalledOnce();
+    expect(leaked).not.toHaveBeenCalled();
+    shut();
+    const dismiss = vi.fn(() => shut());
+    shut = layer.open({ close: dismiss, isolation: "dialog" }, parts.dialog);
+    key("Escape");
+    expect(dismiss).toHaveBeenCalledOnce();
+    expect(leaked).not.toHaveBeenCalled();
+    expect(layer.back()).toBe(false);
+  });
+
+  it("contains mapped neutral-target keys after disabled focus falls to body without inventing actions", () => {
+    const activate = vi.fn();
+    const leaked = vi.fn();
+    const types = ["keydown", "keypress", "keyup"] as const;
+    for (const type of types) {
+      window.addEventListener(type, leaked);
+    }
+    parts.first.addEventListener("click", activate);
+    layer.open({ focus: parts.first, isolation: "dialog" }, parts.dialog);
+    parts.first.disabled = true;
+    parts.first.remove();
+    expect(document.activeElement).toBe(document.body);
+    try {
+      for (const target of [document.body, document.documentElement, document]) {
+        for (const name of ["Enter", " ", "Escape", "p"]) {
+          for (const type of types) {
+            const event = new KeyboardEvent(type, {
+              bubbles: true,
+              cancelable: true,
+              key: name,
+              repeat: true,
+            });
+            target.dispatchEvent(event);
+            expect(event.defaultPrevented).toBe(true);
+          }
+        }
+      }
+      expect(layer.back()).toBe(true);
+      expect(activate).not.toHaveBeenCalled();
+      expect(leaked).not.toHaveBeenCalled();
+      const other = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "x" });
+      document.body.dispatchEvent(other);
+      expect(other.defaultPrevented).toBe(false);
+      expect(leaked).toHaveBeenCalledOnce();
+      const editor = document.createElement("input");
+      document.body.append(editor);
+      const editorKey = new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Enter",
+      });
+      editor.dispatchEvent(editorKey);
+      editor.remove();
+      expect(editorKey.defaultPrevented).toBe(false);
+      expect(leaked).toHaveBeenCalledTimes(2);
+    } finally {
+      for (const type of types) {
+        window.removeEventListener(type, leaked);
+      }
+    }
+  });
+
   it("snapshots strict options and restores nested inert ownership and exact focus", () => {
     const { backdrop, parent } = sharedScene();
     parent.inert = true;

@@ -356,9 +356,25 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
     }
     return true;
   };
+  // A disabled/removed control can leave focus on body without a focusin event. Contain only
+  // known keys from neutral document targets; do not activate or dismiss through that fallback.
+  const onNeutralKey = (event: KeyboardEvent) => {
+    if (
+      !disposed &&
+      top()?.strict === true &&
+      (event.target === document ||
+        event.target === document.body ||
+        event.target === document.documentElement) &&
+      focusKeyAction(event.key, event.shiftKey, false) !== undefined
+    ) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  };
   const onKeyDown = (event: KeyboardEvent) => {
     const modal = top();
     if (modal?.strict) {
+      onNeutralKey(event);
       return;
     }
     const action = focusKeyAction(event.key, event.shiftKey, false);
@@ -371,6 +387,7 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
   const onKeyUp = (event: KeyboardEvent) => {
     const modal = top();
     if (modal?.strict) {
+      onNeutralKey(event);
       return;
     }
     if (event.key === " " && modal !== undefined && within(modal, document.activeElement)) {
@@ -429,11 +446,11 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
     if (action === undefined) {
       return;
     }
+    event.preventDefault();
+    event.stopImmediatePropagation();
     if (event.type === "keydown") {
       act(modal, action, event.repeat);
     }
-    event.preventDefault();
-    event.stopPropagation();
   };
   const inputTypes = [
     "pointerdown",
@@ -454,6 +471,7 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
   }
   document.addEventListener("keydown", onKeyDown);
   document.addEventListener("keyup", onKeyUp);
+  document.addEventListener("keypress", onNeutralKey);
   document.addEventListener("focusin", onFocusIn);
   return {
     back() {
@@ -474,6 +492,7 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
       }
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("keyup", onKeyUp);
+      document.removeEventListener("keypress", onNeutralKey);
       document.removeEventListener("focusin", onFocusIn);
       stack.length = 0;
       applyInert();
