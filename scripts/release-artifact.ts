@@ -99,6 +99,25 @@ import { shortCommit, UNKNOWN_COMMIT } from '@andornaut/game-kit/build/buildVers
 import { replacePhaserFlags } from '@andornaut/game-kit/build/phaserBuild';
 import { crashGate } from '@andornaut/game-kit/runtime/web/crash/crashModel';
 import { isBuildId } from '@andornaut/game-kit/runtime/web/pwa/buildIdentity';
+import { precacheFingerprint } from '@andornaut/game-kit/build/precacheList';
+import { createHash } from 'node:crypto';
+const jsonBody = '{}';
+const verifiedFamily = {
+  byteSize: 2, sha256: createHash('sha256').update(jsonBody).digest('hex'),
+  urls: ['/left.json', '/right.json'],
+};
+const bodyHashes = new Map(verifiedFamily.urls.map((url) => [url,
+  createHash('sha256').update(jsonBody).digest('base64url').slice(0, 8)]));
+const bodySizes = new Map(verifiedFamily.urls.map((url) => [url, 2]));
+const bodyPolicy = {cacheNamePrefix:'proof-',hashedAssetPrefix:'/assets/'};
+const legacyFingerprint = precacheFingerprint(bodyPolicy, bodyHashes, bodySizes);
+assert.equal(precacheFingerprint(bodyPolicy, bodyHashes, bodySizes, undefined, undefined), legacyFingerprint);
+assert.notEqual(precacheFingerprint(bodyPolicy, bodyHashes, bodySizes, undefined, [verifiedFamily]), legacyFingerprint);
+for (const privateHelper of ['runtime/web/pwa/verifiedJsonBody', 'web/pwa/verifiedJsonBody']) {
+  assert.throws(() => import.meta.resolve('@andornaut/game-kit/' + privateHelper), {
+    code: 'ERR_PACKAGE_PATH_NOT_EXPORTED'
+  });
+}
 import { validateLayoutTree } from '@andornaut/game-kit/runtime/ui/layoutTree';
 import { mountLoadingFailure } from '@andornaut/game-kit/runtime/web/progress/dom/loadingFailure';
 validateLayoutTree({}, {kind:'columns',key:'columns',gap:0,padding:0,sizing:{mode:'equal'},children:[]});
@@ -181,10 +200,19 @@ export const balancedText: readonly [string,string] | undefined = splitBalancedG
 import type { RgbaImage } from '@andornaut/game-kit/runtime/art/rgbaImage';
 import type { PrecacheManifest } from '@andornaut/game-kit/runtime/web/pwa/precacheManifest';
 import type { PrecacheManifest as LegacyManifest } from '@andornaut/game-kit/web/pwa/precacheList';
+import type { PrecachePluginOptions } from '@andornaut/game-kit/build/precachePlugin';
+type VerifiedFamily = NonNullable<PrecacheManifest['verifiedJsonBodies']>[number];
+export const verifiedFamily: VerifiedFamily = {
+  byteSize: 2, sha256: '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+  urls: ['/left.json', '/right.json'],
+};
+export const bodyOptions: Pick<PrecachePluginOptions, 'verifiedJsonBodies'> = {
+  verifiedJsonBodies: () => [verifiedFamily.urls],
+};
 import { storageFixture } from '@andornaut/game-kit/test/storageFixture';
 export const image: RgbaImage = { data: new Uint8Array(4), height: 1, width: 1 };
 export const manifest: PrecacheManifest = { contentHashes: {}, sounds: {}, urls: [], version: 'proof' };
-export const legacyManifest: LegacyManifest = manifest;
+export const legacyManifest: LegacyManifest = { ...manifest, verifiedJsonBodies: [verifiedFamily] };
 export const fixture = storageFixture();
 import type { LayoutColumnSizing, LayoutColumnTrack, LayoutNode } from '@andornaut/game-kit/runtime/ui/layoutTree';
 import {

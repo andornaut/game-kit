@@ -85,6 +85,7 @@
     "src/web/pwa/serviceWorkerUrl.ts",
     "src/web/pwa/storagePersistence.ts",
     "src/web/pwa/updateReady.ts",
+    "src/web/pwa/verifiedJsonBody.ts",
     "src/web/save/sessionStore.ts",
     "src/web/save/storage.ts",
     "src/web/view/frameTurn.ts"

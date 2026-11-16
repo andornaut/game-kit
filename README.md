@@ -125,6 +125,16 @@ XML parsing failures are recorded before native loader completion, independently
 
 `createLoadingAttempts` reruns the supplied callback; it does not clear native ES module maps or reload the document. A browser may retain a failed module record, and module evaluation failures are not repaired by importing that record again. Keep fallible application startup in an explicit attempt-owned function, with cleanup registered before acquiring mutable resources. Same-page recovery requires a genuinely repeatable provider operation. A fresh-document restart is a separate caller-owned lifecycle decision, including launch, activation and save guards.
 
+## Verified JSON body reuse
+
+`build/precachePlugin` accepts optional `verifiedJsonBodies(files)`, returning explicit URL families from complete final emitted discovery. Eligibility asserts public, URL-independent UTF-8 JSON with no per-URL response semantics. The producer parses JSON, compares exact final bytes and records each family's full SHA-256, byte size and original URLs in `PrecacheManifest.verifiedJsonBodies`. Omission selects no families. Family metadata participates in the fingerprint; every original URL, logical hash, byte size and group remains.
+
+Only a fully read body matching its full hash and size can fill another eligible URL. Short hashes never establish cross-URL identity. Selected groups can reuse fully verified current or earlier cached members without fetching unselected groups. A missing family has one network representative; failures retain verified successes. Readiness waits for all required logical entries and durable build/group commits. Download progress counts network representatives, not alias copies.
+
+Eligible network requests omit credentials and reject redirects. Responses must be status 200, match the requested same-origin URL, and have JSON MIME with UTF-8 or no charset. The finite header allowlist is `age`, `cache-control`, `cf-cache-status`, `cf-ray`, `content-encoding`, `content-length`, `content-type`, `date`, `etag`, `expires`, `last-modified`, `server`, `vary` and `x-content-type-options`. Unknown headers, private/no-store directives, non-encoding Vary, conflicting lengths and unsupported MIME protection fail verification. Encodings are limited to identity, gzip, br and deflate. Qualify the deployment's response headers before opting in.
+
+Aliases are fresh status-200 responses with empty response URL, `Content-Type: application/json; charset=utf-8` and `X-Content-Type-Options: nosniff`. Source length, encoding, cache and redirect headers are not copied. An empty-URL cached response is not trusted by provenance: it must have that exact header profile and pass full body verification again. This mechanism provides neither parsed-object caching nor a startup or transfer-time guarantee.
+
 ## Migration to 0.44.0
 
 The optional `PrecacheManifest.groups` partition keeps the full URL inventory, hashes and byte sizes while deferring caller-selected optional groups. Every unassigned URL remains mandatory. The producer validates the final normalized emitted inventory, including all audio alternatives, before computing the fingerprint. Group IDs, initial groups and shared dependencies belong to the game. Grouped releases require one immutable full source build ID shared by the app and worker; the visible short label is independent.
