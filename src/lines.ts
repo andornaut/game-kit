@@ -56,6 +56,43 @@ export function wrapWords(
   return line === "" ? lines : [...lines, line];
 }
 
+// Measure complete halves at every grapheme boundary. Prefer the smallest maximum width,
+// then the smallest width difference, then the earliest boundary. Preserve the original text.
+export function splitBalancedGraphemes(
+  measure: (text: string) => number,
+  text: string,
+): readonly [string, string] | undefined {
+  let best: readonly [string, string] | undefined;
+  let bestMaximum = Infinity;
+  let bestDifference = Infinity;
+  const checkedMeasure = (part: string) => {
+    const width = measure(part);
+    if (!Number.isFinite(width) || width < 0) {
+      throw new RangeError("Grapheme split measurements must be finite and nonnegative");
+    }
+    return width;
+  };
+  for (const { index } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(
+    text,
+  )) {
+    if (index === 0) {
+      continue;
+    }
+    const left = text.slice(0, index);
+    const right = text.slice(index);
+    const leftWidth = checkedMeasure(left);
+    const rightWidth = checkedMeasure(right);
+    const maximum = Math.max(leftWidth, rightWidth);
+    const difference = Math.abs(leftWidth - rightWidth);
+    if (maximum < bestMaximum || (maximum === bestMaximum && difference < bestDifference)) {
+      best = [left, right];
+      bestMaximum = maximum;
+      bestDifference = difference;
+    }
+  }
+  return best;
+}
+
 // Text split into its sentences, at the spaces after a ".", "!" or "?".
 export function sentences(text: string): string[] {
   return text
