@@ -59,6 +59,18 @@ The emitted worker carries an internal, versioned compact manifest with one shar
 
 The precache plugin builds the worker through Vite's isolated worker pipeline as one self-contained classic script. Shared page modules cannot split the worker into ESM chunks. Builds reject worker imports or additional emitted files; games retain their existing classic registration and runtime policies.
 
+## Explicit pointer-release actions
+
+`runtime/web/input/dom/holdActions.bindHoldActions` accepts optional `activation: "pointer-release"` with `resolvePointer(event)`, `pointerTarget` and `onPressChange(actionOrNull)`. This mode owns both short-release activation and hold dispatch; replace any parallel custom pointerup action listener. The default mode continues to add holds to caller-owned native clicks. Both use the caller's explicit `HoldRule`; there is no numeric duration default.
+
+`resolvePointer` supplies physical hit acceptance at down, move, release and hold dispatch using the latest pointer event. It must agree with `resolve(originalElement)` on the element and logical identity. `HoldAction.identity` uses `Object.is`; omission uses the element. Change identity when a retained element represents a different logical control. The control remains inside the owned root, but an explicit document `pointerTarget` can observe coordinate-based regions whose DOM lets presses reach a canvas. Pointer observation does not prevent defaults, stop propagation or change pointer capture. Keep those policies in the caller.
+
+The returned callable `HoldActionsBinding` disposes listeners. Its `cancel()` instead clears the current logical gesture, timer and pressed visual immediately while retaining only matching release suppression. Wire caller modal and readiness invalidation to `cancel`, rather than disposing and rebinding a persistent root. Captured/current guards and availability remain required. A notification source must actually report each invalidation; an `accepts` callback alone is not a subscription. Disposal ends interception, including suppression of subsequent clicks.
+
+Short releases and holds consume their corresponding native compatibility click inside the owned root. Detail-zero keyboard/accessibility clicks and unrelated controls or pointers retain their existing handlers. No click is synthesized. Coordinate routing preserves underlying continuous input; it does not claim that the underlying game must accept the action.
+
+`LoadingFailureContext` and `CrashScreenOptions` optionally accept `bindHoldAction(action)`, where `action` supplies the original `element`, `available` and `activate` closure. The caller binds its guard and rule and returns a disposer. Retry retains its busy, state and generation checks and disposes the binding with its view. Crash Reload and developer Copy use their existing semantic callbacks and page lifetime; native disclosure and text selection remain native. Omission preserves existing factory behaviour.
+
 ## Action font synthesis in 0.51.0
 
 `runtime/web/progress/dom/loadingFailure` exports `LoadingFailureActionTextStyle`, extending the existing text style with optional `synthesis: "none" | "weight"` for `presentation.text.action` only. Explicit values set hardened `font-synthesis` on Retry. Omission preserves inheritance; replacing an explicit value with omission through `setPresentation` removes the inline synthesis policy. Title/body, unconfigured fallback and legacy layout policies remain unchanged.

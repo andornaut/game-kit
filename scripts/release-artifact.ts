@@ -234,6 +234,27 @@ import { buildLabel } from '@andornaut/game-kit/runtime/web/buildLabel';
 import type { PhaserBuild } from '@andornaut/game-kit/build/phaserBuild';
 import { splitBalancedGraphemes } from '@andornaut/game-kit/runtime/lines';
 export const balancedText: readonly [string,string] | undefined = splitBalancedGraphemes(text=>text.length,'abcde');
+import {
+  bindHoldActions, type HoldAction, type HoldActionBinding, type HoldActionsBinding,
+  type PointerReleaseHoldActionsOptions,
+} from '@andornaut/game-kit/runtime/web/input/dom/holdActions';
+import type { PressGuard } from '@andornaut/game-kit/runtime/web/ui/dom/domPress';
+import type { CrashScreenOptions } from '@andornaut/game-kit/runtime/web/crash/dom/crashScreen';
+import type { LoadingFailureContext } from '@andornaut/game-kit/runtime/web/progress/dom/loadingFailure';
+export function bindPointerAction(
+  guard: PressGuard, action: HoldAction, root: HTMLElement,
+): HoldActionsBinding {
+  const options: PointerReleaseHoldActionsOptions = {
+    activation:'pointer-release',guard,pointerTarget:root.ownerDocument,
+    resolve:()=>action,resolvePointer:()=>action,
+  };
+  const binding = bindHoldActions(options,root);
+  binding.cancel();
+  return binding;
+}
+export function factoryActionPorts(bind: HoldActionBinding): [
+  Pick<LoadingFailureContext,'bindHoldAction'>,Pick<CrashScreenOptions,'bindHoldAction'>,
+] { return [{bindHoldAction:bind},{bindHoldAction:bind}]; }
 import type { RgbaImage } from '@andornaut/game-kit/runtime/art/rgbaImage';
 import type { PrecacheManifest } from '@andornaut/game-kit/runtime/web/pwa/precacheManifest';
 import { runServiceWorker } from '@andornaut/game-kit/runtime/web/pwa/dom/serviceWorker';
@@ -475,6 +496,85 @@ try {
 `,
 );
 execFileSync(process.execPath, ["loading-failure.mjs"], { cwd: consumer, stdio: "inherit" });
+writeFileSync(
+  join(consumer, "hold-actions.mjs"),
+  `
+import assert from 'node:assert/strict';
+import { Window } from 'happy-dom';
+import { createModalInputGate } from '@andornaut/game-kit/runtime/input/modalInput';
+import { bindHoldActions } from '@andornaut/game-kit/runtime/web/input/dom/holdActions';
+import { mountLoadingFailure } from '@andornaut/game-kit/runtime/web/progress/dom/loadingFailure';
+const window = new Window();
+const {document} = window;
+const root = document.createElement('div');
+const control = document.createElement('button');
+const canvas = document.createElement('canvas');
+root.append(control);
+document.body.append(root,canvas);
+const gate = createModalInputGate();
+let binding, unsubscribe, failure, modal;
+let activations=0, canvasUps=0, nativeClicks=0, visual=null;
+let duration=100000;
+const activate=()=>{activations++;};
+let action={element:control,identity:{},rule:{holdMs:duration,slopPx:10},available:()=>true,activate};
+const pointer=(type,target)=>{
+  const event=new window.PointerEvent(type,{bubbles:true,cancelable:true,isPrimary:true,button:0,pointerId:4,clientX:5,clientY:5});
+  target.dispatchEvent(event);
+  assert.equal(event.defaultPrevented,false);
+};
+const click=(detail=1)=>{
+  const event=new window.PointerEvent('click',{bubbles:true,cancelable:true,detail,pointerId:4});
+  control.dispatchEvent(event);
+  return event;
+};
+canvas.addEventListener('pointerup',()=>canvasUps++);
+control.addEventListener('click',()=>nativeClicks++);
+try {
+  binding=bindHoldActions({activation:'pointer-release',guard:{gate},pointerTarget:document,
+    resolve:target=>target===control?action:null,resolvePointer:()=>action,
+    onPressChange:value=>{visual=value;},
+  },root);
+  unsubscribe=gate.subscribe(binding.cancel);
+  pointer('pointerdown',canvas);
+  pointer('pointerup',canvas);
+  assert.equal(activations,1);
+  assert.equal(canvasUps,1);
+  assert.equal(click().defaultPrevented,true);
+  assert.equal(nativeClicks,0);
+  assert.equal(click(0).defaultPrevented,false);
+  assert.equal(nativeClicks,1);
+  action={...action,rule:{holdMs:0,slopPx:10},activate:()=>{activations++;modal=gate.open();}};
+  pointer('pointerdown',control);
+  await new Promise(resolve=>window.setTimeout(resolve,0));
+  assert.equal(activations,2);
+  assert.equal(visual,null);
+  pointer('pointerup',control);
+  assert.equal(click().defaultPrevented,true);
+  assert.equal(activations,2);
+  modal.close();
+  binding();
+  unsubscribe();
+  let retries=0, semantic;
+  failure=mountLoadingFailure({onRetry:()=>{retries++;},bindHoldAction:value=>{
+    semantic=value;
+    return ()=>{semantic=null;};
+  }},document.body);
+  failure.update({kind:'failed',attempt:1,error:new Error('fixture')});
+  assert.equal(semantic.available(),true);
+  semantic.activate();
+  assert.equal(retries,1);
+  assert.equal(semantic.available(),false);
+  failure.dispose();
+  assert.equal(semantic,null);
+} finally {
+  binding?.();
+  unsubscribe?.();
+  failure?.dispose();
+  window.close();
+}
+`,
+);
+execFileSync(process.execPath, ["hold-actions.mjs"], { cwd: consumer, stdio: "inherit" });
 writeFileSync(
   join(consumer, "loading-presentation.mjs"),
   `
