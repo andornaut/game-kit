@@ -5,13 +5,18 @@ import { focusTarget, trackInputModality } from "./focusModality.ts";
 // the keyboard: Tab and the arrows step the focus through its controls, then its live elements',
 // wrapping and trapped in them; Enter and Space click the focused control once per press; Escape
 // and P close a closeable card (ui/focusKeys). It marks the card aria-modal, makes the rest of the
-// root inert apart from the card's layer and live elements, focuses the card's default action on
+// root inert apart from the card's layer and live elements by default. Dialog isolation keeps
+// only its subtree and the exact caller backdrop interactive. It focuses the default action on
 // open and restores the focus on close. It moves the focus through focusTarget (focusModality),
 // so the ring shows only after keyboard input, and tracks the document's input modality from its
 // creation. It does not use <dialog>.showModal() or popover: the top layer renders outside a
 // turned page frame.
 
 export interface ModalOptions {
+  // Dialog mode isolates its subtree; only the exact backdrop may take outside pointer input.
+  // Backdrop requires dialog mode. The default layer mode retains its existing live regions.
+  readonly isolation?: "layer" | "dialog";
+  readonly backdrop?: HTMLElement;
   // Closes the card on Escape, P or back: the game's own close, which then calls the close
   // returned by open. Undefined for a card the player cannot close.
   readonly close?: () => void;
@@ -41,6 +46,7 @@ interface OpenModal {
   readonly dialog: HTMLElement;
   readonly opener: Element | null;
   readonly options: ModalOptions;
+  readonly strict: boolean;
 }
 
 const FOCUSABLE = [
@@ -94,6 +100,7 @@ function inertTargets(
   root: HTMLElement,
   layer: Element | undefined,
   live: readonly Element[],
+  pathsOnly: readonly Element[] = [],
 ): Set<Element> {
   const kept = new Set<Element>();
   const paths = new Set<Element>();
@@ -109,6 +116,15 @@ function inertTargets(
   }
   if (layer !== undefined) {
     kept.add(layer);
+  }
+  for (const element of pathsOnly) {
+    if (element !== root && root.contains(element)) {
+      let path: Element | null = element;
+      while (path !== null && path !== root) {
+        paths.add(path);
+        path = path.parentElement;
+      }
+    }
   }
   const targets = new Set<Element>();
   const visit = (parent: Element) => {
@@ -135,31 +151,178 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
   trackInputModality(document);
   const stack: OpenModal[] = [];
   const inerted = new Set<Element>();
+  let disposed = false;
+  let observer: MutationObserver | undefined;
+  let observed: OpenModal | undefined;
+  let applying = false;
+  let refreshAgain = false;
   const top = () => stack.at(-1);
   const layerOf = (dialog: HTMLElement) =>
     [...root.children].find((child) => child.contains(dialog));
+  const owned = (allowRoot: boolean, element: unknown): element is HTMLElement =>
+    element instanceof (document.defaultView?.HTMLElement ?? HTMLElement) &&
+    element.ownerDocument === document &&
+    root.isConnected &&
+    element.isConnected &&
+    root.contains(element) &&
+    (allowRoot || element !== root);
+  const obstructed = (element: Element) => {
+    for (
+      let ancestor: Element | null = element;
+      ancestor !== null;
+      ancestor = ancestor.parentElement
+    ) {
+      if (
+        ancestor.hasAttribute("hidden") ||
+        (ancestor.hasAttribute("inert") && !inerted.has(ancestor))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const strictState = (modal: OpenModal) => {
+    const { backdrop } = modal.options;
+    return {
+      backdrop:
+        backdrop === undefined ||
+        (owned(true, backdrop) && !modal.dialog.contains(backdrop) && !obstructed(backdrop)),
+      dialog: owned(false, modal.dialog) && !obstructed(modal.dialog),
+    };
+  };
+  const prepare = (options: ModalOptions, dialog: HTMLElement): ModalOptions => {
+    if (
+      options.isolation !== undefined &&
+      options.isolation !== "layer" &&
+      options.isolation !== "dialog"
+    ) {
+      throw new RangeError("Unknown modal isolation mode");
+    }
+    if (options.isolation !== "dialog") {
+      if (options.backdrop !== undefined) {
+        throw new RangeError("Modal backdrop requires dialog isolation");
+      }
+      return options;
+    }
+    const snapshot = { ...options, isolation: "dialog" as const };
+    if (
+      disposed ||
+      !owned(false, dialog) ||
+      obstructed(dialog) ||
+      stack.some((modal) => dialog.contains(modal.dialog)) ||
+      (snapshot.live !== undefined &&
+        (!Array.isArray(snapshot.live) || snapshot.live.length !== 0)) ||
+      (snapshot.backdrop !== undefined &&
+        (!owned(true, snapshot.backdrop) ||
+          dialog.contains(snapshot.backdrop) ||
+          obstructed(snapshot.backdrop))) ||
+      (snapshot.focus !== undefined &&
+        (!owned(false, snapshot.focus) ||
+          !dialog.contains(snapshot.focus) ||
+          obstructed(snapshot.focus)))
+    ) {
+      throw new RangeError("Invalid dialog isolation ownership, focus or live configuration");
+    }
+    return { ...snapshot, live: [] };
+  };
+  const syncObserver = () => {
+    const modal = top();
+    const next = !disposed && modal?.strict === true ? modal : undefined;
+    if (next === observed) {
+      return;
+    }
+    observer?.disconnect();
+    observer = undefined;
+    observed = next;
+    if (next !== undefined) {
+      observer = new (document.defaultView?.MutationObserver ?? MutationObserver)(() => {
+        if (!disposed && observed === next && top() === next) {
+          applyInert();
+          if (
+            !disposed &&
+            observed === next &&
+            top() === next &&
+            !within(next, document.activeElement)
+          ) {
+            focusOpen(next);
+          }
+        }
+      });
+      observer.observe(root, { childList: true, subtree: true });
+    }
+  };
   // Marks what the top card needs inert and clears the marks it set that the card no longer
   // needs, never touching an element the game made inert.
   const applyInert = () => {
-    const modal = top();
-    const targets =
-      modal === undefined
-        ? new Set<Element>()
-        : inertTargets(root, layerOf(modal.dialog), modal.options.live ?? []);
-    for (const element of inerted) {
-      if (!targets.has(element)) {
-        element.removeAttribute("inert");
-        inerted.delete(element);
-      }
+    if (applying) {
+      refreshAgain = true;
+      return;
     }
-    for (const element of targets) {
-      if (!element.hasAttribute("inert")) {
-        element.setAttribute("inert", "");
-        inerted.add(element);
-      }
+    applying = true;
+    try {
+      do {
+        refreshAgain = false;
+        const modal = top();
+        const state = modal?.strict === true ? strictState(modal) : undefined;
+        const targets =
+          modal === undefined
+            ? new Set<Element>()
+            : state === undefined
+              ? inertTargets(root, layerOf(modal.dialog), modal.options.live ?? [])
+              : inertTargets(
+                  root,
+                  undefined,
+                  state.backdrop && state.dialog ? [modal.dialog] : [],
+                  state.backdrop && modal.options.backdrop !== undefined
+                    ? [modal.options.backdrop]
+                    : [],
+                );
+        for (const element of inerted) {
+          if (top() !== modal) {
+            refreshAgain = true;
+            break;
+          }
+          if (!targets.has(element)) {
+            inerted.delete(element);
+            element.removeAttribute("inert");
+          }
+        }
+        if (!refreshAgain) {
+          for (const element of targets) {
+            if (top() !== modal) {
+              refreshAgain = true;
+              break;
+            }
+            if (!element.hasAttribute("inert")) {
+              inerted.add(element);
+              element.setAttribute("inert", "");
+            }
+          }
+        }
+      } while (refreshAgain);
+      syncObserver();
+    } finally {
+      applying = false;
     }
   };
-  const focusOpen = (modal: OpenModal) => focusTarget(modal.options.focus ?? modal.dialog);
+  const focusOpen = (modal: OpenModal) => {
+    if (
+      modal.strict &&
+      (disposed || top() !== modal || !strictState(modal).dialog || !strictState(modal).backdrop)
+    ) {
+      return;
+    }
+    const focus = modal.options.focus;
+    focusTarget(
+      modal.strict &&
+        (focus === undefined ||
+          !owned(false, focus) ||
+          !modal.dialog.contains(focus) ||
+          obstructed(focus))
+        ? modal.dialog
+        : (focus ?? modal.dialog),
+    );
+  };
   // Performs a key's action in the top card, and returns whether the key is the card's.
   const act = (modal: OpenModal, action: FocusKeyAction, repeat: boolean): boolean => {
     const active = document.activeElement;
@@ -169,7 +332,10 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
     }
     if (action === "press") {
       const control =
-        active instanceof HTMLElement && active !== modal.dialog && within(modal, active);
+        active instanceof
+          (modal.strict ? (document.defaultView?.HTMLElement ?? HTMLElement) : HTMLElement) &&
+        active !== modal.dialog &&
+        within(modal, active);
       if (control) {
         active.click();
       }
@@ -192,6 +358,9 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
   };
   const onKeyDown = (event: KeyboardEvent) => {
     const modal = top();
+    if (modal?.strict) {
+      return;
+    }
     const action = focusKeyAction(event.key, event.shiftKey, false);
     if (modal !== undefined && action !== undefined && act(modal, action, event.repeat)) {
       event.preventDefault();
@@ -201,6 +370,9 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
   // A Space press activates a button on its keyup, which keydown's click already did.
   const onKeyUp = (event: KeyboardEvent) => {
     const modal = top();
+    if (modal?.strict) {
+      return;
+    }
     if (event.key === " " && modal !== undefined && within(modal, document.activeElement)) {
       event.preventDefault();
       event.stopPropagation();
@@ -212,6 +384,74 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
       focusOpen(modal);
     }
   };
+  const refuse = (event: Event) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  const keyOwner = new WeakMap<Event, OpenModal>();
+  // Refuse outside targets before descendant/delegated handlers, retaining caller handling for
+  // admitted events. Earlier root/ancestor capture handlers and world press gates remain caller-owned.
+  const onRootInput = (event: Event) => {
+    const modal = top();
+    if (modal?.strict !== true || disposed) {
+      return;
+    }
+    const state = strictState(modal);
+    const node = event.target as Node | null;
+    const inside = state.backdrop && state.dialog && modal.dialog.contains(node);
+    const keyboard =
+      event.type === "keydown" || event.type === "keypress" || event.type === "keyup";
+    if (!inside && (keyboard || !state.backdrop || event.target !== modal.options.backdrop)) {
+      refuse(event);
+    } else if (keyboard) {
+      keyOwner.set(event, modal);
+    }
+  };
+  const onRootKey = (event: KeyboardEvent) => {
+    const modal = top();
+    if (modal?.strict !== true || disposed) {
+      if (keyOwner.has(event)) {
+        refuse(event);
+      }
+      return;
+    }
+    const state = strictState(modal);
+    if (
+      keyOwner.get(event) !== modal ||
+      !state.dialog ||
+      !state.backdrop ||
+      !modal.dialog.contains(event.target as Node | null)
+    ) {
+      refuse(event);
+      return;
+    }
+    const action = focusKeyAction(event.key, event.shiftKey, false);
+    if (action === undefined) {
+      return;
+    }
+    if (event.type === "keydown") {
+      act(modal, action, event.repeat);
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  const inputTypes = [
+    "pointerdown",
+    "pointerup",
+    "mousedown",
+    "mouseup",
+    "click",
+    "keydown",
+    "keypress",
+    "keyup",
+  ] as const;
+  const keyTypes = ["keydown", "keypress", "keyup"] as const;
+  for (const type of inputTypes) {
+    root.addEventListener(type, onRootInput, true);
+  }
+  for (const type of keyTypes) {
+    root.addEventListener(type, onRootKey);
+  }
   document.addEventListener("keydown", onKeyDown);
   document.addEventListener("keyup", onKeyUp);
   document.addEventListener("focusin", onFocusIn);
@@ -222,6 +462,16 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
       return modal !== undefined;
     },
     dispose() {
+      disposed = true;
+      observer?.disconnect();
+      observer = undefined;
+      observed = undefined;
+      for (const type of inputTypes) {
+        root.removeEventListener(type, onRootInput, true);
+      }
+      for (const type of keyTypes) {
+        root.removeEventListener(type, onRootKey);
+      }
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("keyup", onKeyUp);
       document.removeEventListener("focusin", onFocusIn);
@@ -229,7 +479,13 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
       applyInert();
     },
     open(options, dialog) {
-      const modal: OpenModal = { dialog, opener: document.activeElement, options };
+      const accepted = prepare(options, dialog);
+      const modal: OpenModal = {
+        dialog,
+        opener: document.activeElement,
+        options: accepted,
+        strict: accepted.isolation === "dialog",
+      };
       stack.push(modal);
       dialog.setAttribute("aria-modal", "true");
       if (!dialog.hasAttribute("tabindex")) {
@@ -255,7 +511,10 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
           focusTarget(opener);
           return;
         }
-        const fallback = options.restore?.() ?? null;
+        const fallback = modal.options.restore?.() ?? null;
+        if ((modal.strict || below?.strict === true) && (disposed || top() !== below)) {
+          return;
+        }
         if (usable(fallback)) {
           focusTarget(fallback);
         } else if (below !== undefined) {
