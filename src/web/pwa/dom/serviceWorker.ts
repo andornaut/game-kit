@@ -27,10 +27,18 @@ import {
 } from "../downloadProgress.ts";
 import { basePrecacheUrls, precacheGroupUrls, validatePrecacheGroups } from "../precacheGroups.ts";
 import type { PrecacheManifest } from "../precacheManifest.ts";
-import { decodePrecacheManifest, type PrecacheManifestWire } from "../precacheWire.ts";
+import {
+  decodePrecacheManifest,
+  encodePrecacheManifest,
+  type PrecacheManifestWire,
+} from "../precacheWire.ts";
 import type { SoundFormatParam } from "../serviceWorkerUrl.ts";
 import type { SkipWaitingMessage } from "../updateReady.ts";
-import { validateVerifiedJsonBodies, type VerifiedJsonBody } from "../verifiedJsonBody.ts";
+import {
+  validateVerifiedJsonBodies,
+  verifiedJsonAliasCachePrefix,
+  type VerifiedJsonBody,
+} from "../verifiedJsonBody.ts";
 import { createGroupStore } from "./groupStore.ts";
 
 interface LifecycleEvent extends Event {
@@ -100,6 +108,19 @@ const JSON_SOURCE_HEADERS = new Set([
   "vary",
   "x-content-type-options",
 ]);
+const DATA_SOURCE_HEADERS = new Set([
+  "alt-svc",
+  "nel",
+  "permissions-policy",
+  "referrer-policy",
+  "report-to",
+]);
+const dataProfile = (verified: VerifiedSource | undefined) =>
+  verified?.family.responseProfile === "fetch-json-data-v1";
+const hasDataProfile = (build: PrecacheManifest) =>
+  build.verifiedJsonBodies?.some((family) => family.responseProfile === "fetch-json-data-v1") ===
+  true;
+
 function safeJsonSource(verified: VerifiedSource, url: string, response: Response): boolean {
   const headers = response.headers;
   if (
@@ -108,7 +129,10 @@ function safeJsonSource(verified: VerifiedSource, url: string, response: Respons
     !/^application\/json(?:\s*;\s*charset\s*=\s*(?:"utf-8"|utf-8))?\s*$/i.test(
       headers.get("content-type") ?? "",
     ) ||
-    [...headers.keys()].some((name) => !JSON_SOURCE_HEADERS.has(name)) ||
+    [...headers.keys()].some(
+      (name) =>
+        !JSON_SOURCE_HEADERS.has(name) && !(dataProfile(verified) && DATA_SOURCE_HEADERS.has(name)),
+    ) ||
     /(?:^|,)\s*(?:private|no-store)(?:\s|,|=|$)/i.test(headers.get("cache-control") ?? "") ||
     (headers.get("vary") ?? "")
       .split(",")
@@ -119,7 +143,12 @@ function safeJsonSource(verified: VerifiedSource, url: string, response: Respons
     return false;
   }
   const encoding = headers.get("content-encoding")?.toLowerCase();
-  if (encoding !== undefined && !["identity", "gzip", "br", "deflate"].includes(encoding)) {
+  if (
+    encoding !== undefined &&
+    !["identity", "gzip", "br", "deflate", ...(dataProfile(verified) ? ["zstd"] : [])].includes(
+      encoding,
+    )
+  ) {
     return false;
   }
   const length = headers.get("content-length");
@@ -529,6 +558,20 @@ export function runServiceWorker(
     return family === undefined ? undefined : { family, origin: worker.location.origin };
   };
   verifiedFamilies(manifest);
+  if (hasDataProfile(manifest)) {
+    verifiedJsonAliasCachePrefix(policy);
+  }
+  const aliasName = (build: PrecacheManifest) =>
+    verifiedJsonAliasCachePrefix(policy) + build.version;
+  const aliasNames = (build: PrecacheManifest, names: readonly string[]) => {
+    if (!hasDataProfile(build)) {
+      return [];
+    }
+    const prefix = verifiedJsonAliasCachePrefix(policy);
+    return names.filter(
+      (name) => name.startsWith(prefix) && /^[a-f0-9]{16}$/.test(name.slice(prefix.length)),
+    );
+  };
   const cacheName = cacheNameFor(policy, manifest.version);
   if (manifest.groups !== undefined) {
     if (!isBuildId(manifest.buildId)) {
@@ -612,6 +655,16 @@ export function runServiceWorker(
     const stored = (await response.json()) as BuildRecord;
     const build: BuildRecord = { ...stored, manifest: decodePrecacheManifest(stored.manifest) };
     verifiedFamilies(build.manifest);
+    if (hasDataProfile(build.manifest)) {
+      if (
+        !Array.isArray(stored.manifest) ||
+        stored.manifest[0] !== 2 ||
+        name !== cacheNameFor(policy, build.manifest.version)
+      ) {
+        throw new TypeError("Profile build records require durable schema 2");
+      }
+      verifiedJsonAliasCachePrefix(policy);
+    }
     return build;
   };
   // The install stores every URL in this version's cache (cacheName) in three steps:
@@ -637,19 +690,25 @@ export function runServiceWorker(
   ) => {
     const families = verifiedFamilies(build);
     const cache = await caches.open(name);
+    const dataCache = hasDataProfile(build) ? await caches.open(aliasName(build)) : undefined;
+    const destination = (url: string) =>
+      dataProfile(verifiedFor(build, url)) ? dataCache! : cache;
     const kept = await mapBounded(
       REUSE_CONCURRENCY,
       async (url) => {
-        const kept =
-          (await storedCopy(
-            [cache],
-            build.contentHashes[url],
-            build.byteSizes?.[url],
-            verifiedFor(build, url),
-            url,
-          )) !== undefined;
+        const verified = verifiedFor(build, url);
+        const response = await storedCopy(
+          dataProfile(verified) ? [dataCache!, cache] : [cache],
+          build.contentHashes[url],
+          build.byteSizes?.[url],
+          verified,
+          url,
+        );
+        if (response !== undefined && dataProfile(verified) && response.url !== "") {
+          await dataCache!.put(url, jsonResponse(await response.arrayBuffer()));
+        }
         activity();
-        return kept;
+        return response !== undefined;
       },
       listedUrls,
     );
@@ -657,6 +716,11 @@ export function runServiceWorker(
     const earlier = await Promise.all(
       staleCacheNames(policy, name, await caches.keys())
         .filter((name) => name !== routingName)
+        .map((name) => caches.open(name)),
+    );
+    const earlierData = await Promise.all(
+      aliasNames(build, await caches.keys())
+        .filter((name) => name !== aliasName(build))
         .map((name) => caches.open(name)),
     );
     const listed = await Promise.all(
@@ -690,7 +754,12 @@ export function runServiceWorker(
         if (response === undefined) {
           return [url];
         }
-        await cache.put(url, response);
+        await destination(url).put(
+          url,
+          dataProfile(verifiedFor(build, url))
+            ? jsonResponse(await response.arrayBuffer())
+            : response,
+        );
         activity();
         return [];
       },
@@ -703,7 +772,7 @@ export function runServiceWorker(
       for (const url of targets) {
         // Each logical URL gets its own canonical response only after source verification.
         // eslint-disable-next-line no-await-in-loop
-        await cache.put(url, jsonResponse(body));
+        await destination(url).put(url, jsonResponse(body));
         activity();
       }
     };
@@ -717,7 +786,9 @@ export function runServiceWorker(
         // Current and earlier caches may hold a different, explicitly eligible member.
         // eslint-disable-next-line no-await-in-loop
         source = await storedCopy(
-          [cache, ...earlier],
+          family.responseProfile === undefined
+            ? [cache, ...earlier]
+            : [dataCache!, cache, ...earlier, ...earlierData],
           build.contentHashes[url],
           family.byteSize,
           { family, origin: worker.location.origin },
@@ -737,7 +808,10 @@ export function runServiceWorker(
         }
       } else {
         const representative = targets[0]!;
-        aliases.set(representative, targets.slice(1));
+        aliases.set(
+          representative,
+          family.responseProfile === undefined ? targets.slice(1) : targets,
+        );
         for (const url of targets.slice(1)) {
           missing.delete(url);
         }
@@ -897,7 +971,13 @@ export function runServiceWorker(
       await stage(cacheName, manifest, requiredUrls(currentBuild, ids), progress, activity);
       // Store immutable build metadata first. A crash before the transactional ready commit
       // leaves a resumable partial cache, never a falsely available group.
-      await writeRecord("build", cacheName, currentBuild);
+      await writeRecord(
+        "build",
+        cacheName,
+        hasDataProfile(manifest)
+          ? { ...currentBuild, manifest: encodePrecacheManifest(manifest) }
+          : currentBuild,
+      );
       activity();
       if (manifest.groups !== undefined && (await groups.commit(cacheName, ids)) !== "stored") {
         throw new TypeError("An update currently prevents committing asset groups");
@@ -915,12 +995,15 @@ export function runServiceWorker(
       return false;
     }
     const cache = await caches.open(name);
+    const dataCache = hasDataProfile(build.manifest)
+      ? await caches.open(aliasName(build.manifest))
+      : undefined;
     const complete = await mapBounded(
       REUSE_CONCURRENCY,
       async (url) => {
         const complete =
           (await storedCopy(
-            [cache],
+            dataProfile(verifiedFor(build.manifest, url)) ? [dataCache!] : [cache],
             build.manifest.contentHashes[url],
             build.manifest.byteSizes?.[url],
             verifiedFor(build.manifest, url),
@@ -1009,9 +1092,28 @@ export function runServiceWorker(
     if (clients.length > 0) {
       return;
     }
-    const stale = staleCacheNames(policy, cacheName, await caches.keys()).filter(
+    const ordinaryStale = staleCacheNames(policy, cacheName, await caches.keys()).filter(
       (name) => name !== routingName,
     );
+    const privatePrefix =
+      policy.cacheNamePrefix !== ""
+        ? `!game-kit-json-data-v1:${encodeURIComponent(policy.cacheNamePrefix)}:`
+        : undefined;
+    const privateStale =
+      privatePrefix === undefined || privatePrefix.startsWith(policy.cacheNamePrefix)
+        ? []
+        : (await caches.keys()).filter(
+            (name) =>
+              name.startsWith(privatePrefix) &&
+              /^[a-f0-9]{16}$/.test(name.slice(privatePrefix.length)) &&
+              name.slice(privatePrefix.length) !== manifest.version,
+          );
+    const stale = [
+      ...new Set([
+        ...ordinaryStale,
+        ...privateStale.map((name) => cacheNameFor(policy, name.slice(privatePrefix!.length))),
+      ]),
+    ];
     const records = await routing();
     const keys = await records.keys();
     await Promise.all(
@@ -1023,6 +1125,7 @@ export function runServiceWorker(
         }
       }),
     );
+    await Promise.all(privateStale.map((name) => caches.delete(name)));
     await Promise.all(
       keys
         .filter((key) => new URL(key.url).pathname.startsWith("/.game-kit-routing/client/"))
@@ -1069,6 +1172,66 @@ export function runServiceWorker(
     const cache = await caches.open(pinned);
     const key = cacheKeyFor(pathname);
     const verified = verifiedFor(build, key);
+    if (dataProfile(verified)) {
+      if (request.url !== new URL(key, worker.location.origin).href) {
+        throw new TypeError("Profile JSON requires its exact canonical URL");
+      }
+      const data =
+        request.destination === "" &&
+        request.mode !== "navigate" &&
+        !request.headers.has("range") &&
+        !request.headers.has("if-range");
+      if (data) {
+        const record = await readBuild(pinned);
+        const ready = build.groups === undefined ? [] : await groups.read(pinned);
+        if (ready === undefined || !requiredUrls(record, ready).includes(key)) {
+          throw new TypeError("Profile JSON is not in a committed selected group");
+        }
+        const dataCache = await caches.open(aliasName(build));
+        const found = await storedCopy(
+          [dataCache, cache],
+          build.contentHashes[key],
+          build.byteSizes?.[key],
+          verified,
+          key,
+        );
+        const source =
+          found ??
+          (await fetchAndStore(
+            cache,
+            build.contentHashes[key],
+            build.byteSizes?.[key],
+            key,
+            verified,
+            request,
+          ));
+        const response = jsonResponse(await source.arrayBuffer());
+        await dataCache.put(key, response.clone());
+        return response;
+      }
+      const found = await storedCopy(
+        [cache],
+        build.contentHashes[key],
+        build.byteSizes?.[key],
+        verified,
+        key,
+      );
+      const response =
+        found !== undefined && found.url === request.url
+          ? found
+          : await fetchAndStore(
+              cache,
+              build.contentHashes[key],
+              build.byteSizes?.[key],
+              key,
+              verified,
+              request,
+            );
+      if (navigation && resultingClientId) {
+        await writeRecord("client", resultingClientId, pinned);
+      }
+      return response;
+    }
     const response =
       (verified === undefined
         ? await cache.match(key)

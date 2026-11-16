@@ -2,9 +2,11 @@ export interface VerifiedJsonBody {
   readonly sha256: string;
   readonly byteSize: number;
   readonly urls: readonly string[];
+  readonly responseProfile?: "fetch-json-data-v1";
 }
 
-// Eligibility asserts public JSON whose interpretation and headers are URL-independent.
+// Legacy families assert URL-independent JSON and headers. The data profile permits body-only
+// aliases for guarded data requests; native response policies remain original for other contexts.
 // Full body identity is additional evidence, never an inference from the short URL hashes.
 export function validateVerifiedJsonBodies(
   context: {
@@ -28,7 +30,9 @@ export function validateVerifiedJsonBodies(
         hashes.has(family.sha256) ||
         !Number.isSafeInteger(family.byteSize) ||
         family.byteSize <= 0 ||
-        family.urls.length < 2
+        family.urls.length < 2 ||
+        (family.responseProfile !== undefined && family.responseProfile !== "fetch-json-data-v1") ||
+        (Object.hasOwn(family, "responseProfile") && family.responseProfile === undefined)
       ) {
         throw new RangeError("Invalid verified JSON body family");
       }
@@ -46,7 +50,25 @@ export function validateVerifiedJsonBodies(
         }
         used.add(url);
       }
-      return { byteSize: family.byteSize, sha256: family.sha256, urls };
+      return {
+        byteSize: family.byteSize,
+        ...(family.responseProfile === undefined
+          ? {}
+          : { responseProfile: family.responseProfile }),
+        sha256: family.sha256,
+        urls,
+      };
     })
     .sort((a, b) => (a.sha256 < b.sha256 ? -1 : a.sha256 > b.sha256 ? 1 : 0));
+}
+
+// Separate from every cache scanned by the legacy policy prefix. Never silently fall back.
+export function verifiedJsonAliasCachePrefix(context: {
+  readonly cacheNamePrefix: string;
+}): string {
+  const prefix = `!game-kit-json-data-v1:${encodeURIComponent(context.cacheNamePrefix)}:`;
+  if (prefix.startsWith(context.cacheNamePrefix)) {
+    throw new RangeError("Verified JSON alias cache collides with the legacy cache prefix");
+  }
+  return prefix;
 }

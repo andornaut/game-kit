@@ -27,10 +27,17 @@ export interface HashedFiles {
   readonly urls: readonly string[];
 }
 
+export type VerifiedJsonFamilySelection =
+  | readonly string[]
+  | {
+      readonly urls: readonly string[];
+      readonly responseProfile: "fetch-json-data-v1";
+    };
+
 export interface PrecachePluginOptions {
   readonly buildId?: string | undefined;
   // Explicit public, URL-independent JSON families selected from final emitted discovery.
-  readonly verifiedJsonBodies?: (files: HashedFiles) => readonly (readonly string[])[];
+  readonly verifiedJsonBodies?: (files: HashedFiles) => readonly VerifiedJsonFamilySelection[];
   // Called on the complete final normalized discovery, including public links and all sounds.
   readonly groups?: (files: HashedFiles) => PrecacheGroups;
   // The hashed files beyond what the page links, read once the bundle is written: bundleFile
@@ -224,7 +231,11 @@ export function precachePlugin({
             ? undefined
             : validateVerifiedJsonBodies(
                 { byteSizes: Object.fromEntries(byteSizes), urls: [...listed.keys()] },
-                verifiedJsonBodies(discovery).map((urls) => {
+                verifiedJsonBodies(discovery).map((selection) => {
+                  const descriptor = Array.isArray(selection)
+                    ? undefined
+                    : (selection as Exclude<VerifiedJsonFamilySelection, readonly string[]>);
+                  const urls = descriptor?.urls ?? (selection as readonly string[]);
                   const body = listed.get(urls[0] ?? "");
                   if (body === undefined) {
                     throw new Error("precache: missing verified JSON family body");
@@ -240,7 +251,14 @@ export function precachePlugin({
                       throw new Error("precache: verified JSON family bodies differ");
                     }
                   }
-                  return { byteSize: body.byteLength, sha256: sha256Hex(body), urls };
+                  return {
+                    byteSize: body.byteLength,
+                    ...(descriptor === undefined
+                      ? {}
+                      : { responseProfile: descriptor.responseProfile }),
+                    sha256: sha256Hex(body),
+                    urls,
+                  };
                 }),
               );
         const contentHashes = new Map(

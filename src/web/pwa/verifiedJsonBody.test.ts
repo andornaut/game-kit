@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { validateVerifiedJsonBodies } from "./verifiedJsonBody.ts";
+import { validateVerifiedJsonBodies, verifiedJsonAliasCachePrefix } from "./verifiedJsonBody.ts";
 
 const family = { byteSize: 12, sha256: "a".repeat(64), urls: ["/b.json", "/a.json"] };
 const context = { byteSizes: { "/a.json": 12, "/b.json": 12 }, urls: family.urls };
@@ -41,4 +41,28 @@ it("limits eligibility to normalized root-relative JSON paths", () => {
       ),
     ).toThrow();
   }
+});
+
+it("retains only the explicit data response profile and rejects cache namespace collisions", () => {
+  const profiled = { ...family, responseProfile: "fetch-json-data-v1" as const };
+  expect(validateVerifiedJsonBodies(context, [profiled])[0]?.responseProfile).toBe(
+    "fetch-json-data-v1",
+  );
+  expect(validateVerifiedJsonBodies(context, [family])[0]).not.toHaveProperty("responseProfile");
+  expect(() =>
+    validateVerifiedJsonBodies(context, [
+      { ...family, responseProfile: "unknown" } as unknown as typeof profiled,
+    ]),
+  ).toThrow();
+  expect(() =>
+    validateVerifiedJsonBodies(context, [
+      Object.assign(Object.create({ responseProfile: "unknown" }), family),
+    ]),
+  ).toThrow();
+  for (const cacheNamePrefix of ["", "!", "!game-kit-json-data-v1:"]) {
+    expect(() => verifiedJsonAliasCachePrefix({ cacheNamePrefix })).toThrow("collides");
+  }
+  expect(verifiedJsonAliasCachePrefix({ cacheNamePrefix: "fixture-" }).startsWith("fixture-")).toBe(
+    false,
+  );
 });

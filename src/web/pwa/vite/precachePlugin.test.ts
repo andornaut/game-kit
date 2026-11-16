@@ -204,6 +204,30 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     ).rejects.toThrow(/bodies differ/);
   });
 
+  it("emits and fingerprints an explicit data profile from the final discovery", async () => {
+    const root = site("icon");
+    const options = {
+      hashedFiles: () => ({ sounds: {}, urls: ["/a.json", "/b.json"] }),
+      lateEmitted: { "a.json": "{}", "b.json": "{}" },
+      root,
+    };
+    const legacy = await precache({
+      ...options,
+      verifiedJsonBodies: () => [["/a.json", "/b.json"]],
+    });
+    const data = await precache({
+      ...options,
+      verifiedJsonBodies: () => [
+        { responseProfile: "fetch-json-data-v1", urls: ["/a.json", "/b.json"] },
+      ],
+    });
+    expect(data.verifiedJsonBodies![0]!.responseProfile).toBe("fetch-json-data-v1");
+    expect(data.version).not.toBe(legacy.version);
+    expect(data.urls).toEqual(legacy.urls);
+    expect(data.contentHashes).toEqual(legacy.contentHashes);
+    expect(data.byteSizes).toEqual(legacy.byteSizes);
+  });
+
   it("isolates a classic worker when page and worker share the byte-progress runtime", async () => {
     const root = site("icon");
     const shared = fileURLToPath(new URL("../downloadProgress.ts", import.meta.url));

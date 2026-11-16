@@ -1,7 +1,11 @@
 import { isBuildId } from "./buildIdentity.ts";
 import { type CachePolicy, isHashedAssetUrl } from "./cachePolicy.ts";
 import { type PrecacheGroups, validatePrecacheGroups } from "./precacheGroups.ts";
-import { validateVerifiedJsonBodies, type VerifiedJsonBody } from "./verifiedJsonBody.ts";
+import {
+  validateVerifiedJsonBodies,
+  verifiedJsonAliasCachePrefix,
+  type VerifiedJsonBody,
+} from "./verifiedJsonBody.ts";
 
 export type { PrecacheManifest } from "./precacheManifest.ts";
 
@@ -106,6 +110,9 @@ export function precacheFingerprint(
       return `${entry} ${size}`;
     })
     .join("\n");
+  if (verifiedJsonBodies?.some((family) => family.responseProfile !== undefined)) {
+    verifiedJsonAliasCachePrefix(policy);
+  }
   const legacy = metadata === undefined ? files : `${files}\n${JSON.stringify(metadata)}`;
   return verifiedJsonBodies === undefined
     ? legacy

@@ -268,3 +268,25 @@ describe("strict versioned wire", () => {
     expect(() => decodePrecacheManifest(wire)).toThrow();
   });
 });
+
+it("uses schema two only for an explicit data profile and never silently downgrades it", () => {
+  const input = manifest();
+  const legacy = encodePrecacheManifest(input);
+  expect(legacy[0]).toBe(1);
+  input.verifiedJsonBodies = input.verifiedJsonBodies!.map((family) => ({
+    ...family,
+    responseProfile: "fetch-json-data-v1",
+  }));
+  const wire = encodePrecacheManifest(input);
+  expect(wire[0]).toBe(2);
+  expect(decodePrecacheManifest(wire)).toEqual(input);
+  expect(fingerprint(decodePrecacheManifest(wire))).toBe(fingerprint(input));
+  const damaged = structuredClone(wire) as unknown as unknown[];
+  damaged[0] = 1;
+  expect(() => decodePrecacheManifest(damaged)).toThrow();
+  damaged[0] = 2;
+  (damaged[9] as unknown[][])[0]![3] = "unknown";
+  expect(() => decodePrecacheManifest(damaged)).toThrow();
+  (damaged[9] as unknown[][])[0]![3] = null;
+  expect(() => decodePrecacheManifest(damaged)).toThrow();
+});

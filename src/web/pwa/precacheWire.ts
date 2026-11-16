@@ -7,9 +7,8 @@ import { validateVerifiedJsonBodies } from "./verifiedJsonBody.ts";
 type UrlReferences = readonly number[];
 type NamedReferences = readonly (readonly [string, UrlReferences])[];
 
-// Internal transport only. Durable records and public caller data remain semantic manifests.
-export type PrecacheManifestWire = readonly [
-  schema: 1,
+// Internal transport. Legacy durable records remain semantic; profiled records retain schema 2.
+type WireFields = readonly [
   version: string,
   buildId: string | null,
   urlTable: readonly string[],
@@ -21,6 +20,26 @@ export type PrecacheManifestWire = readonly [
   verifiedJsonBodies:
     null | readonly (readonly [sha256: string, byteSize: number, urls: UrlReferences])[],
 ];
+
+export type PrecacheManifestWire =
+  | readonly [schema: 1, ...fields: WireFields]
+  | readonly [
+      schema: 2,
+      ...fields: readonly [
+        ...first: [
+          WireFields[0],
+          WireFields[1],
+          WireFields[2],
+          WireFields[3],
+          WireFields[4],
+          WireFields[5],
+          WireFields[6],
+          WireFields[7],
+        ],
+        families:
+          null | readonly (readonly [string, number, UrlReferences, "fetch-json-data-v1" | null])[],
+      ],
+    ];
 
 function invalid(): never {
   throw new TypeError("Invalid precache manifest wire");
@@ -170,7 +189,7 @@ export function decodePrecacheManifest(input: unknown): PrecacheManifest {
   if (!Array.isArray(input)) {
     return semantic(input);
   }
-  if (input.length !== 10 || input[0] !== 1) {
+  if (input.length !== 10 || (input[0] !== 1 && input[0] !== 2)) {
     return invalid();
   }
   const table = strings(input[3]);
@@ -245,16 +264,30 @@ export function decodePrecacheManifest(input: unknown): PrecacheManifest {
     manifest.verifiedJsonBodies = input[9].map((family: unknown) => {
       if (
         !Array.isArray(family) ||
-        family.length !== 3 ||
+        family.length !== (input[0] === 1 ? 3 : 4) ||
         typeof family[0] !== "string" ||
-        !size(family[1])
+        !size(family[1]) ||
+        (input[0] === 2 && family[3] !== null && family[3] !== "fetch-json-data-v1")
       ) {
         return invalid();
       }
-      return { byteSize: family[1], sha256: family[0], urls: references(family[2]) };
+      return {
+        byteSize: family[1],
+        ...(input[0] === 2 && family[3] !== null
+          ? { responseProfile: family[3] as "fetch-json-data-v1" }
+          : {}),
+        sha256: family[0],
+        urls: references(family[2]),
+      };
     });
   }
   canonical(manifest);
+  if (
+    input[0] === 2 &&
+    !manifest.verifiedJsonBodies?.some((family) => family.responseProfile !== undefined)
+  ) {
+    invalid();
+  }
   return manifest;
 }
 
@@ -266,8 +299,10 @@ export function encodePrecacheManifest(manifest: PrecacheManifest): PrecacheMani
   const references = (urls: readonly string[]): number[] => urls.map((url) => indices.get(url)!);
   const named = (value: Readonly<Record<string, readonly string[]>>): NamedReferences =>
     Object.entries(value).map(([name, urls]) => [name, references(urls)]);
-  const wire: PrecacheManifestWire = [
-    1,
+  const profiled =
+    manifest.verifiedJsonBodies?.some((family) => family.responseProfile !== undefined) === true;
+  const wire = [
+    profiled ? 2 : 1,
     manifest.version,
     manifest.buildId ?? null,
     table,
@@ -286,8 +321,9 @@ export function encodePrecacheManifest(manifest: PrecacheManifest): PrecacheMani
           family.sha256,
           family.byteSize,
           references(family.urls),
+          ...(profiled ? [family.responseProfile ?? null] : []),
         ]),
-  ];
+  ] as unknown as PrecacheManifestWire;
   const decoded = decodePrecacheManifest(wire);
   // Compare semantic fields without depending on URL-key insertion order in records.
   if (JSON.stringify(encodeFields(decoded)) !== JSON.stringify(encodeFields(manifest))) {
@@ -309,6 +345,11 @@ function encodeFields(manifest: PrecacheManifest): unknown {
     manifest.groups === undefined ? null : [manifest.groups.initial, sorted(manifest.groups.urls)],
     manifest.verifiedJsonBodies === undefined
       ? null
-      : manifest.verifiedJsonBodies.map((family) => [family.sha256, family.byteSize, family.urls]),
+      : manifest.verifiedJsonBodies.map((family) => [
+          family.sha256,
+          family.byteSize,
+          family.urls,
+          ...(family.responseProfile === undefined ? [] : [family.responseProfile]),
+        ]),
   ];
 }

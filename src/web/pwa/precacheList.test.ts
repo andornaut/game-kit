@@ -227,3 +227,18 @@ it("fingerprints canonical full-body reuse metadata without changing the absent 
     precacheFingerprint(policy, hashes, sizes, undefined, [{ ...family, sha256: "b".repeat(64) }]),
   ).not.toBe(enabled);
 });
+
+it("fingerprints the explicit response profile while leaving legacy metadata unchanged", () => {
+  const policy = { cacheNamePrefix: "fixture-", hashedAssetPrefix: "/assets/" };
+  const urls = ["/a.json", "/b.json"];
+  const hashes = new Map(urls.map((url) => [url, "AAAAAAAA"]));
+  const sizes = new Map(urls.map((url) => [url, 2]));
+  const family = { byteSize: 2, sha256: "0".repeat(64), urls };
+  const legacy = precacheFingerprint(policy, hashes, sizes, undefined, [family]);
+  const profile = { ...family, responseProfile: "fetch-json-data-v1" as const };
+  expect(precacheFingerprint(policy, hashes, sizes, undefined, [profile])).not.toBe(legacy);
+  expect(precacheFingerprint(policy, hashes, sizes, undefined, [family])).toBe(legacy);
+  expect(() =>
+    precacheFingerprint({ ...policy, cacheNamePrefix: "" }, hashes, sizes, undefined, [profile]),
+  ).toThrow("collides");
+});

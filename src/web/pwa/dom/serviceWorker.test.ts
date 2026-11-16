@@ -8,6 +8,7 @@ import { cacheNameFor, type CachePolicy } from "../cachePolicy.ts";
 import { DOWNLOAD_PROGRESS_MESSAGE, type DownloadProgress } from "../downloadProgress.ts";
 import type { PrecacheManifest } from "../precacheList.ts";
 import { encodePrecacheManifest, type PrecacheManifestWire } from "../precacheWire.ts";
+import { verifiedJsonAliasCachePrefix } from "../verifiedJsonBody.ts";
 import { createAssetGroups } from "./assetGroups.ts";
 import { runServiceWorker } from "./serviceWorker.ts";
 
@@ -265,6 +266,7 @@ function startWorker(
     | "capable"
     | "legacy"
     | { postMessage(message: unknown, ports: Transferable[]): void } = "capable",
+  run: typeof runServiceWorker = runServiceWorker,
 ) {
   for (const [name, files] of Object.entries(seeded)) {
     storage.seed(name, files);
@@ -295,18 +297,18 @@ function startWorker(
     },
     skipWaiting,
   });
-  runServiceWorker(POLICY, manifest);
+  run(POLICY, manifest);
   const dispatch = async (type: string) => {
     let done: Promise<unknown> = Promise.resolve();
     listeners.get(type)?.({ waitUntil: (promise) => (done = promise) });
     await done;
   };
   // The worker's answer to request, or undefined where it leaves the request to the browser.
-  const respond = async (
+  const respondResponse = async (
     request: Request,
     clientId = "",
     resultingClientId = "",
-  ): Promise<string | undefined> => {
+  ): Promise<Response | undefined> => {
     let answer: Promise<Response> | undefined;
     listeners.get("fetch")?.({
       clientId,
@@ -322,8 +324,10 @@ function startWorker(
     if (resultingClientId) {
       controlled.add(resultingClientId);
     }
-    return response.text();
+    return response;
   };
+  const respond = async (...args: Parameters<typeof respondResponse>) =>
+    (await respondResponse(...args))?.text();
   return {
     activate: () => dispatch("activate"),
     clients,
@@ -395,6 +399,7 @@ function startWorker(
       return (replies.at(-1) as { type: "result"; result: AssetGroupsResult }).result;
     },
     respond,
+    respondResponse,
     sendLegacyAccept: () => {
       const reply = vi.fn();
       listeners.get("message")?.({
@@ -2134,4 +2139,299 @@ async function nativeTurns(count: number): Promise<void> {
     // eslint-disable-next-line no-await-in-loop
     await nativeTurn();
   }
+}
+
+function dataProfileFixture(version = "0123456789abcdef") {
+  const files: Record<string, string> = {};
+  const verifiedJsonBodies = [4, 4, 3].map((count, index) => {
+    const body = JSON.stringify({ sample: index, values: [index, index + 1] });
+    const urls = Array.from({ length: count }, (_, item) => `/data-${index}/item-${item}.json`);
+    for (const url of urls) {
+      files[url] = body;
+    }
+    return {
+      byteSize: Buffer.byteLength(body),
+      responseProfile: "fetch-json-data-v1" as const,
+      sha256: createHash("sha256").update(body).digest("hex"),
+      urls,
+    };
+  });
+  const manifest: PrecacheManifest = {
+    buildId: "d".repeat(40),
+    byteSizes: Object.fromEntries(
+      Object.entries(files).map(([url, body]) => [url, Buffer.byteLength(body)]),
+    ),
+    contentHashes: Object.fromEntries(
+      Object.entries(files).map(([url, body]) => [url, hashOf(body)]),
+    ),
+    groups: { initial: [], urls: {} },
+    sounds: {},
+    urls: Object.keys(files),
+    verifiedJsonBodies,
+    version,
+  };
+  const server = new FakeServer(files, true);
+  const nativeFetch = server.fetch.bind(server);
+  vi.spyOn(server, "fetch").mockImplementation(async (request) => {
+    const source = await nativeFetch(request);
+    const headers = new Headers(source.headers);
+    for (const [name, value] of Object.entries({
+      "alt-svc": 'h2=":443"',
+      "content-encoding": "zstd",
+      nel: '{"max_age":1,"report_to":"fixture"}',
+      "permissions-policy": "geolocation=()",
+      "referrer-policy": "no-referrer",
+      "report-to": '{"group":"fixture","max_age":1,"endpoints":[]}',
+    })) {
+      headers.set(name, value);
+    }
+    const response = new Response(source.body, { headers, status: source.status });
+    Object.defineProperty(response, "url", { value: request.url });
+    return response;
+  });
+  return { files, manifest, server };
+}
+
+describe("guarded JSON data response profile", () => {
+  beforeEach(() => {
+    virtualNetworkClock();
+    vi.stubGlobal("Request", PrioritizedRequest);
+    durable.builds.clear();
+    durable.barrier = undefined;
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("isolates eleven data URLs with three GETs and preserves original nondata policies", async () => {
+    const f = dataProfileFixture();
+    const worker = startWorker(f.server, {}, encodePrecacheManifest(f.manifest), undefined, [
+      { id: "page" },
+    ]);
+    await withTimersRun(worker.install());
+    expect(f.server.fetched).toHaveLength(3);
+    const aliasName = verifiedJsonAliasCachePrefix(POLICY) + f.manifest.version;
+    expect(aliasName.startsWith(POLICY.cacheNamePrefix)).toBe(false);
+    const aliases = await worker.storage.open(aliasName);
+    expect(aliases.bodies.size).toBe(11);
+    const original = await worker.storage.open(cacheNameFor(POLICY, f.manifest.version));
+    expect(original.bodies.size).toBe(3);
+    const routing = await worker.storage.open("game-kit-routing:game-");
+    const record = await (await routing.match(
+      `/.game-kit-routing/build/game-${f.manifest.version}`,
+    ))!.json();
+    expect(record.manifest[0]).toBe(2);
+    await expect(worker.requestGroups(f.manifest.buildId!, [])).resolves.toMatchObject({
+      status: "available",
+    });
+    for (const [url, body] of Object.entries(f.files)) {
+      // Each result must be consumed before inspecting the next logical URL.
+      // eslint-disable-next-line no-await-in-loop
+      const response = (await worker.respondResponse(requestFor(url), "page"))!;
+      expect(response.url).toBe("");
+      expect([...response.headers.keys()].sort()).toEqual([
+        "content-type",
+        "x-content-type-options",
+      ]);
+      // eslint-disable-next-line no-await-in-loop
+      expect(await response.text()).toBe(body);
+    }
+    expect(f.server.fetched).toHaveLength(3);
+    const target = f.manifest.urls[1]!;
+    const script = requestFor(target);
+    Object.defineProperty(script, "destination", { value: "script" });
+    const source = (await worker.respondResponse(script, "page"))!;
+    expect(source.url).toBe(ORIGIN + target);
+    expect(source.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(source.headers.get("permissions-policy")).toBe("geolocation=()");
+    expect(f.server.fetched).toHaveLength(4);
+    const navigation = (await worker.respondResponse(requestFor(target, true), "", "document"))!;
+    expect(navigation.url).toBe(ORIGIN + target);
+    expect(navigation.headers.get("report-to")).toBe(source.headers.get("report-to"));
+    const unavailable = f.manifest.urls[2]!;
+    f.server.failures.set(unavailable, "always");
+    await expect(worker.respond(requestFor(unavailable, true))).rejects.toThrow();
+    await expect(worker.respond(requestFor(unavailable), "page")).resolves.toBe(
+      f.files[unavailable],
+    );
+    const count = f.server.fetched.length;
+    await expect(worker.respond(requestFor(`${target}?variant=1`), "page")).rejects.toThrow(
+      "exact canonical URL",
+    );
+    expect(f.server.fetched).toHaveLength(count);
+    // Worker/range contexts can use only their own native original, never aliases.
+    const request = requestFor(target);
+    Object.defineProperty(request, "destination", { value: "worker" });
+    expect((await worker.respondResponse(request, "page"))!.url).toBe(ORIGIN + target);
+    const range = new PrioritizedRequest(target, { headers: { Range: "bytes=0-1" } });
+    expect((await worker.respondResponse(range, "page"))!.url).toBe(ORIGIN + target);
+  });
+
+  it("retains 503 successes, gates partial aliases and repairs corruption on explicit retry", async () => {
+    const f = dataProfileFixture();
+    f.manifest.groups = { initial: [], urls: { optional: [...f.manifest.urls] } };
+    const worker = startWorker(f.server, {}, f.manifest, undefined, [{ id: "page" }]);
+    await withTimersRun(worker.install());
+    expect(f.server.fetched).toHaveLength(0);
+    await expect(worker.respond(requestFor(f.manifest.urls[0]!), "page")).rejects.toThrow();
+    const failed = f.manifest.verifiedJsonBodies![2]!.urls[0]!;
+    f.server.statuses.set(failed, 503);
+    await expect(
+      withTimersRun(worker.requestGroups(f.manifest.buildId!, ["optional"])),
+    ).resolves.toMatchObject({ reason: "failed" });
+    await expect(worker.respond(requestFor(f.manifest.urls[0]!), "page")).rejects.toThrow(
+      "committed",
+    );
+    const before = [...f.server.fetched];
+    f.server.statuses.delete(failed);
+    await expect(
+      withTimersRun(worker.requestGroups(f.manifest.buildId!, ["optional"])),
+    ).resolves.toMatchObject({ readyGroups: ["optional"], status: "available" });
+    expect(f.server.fetched.slice(before.length)).toEqual([failed]);
+    const aliases = await worker.storage.open(
+      verifiedJsonAliasCachePrefix(POLICY) + f.manifest.version,
+    );
+    aliases.bodies.set(f.manifest.urls[1]!, new Response("broken"));
+    await expect(worker.requestGroups(f.manifest.buildId!, [])).resolves.toMatchObject({
+      reason: "failed",
+    });
+    const requests = f.server.fetched.length;
+    await expect(
+      withTimersRun(worker.requestGroups(f.manifest.buildId!, ["optional"])),
+    ).resolves.toMatchObject({ status: "available" });
+    expect(f.server.fetched).toHaveLength(requests);
+    const routing = await worker.storage.open("game-kit-routing:game-");
+    const key = `/.game-kit-routing/build/game-${f.manifest.version}`;
+    await routing.put(
+      key,
+      new Response(JSON.stringify({ manifest: f.manifest, urls: f.manifest.urls })),
+    );
+    await expect(worker.requestGroups(f.manifest.buildId!, [])).resolves.toMatchObject({
+      reason: "wrong-build",
+    });
+  });
+
+  it("rejects colliding namespaces before resources and rejects unknown profile headers", async () => {
+    const f = dataProfileFixture();
+    const open = vi.fn();
+    const listener = vi.fn();
+    vi.stubGlobal("caches", { open });
+    vi.stubGlobal("self", { addEventListener: listener });
+    for (const cacheNamePrefix of ["", "!", "!game-kit-"]) {
+      expect(() => runServiceWorker({ ...POLICY, cacheNamePrefix }, f.manifest)).toThrow(
+        "collides",
+      );
+    }
+    expect(open).not.toHaveBeenCalled();
+    expect(listener).not.toHaveBeenCalled();
+    const source = vi.mocked(f.server.fetch).getMockImplementation()!;
+    vi.mocked(f.server.fetch).mockImplementation(async (request) => {
+      const response = await source(request);
+      response.headers.set("x-unqualified", "test");
+      return response;
+    });
+    const worker = startWorker(f.server, {}, f.manifest);
+    await expect(withTimersRun(worker.install())).rejects.toThrow("Precache failed");
+    expect(f.server.fetched).toHaveLength(9);
+  });
+
+  it("preserves live profile pairs and reclaims both caches only after complete client-free activation", async () => {
+    const f = dataProfileFixture();
+    const old = startWorker(f.server, {}, f.manifest, undefined, [{ id: "page" }]);
+    await withTimersRun(old.install());
+    await old.requestGroups(f.manifest.buildId!, []);
+    const nextManifest = { ...f.manifest, buildId: "e".repeat(40), version: "fedcba9876543210" };
+    const clients = [{ id: "page" }];
+    const next = startWorker(f.server, {}, nextManifest, old.storage, clients);
+    await withTimersRun(next.install());
+    await withTimersRun(next.activate());
+    expect(next.storage.named.has(cacheNameFor(POLICY, f.manifest.version))).toBe(true);
+    expect(next.storage.named.has(verifiedJsonAliasCachePrefix(POLICY) + f.manifest.version)).toBe(
+      true,
+    );
+    await expect(next.respond(requestFor(f.manifest.urls[1]!), "page")).resolves.toBe(
+      f.files[f.manifest.urls[1]!],
+    );
+    clients.splice(0);
+    await withTimersRun(next.activate());
+    expect(next.storage.named.has(cacheNameFor(POLICY, f.manifest.version))).toBe(false);
+    expect(next.storage.named.has(verifiedJsonAliasCachePrefix(POLICY) + f.manifest.version)).toBe(
+      false,
+    );
+    expect(
+      next.storage.named.has(verifiedJsonAliasCachePrefix(POLICY) + nextManifest.version),
+    ).toBe(true);
+  });
+});
+
+// The focused historical harness supplies the actual frozen kernel, never a copied reader model.
+export async function proveHistoricalProfileIsolation(
+  runLegacy: typeof runServiceWorker,
+): Promise<string[]> {
+  virtualNetworkClock();
+  vi.stubGlobal("Request", PrioritizedRequest);
+  durable.builds.clear();
+  durable.barrier = undefined;
+  const f = dataProfileFixture();
+  const url = f.manifest.urls[1]!;
+  const body = f.files[url]!;
+  const previous: PrecacheManifest = {
+    contentHashes: { [url]: hashOf(body) },
+    sounds: {},
+    urls: [url],
+    version: "v1",
+  };
+  const clients = [{ id: "old" }];
+  const old = startWorker(f.server, {}, previous, undefined, clients, "capable", runLegacy);
+  await withTimersRun(old.install());
+  await old.respond(requestFor(url, true), "", "old");
+  const oldCache = await old.storage.open(OLD);
+  const original = (await oldCache.match(url))!;
+  const next = startWorker(f.server, {}, f.manifest, old.storage, [
+    { id: "old" },
+    { id: "profile" },
+  ]);
+  await withTimersRun(next.install());
+  const aliasName = verifiedJsonAliasCachePrefix(POLICY) + f.manifest.version;
+  expect(next.storage.named.has(aliasName)).toBe(true);
+  expect((await next.storage.open(cacheNameFor(POLICY, f.manifest.version))).bodies.has(url)).toBe(
+    false,
+  );
+  await expect(next.respond(requestFor(url), "old")).resolves.toBe(body);
+  await expect(next.requestGroups(f.manifest.buildId!, [], "profile")).resolves.toMatchObject({
+    status: "available",
+  });
+  clients.push({ id: "profile" });
+  await expect(old.requestGroups(f.manifest.buildId!, [], "profile")).resolves.toMatchObject({
+    reason: "wrong-build",
+  });
+  oldCache.bodies.delete(url);
+  f.server.statuses.set(url, 503);
+  const fetched = f.server.fetched.length;
+  await expect(withTimersRun(old.install())).rejects.toThrow("Precache failed");
+  expect(f.server.fetched.slice(fetched)).toEqual([url, url, url]);
+  expect(oldCache.bodies.has(url)).toBe(false);
+  await expect(old.respond(requestFor(url, true))).rejects.toThrow();
+  // An older activation may remove ordinary stale caches only after all clients leave.
+  await oldCache.put(url, original);
+  await withTimersRun(old.activate());
+  expect(next.storage.named.has(cacheNameFor(POLICY, f.manifest.version))).toBe(true);
+  expect(next.storage.named.has(aliasName)).toBe(true);
+  clients.splice(0);
+  await withTimersRun(old.activate());
+  expect(next.storage.named.has(cacheNameFor(POLICY, f.manifest.version))).toBe(false);
+  expect(next.storage.named.has(aliasName)).toBe(true);
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  return [
+    "actual old copy cannot borrow alias",
+    "actual old durable reader rejects wire2",
+    "old pin readable by new kernel",
+    "actual old navigation never receives alias",
+    "old live reclamation preserves pairs",
+    "old client-free reclamation cannot reach private aliases",
+  ];
 }
