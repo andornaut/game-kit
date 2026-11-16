@@ -9,6 +9,8 @@ import { guardPassed } from "../../../input/tapGuard.ts";
 import type { PressGuard } from "../../ui/dom/domPress.ts";
 
 export interface HoldAction {
+  // Permit the original refusal callback for this control's own ARIA state, never its scope.
+  readonly ownAriaDisabled?: "refusal-feedback";
   readonly element: HTMLElement;
   readonly rule: HoldRule;
   readonly available: () => boolean;
@@ -129,11 +131,23 @@ export function bindHoldActions(
       ancestor !== null;
       ancestor = ancestor.parentElement
     ) {
-      if (ancestor.getAttribute("aria-disabled")?.toLowerCase() === "true" || ancestor.inert) {
+      if (
+        ancestor.inert ||
+        ((ancestor !== element || ancestor === root) &&
+          ancestor.getAttribute("aria-disabled")?.toLowerCase() === "true")
+      ) {
         return false;
       }
     }
     return true;
+  };
+  const permitsOwnAria = (action: HoldAction) => {
+    const policy = action.ownAriaDisabled;
+    return (
+      (policy === undefined || policy === "refusal-feedback") &&
+      (action.element.getAttribute("aria-disabled")?.toLowerCase() !== "true" ||
+        policy === "refusal-feedback")
+    );
   };
   const clearRelease = () => {
     released = undefined;
@@ -169,7 +183,7 @@ export function bindHoldActions(
       return true;
     }
     const action = releaseOptions.resolvePointer(gesture.latest);
-    return same(gesture, action) && action!.available();
+    return same(gesture, action) && permitsOwnAria(action!) && action!.available();
   };
   const current = (gesture: Gesture): HoldAction | null => {
     if (
@@ -183,7 +197,7 @@ export function bindHoldActions(
       return null;
     }
     const action = options.resolve(gesture.element);
-    return same(gesture, action) && action!.available() ? action : null;
+    return same(gesture, action) && permitsOwnAria(action!) && action!.available() ? action : null;
   };
   const fire = (gesture: Gesture) => {
     const action = current(gesture);
@@ -250,6 +264,7 @@ export function bindHoldActions(
       action === null ||
       (releaseOptions === undefined && !inside(action.element, event.target)) ||
       !enabled(action.element) ||
+      !permitsOwnAria(action) ||
       !action.available()
     ) {
       return;

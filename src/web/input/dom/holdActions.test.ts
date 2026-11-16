@@ -309,6 +309,157 @@ function bindRelease(
   );
 }
 
+it("opts only own ARIA into the original refusal callback and explicit hold override", () => {
+  const feedback = vi.fn();
+  const selected = vi.fn();
+  original = vi.fn(() => {
+    if (button.getAttribute("aria-disabled") === "true") {
+      feedback();
+    } else {
+      selected();
+    }
+  });
+  action = { ...action, activate: original };
+  button.setAttribute("aria-disabled", "true");
+  bindRelease();
+  pointer("pointerdown", child);
+  pointer("pointerup", child);
+  expect(original).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+  action = { ...action, ownAriaDisabled: "refusal-feedback" };
+  pointer("pointerdown", child);
+  pointer("pointerup", child);
+  expect(feedback).toHaveBeenCalledOnce();
+  expect(click(child, 4).defaultPrevented).toBe(true);
+  expect(original).toHaveBeenCalledOnce();
+  const hold = vi.fn();
+  action = { ...action, hold };
+  pointer("pointerdown", child);
+  vi.advanceTimersByTime(100);
+  pointer("pointerup", child);
+  expect(click(child, 4).defaultPrevented).toBe(true);
+  expect(hold).toHaveBeenCalledOnce();
+  expect(original).toHaveBeenCalledOnce();
+  expect(selected).not.toHaveBeenCalled();
+  expect(button.getAttribute("aria-disabled")).toBe("true");
+});
+
+it("preserves native clicks and the original hold fallback with per-action refusal permission", () => {
+  stop();
+  stopGuard();
+  button.setAttribute("aria-disabled", "true");
+  action = { ...action, ownAriaDisabled: "refusal-feedback" };
+  stop = bindHoldActions({ guard: { gate }, resolve: () => action }, root);
+  pointer("pointerdown", child);
+  vi.advanceTimersByTime(100);
+  expect(original).toHaveBeenCalledOnce();
+  pointer("pointerup", child);
+  expect(click(child, 4).defaultPrevented).toBe(true);
+  expect(original).toHaveBeenCalledOnce();
+  expect(click(child, undefined, 0).defaultPrevented).toBe(false);
+  expect(original).toHaveBeenCalledTimes(2);
+  expect(button.getAttribute("aria-disabled")).toBe("true");
+});
+
+it("revalidates current logical and physical permission plus identity, availability and modal guards", () => {
+  button.setAttribute("aria-disabled", "true");
+  for (const reason of ["logical", "physical", "identity", "unavailable", "modal", "ancestor"]) {
+    action = { ...action, ownAriaDisabled: "refusal-feedback" };
+    const accepted = action;
+    let physical = accepted;
+    bindRelease({ resolvePointer: () => physical });
+    pointer("pointerdown", child);
+    const blocked: HoldAction = {
+      activate: action.activate,
+      available: action.available,
+      element: action.element,
+      identity: action.identity,
+      rule: action.rule,
+    };
+    if (reason === "logical") {
+      action = blocked;
+    }
+    if (reason === "physical") {
+      physical = blocked;
+    }
+    if (reason === "identity") {
+      action = { ...action, identity: {} };
+    }
+    if (reason === "unavailable") {
+      enabled = false;
+    }
+    if (reason === "ancestor") {
+      root.setAttribute("aria-disabled", "true");
+    }
+    const modal = reason === "modal" ? gate.open() : undefined;
+    vi.advanceTimersByTime(100);
+    pointer("pointerup", child);
+    expect(original).not.toHaveBeenCalled();
+    enabled = true;
+    root.removeAttribute("aria-disabled");
+    modal?.close();
+  }
+  bindRelease();
+  pointer("pointerdown", child);
+  pointer("pointerup", child);
+  expect(original).toHaveBeenCalledOnce();
+});
+
+it("hard-blocks native, inherited and root-scope disablement and unsupported policy before gestures", () => {
+  const parent = document.createElement("fieldset");
+  root.append(parent);
+  parent.append(button);
+  const show = vi.fn();
+  bindRelease({ onPressChange: show });
+  const capture = vi.spyOn(gate, "capture");
+  for (const reason of [
+    "native",
+    "own-inert",
+    "parent-inert",
+    "parent-aria",
+    "root-aria",
+    "root-element",
+  ]) {
+    action = {
+      ...action,
+      element: reason === "root-element" ? root : button,
+      ownAriaDisabled: "refusal-feedback",
+    };
+    button.setAttribute("aria-disabled", "true");
+    button.disabled = reason === "native";
+    button.inert = reason === "own-inert";
+    parent.inert = reason === "parent-inert";
+    if (reason === "parent-aria") {
+      parent.setAttribute("aria-disabled", "true");
+    }
+    if (reason === "root-aria" || reason === "root-element") {
+      root.setAttribute("aria-disabled", "true");
+    }
+    pointer("pointerdown", child);
+    vi.advanceTimersByTime(100);
+    pointer("pointerup", child);
+    expect(original, reason).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    button.disabled = false;
+    button.inert = false;
+    parent.inert = false;
+    parent.removeAttribute("aria-disabled");
+    root.removeAttribute("aria-disabled");
+  }
+  button.removeAttribute("aria-disabled");
+  for (const invalid of ["invalid", "refusal", true, null]) {
+    action = { ...action, element: button, ownAriaDisabled: invalid } as unknown as HoldAction;
+    pointer("pointerdown", child);
+    vi.advanceTimersByTime(100);
+    pointer("pointerup", child);
+    expect(original).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  }
+  expect(show).not.toHaveBeenCalled();
+  expect(capture).not.toHaveBeenCalled();
+  capture.mockRestore();
+});
+
 it("opts a nonprimary touch into one UI tap or hold while three outside fingers remain down", () => {
   const world = document.createElement("canvas");
   document.body.append(world);
