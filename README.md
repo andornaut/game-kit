@@ -57,6 +57,12 @@ Every legacy API path remains available unchanged as a deprecated compatibility 
 
 The precache plugin builds the worker through Vite's isolated worker pipeline as one self-contained classic script. Shared page modules cannot split the worker into ESM chunks. Builds reject worker imports or additional emitted files; games retain their existing classic registration and runtime policies.
 
+## Action font synthesis in 0.51.0
+
+`runtime/web/progress/dom/loadingFailure` exports `LoadingFailureActionTextStyle`, extending the existing text style with optional `synthesis: "none" | "weight"` for `presentation.text.action` only. Explicit values set hardened `font-synthesis` on Retry. Omission preserves inheritance; replacing an explicit value with omission through `setPresentation` removes the inline synthesis policy. Title/body, unconfigured fallback and legacy layout policies remain unchanged.
+
+The caller still supplies `weight`. Qualify weight and synthesis together on the actual platform: enabling synthesis alone does not guarantee heavier glyphs or a match to another control's font. This option preserves the fixed system font stack, caller CSS size, geometry, palette and independence from game fonts or downloads.
+
 ## Configured text paint in 0.50.1
 
 Configured headings and body text use transparent backgrounds over the caller's panel colour. Unconfigured and legacy-layout fallback backgrounds remain unchanged. Public declarations, geometry, typography and input behaviour are unchanged.

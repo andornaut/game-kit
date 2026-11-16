@@ -184,6 +184,7 @@ export const fixture = storageFixture();
 import type { LayoutColumnSizing, LayoutColumnTrack, LayoutNode } from '@andornaut/game-kit/runtime/ui/layoutTree';
 import {
   mountLoadingFailure, type LoadingFailureLayout,
+  type LoadingFailureActionTextStyle,
   type LoadingFailurePresentation, type LoadingFailurePresentationView,
 } from '@andornaut/game-kit/runtime/web/progress/dom/loadingFailure';
 import type {
@@ -203,6 +204,18 @@ export function configuredFailure(
   presentation: LoadingFailurePresentation, parent: HTMLElement,
 ): LoadingFailurePresentationView {
   const view = mountLoadingFailure({presentation,onRetry(){}},parent);
+  view.setPresentation(presentation);
+  return view;
+}
+export const failureAction: LoadingFailureActionTextStyle = {
+  sizePx:18,weight:700,lineHeight:1.2,synthesis:'weight',
+};
+export function actionSynthesisFailure(
+  presentation: LoadingFailurePresentation, parent: HTMLElement,
+): LoadingFailurePresentationView {
+  const configured = {...presentation,text:{...presentation.text,action:failureAction}};
+  const view = mountLoadingFailure({presentation:configured,onRetry(){}},parent);
+  view.setPresentation({...configured,text:{...configured.text,action:{...failureAction,synthesis:'none'}}});
   view.setPresentation(presentation);
   return view;
 }
@@ -396,12 +409,13 @@ const window = new Window();
 const frame = window.document.createElement('div');
 frame.style.width = '360px';
 frame.style.height = '560px';
+frame.style.setProperty('font-synthesis','none');
 window.document.body.append(frame);
 const presentation = {
   panel: {maxWidthPx:328,safeInsetPx:16,paddingTopPx:24,paddingXPx:16,paddingBottomPx:16,
     titleBodyGapPx:16,bodyActionGapPx:24,borderWidthPx:1,lipHeightPx:4,shadowOffsetPx:4},
   text: {title:{sizePx:24,weight:700,lineHeight:1.2},body:{sizePx:18,weight:400,lineHeight:1.45},
-    action:{sizePx:18,weight:700,lineHeight:1.2}},
+    action:{sizePx:18,weight:900,lineHeight:1.2,synthesis:'weight'}},
   action: {widthPx:80,heightPx:30,paddingXPx:7.5,paddingBottomPx:2.5,borderWidthPx:1,
     highlightHeightPx:1,shadeHeightPx:2.5},
   palette: {panel:'#ead4aa',text:'#3e2731',action:'#63c74d',actionText:'#181425',border:'#181425',
@@ -422,6 +436,8 @@ try {
   assert.equal(view.element.querySelector('p').style.fontSize,'18px');
   assert.equal(button.style.fontSize,'18px');
   assert.equal(button.style.height,'30px');
+  assert.equal(button.style.getPropertyValue('font-synthesis'),'weight');
+  assert.equal(button.style.getPropertyPriority('font-synthesis'),'important');
   for (const node of view.element.querySelectorAll('h2, p')) {
     assert.equal(node.style.backgroundColor,'transparent');
     assert.equal(node.style.getPropertyPriority('background-color'),'important');
@@ -436,8 +452,25 @@ try {
   assert.equal(view.element.querySelector('button'),button);
   assert.equal(button.disabled,true);
   assert.equal(button.style.height,'24px');
+  assert.equal(button.style.width,'64px');
   assert.equal(button.style.fontSize,'18px');
   assert.equal(retries,1);
+  const geometry = [button.style.width,button.style.height,button.style.fontSize,button.style.fontFamily];
+  const acceptedText = [...view.element.querySelectorAll('h2, p')].map(node=>node.style.cssText);
+  view.setPresentation({...resized,text:{...resized.text,action:{...resized.text.action,synthesis:'none'}}});
+  assert.equal(button.style.getPropertyValue('font-synthesis'),'none');
+  assert.equal(button.style.getPropertyPriority('font-synthesis'),'important');
+  const inheritedAction = {sizePx:resized.text.action.sizePx,weight:resized.text.action.weight,
+    lineHeight:resized.text.action.lineHeight};
+  view.setPresentation({...resized,text:{...resized.text,action:inheritedAction}});
+  assert.equal(button.style.getPropertyValue('font-synthesis'),'');
+  assert.equal(button.style.getPropertyPriority('font-synthesis'),'');
+  assert.equal(frame.style.getPropertyValue('font-synthesis'),'none');
+  assert.equal(view.element.querySelector('button'),button);
+  assert.equal(button.disabled,true);
+  assert.equal(retries,1);
+  assert.deepEqual([button.style.width,button.style.height,button.style.fontSize,button.style.fontFamily],geometry);
+  assert.deepEqual([...view.element.querySelectorAll('h2, p')].map(node=>node.style.cssText),acceptedText);
   for (const node of view.element.querySelectorAll('h2, p')) {
     assert.equal(node.style.backgroundColor,'transparent');
     assert.equal(node.style.getPropertyPriority('background-color'),'important');
