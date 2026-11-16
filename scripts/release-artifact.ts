@@ -518,7 +518,9 @@ let duration=100000;
 const activate=()=>{activations++;};
 let action={element:control,identity:{},rule:{holdMs:duration,slopPx:10},available:()=>true,activate};
 const pointer=(type,target)=>{
-  const event=new window.PointerEvent(type,{bubbles:true,cancelable:true,isPrimary:true,button:0,pointerId:4,clientX:5,clientY:5});
+  const event=new window.PointerEvent(type,{
+    bubbles:true,cancelable:true,isPrimary:true,button:0,pointerId:4,clientX:5,clientY:5,
+  });
   target.dispatchEvent(event);
   assert.equal(event.defaultPrevented,false);
 };
