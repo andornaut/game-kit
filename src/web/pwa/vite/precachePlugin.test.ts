@@ -14,6 +14,7 @@ import { contentHash } from "../../build/vite/contentHash.ts";
 import { gitBuildMetadata, gitHead } from "../../build/vite/gitHead.ts";
 import type { CachePolicy } from "../cachePolicy.ts";
 import { precacheFingerprint, type PrecacheManifest } from "../precacheList.ts";
+import { decodePrecacheManifest } from "../precacheWire.ts";
 import { assertClassicWorker } from "./classicWorker.ts";
 import { precachePlugin, type PrecachePluginOptions } from "./precachePlugin.ts";
 
@@ -163,7 +164,7 @@ async function precache({
   new Script(worker.source).runInNewContext({
     console: {
       log: (value: PrecacheManifest) => {
-        manifest = value;
+        manifest = decodePrecacheManifest(value);
       },
     },
   });
@@ -246,7 +247,7 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     new Script(worker.source).runInNewContext({ self: scope });
     expect(scope.total).toBe(11);
     expect(scope.marker).toBe("captured");
-    const manifest = scope.manifest as PrecacheManifest;
+    const manifest = decodePrecacheManifest(scope.manifest);
     expect(manifest.byteSizes).toHaveProperty("/");
     expect(manifest.urls).not.toContain("/offline-worker.js");
     const page = result.output.filter((file) => file.type === "chunk");

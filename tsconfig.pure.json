@@ -82,6 +82,7 @@
     "src/web/pwa/precacheGroups.ts",
     "src/web/pwa/precacheList.ts",
     "src/web/pwa/precacheManifest.ts",
+    "src/web/pwa/precacheWire.ts",
     "src/web/pwa/serviceWorkerUrl.ts",
     "src/web/pwa/storagePersistence.ts",
     "src/web/pwa/updateReady.ts",

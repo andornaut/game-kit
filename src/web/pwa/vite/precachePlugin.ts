@@ -16,6 +16,7 @@ import {
   rootRelativeUrls,
   webManifestIconUrls,
 } from "../precacheList.ts";
+import { encodePrecacheManifest } from "../precacheWire.ts";
 import { validateVerifiedJsonBodies } from "../verifiedJsonBody.ts";
 import { assertClassicWorker, classicWorker } from "./classicWorker.ts";
 
@@ -284,7 +285,7 @@ export function precachePlugin({
         }
         serviceWorker.source = serviceWorker.source.replaceAll(
           PRECACHE_MANIFEST_PLACEHOLDER,
-          JSON.stringify(manifest),
+          JSON.stringify(encodePrecacheManifest(manifest)),
         );
         assertClassicWorker(serviceWorkerFileName, serviceWorker.source);
       },

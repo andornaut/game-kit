@@ -7,6 +7,7 @@ import { ASSET_GROUPS_MESSAGE, type AssetGroupsResult } from "../assetGroups.ts"
 import { cacheNameFor, type CachePolicy } from "../cachePolicy.ts";
 import { DOWNLOAD_PROGRESS_MESSAGE, type DownloadProgress } from "../downloadProgress.ts";
 import type { PrecacheManifest } from "../precacheList.ts";
+import { encodePrecacheManifest, type PrecacheManifestWire } from "../precacheWire.ts";
 import { createAssetGroups } from "./assetGroups.ts";
 import { runServiceWorker } from "./serviceWorker.ts";
 
@@ -257,7 +258,7 @@ function requestFor(path: string, navigate = false): Request {
 function startWorker(
   server: FakeServer,
   seeded: Readonly<Record<string, Readonly<Record<string, string>>>>,
-  manifest: PrecacheManifest,
+  manifest: PrecacheManifest | PrecacheManifestWire,
   storage = new FakeCaches(),
   clients: { id: string }[] = [],
   outgoing:
@@ -1414,6 +1415,65 @@ describe("grouped precache dispatcher", () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it("retains compact group successes and semantic durable records across retries and updates", async () => {
+    virtualNetworkClock();
+    const manifest = grouped("0123456789abcdef");
+    const name = cacheNameFor(POLICY, manifest.version);
+    const server = new FakeServer(files);
+    const worker = startWorker(server, {}, encodePrecacheManifest(manifest), undefined, [
+      { id: "page" },
+    ]);
+    await withTimersRun(worker.install());
+    const routing = await worker.storage.open("game-kit-routing:game-");
+    const record = await (await routing.match(`/.game-kit-routing/build/${name}`))!.json();
+    expect(record.manifest).toEqual(manifest);
+    expect(Array.isArray(record.manifest)).toBe(false);
+    server.statuses.set("/third", 503);
+    await expect(
+      withTimersRun(worker.requestGroups(buildId, ["second", "third"])),
+    ).resolves.toEqual({ reason: "failed", status: "unavailable" });
+    expect(durable.builds.get(name)).toEqual(["first"]);
+    const secondFetches = server.fetched.filter((url) => url === "/second").length;
+    server.statuses.delete("/third");
+    await expect(
+      withTimersRun(worker.requestGroups(buildId, ["second", "third"])),
+    ).resolves.toMatchObject({ readyGroups: ["first", "second", "third"], status: "available" });
+    expect(server.fetched.filter((url) => url === "/second")).toHaveLength(secondFetches);
+    const restart = startWorker(server, {}, manifest, worker.storage, [{ id: "page" }]);
+    await expect(withTimersRun(restart.requestGroups(buildId, []))).resolves.toMatchObject({
+      status: "available",
+    });
+    (await worker.storage.open(name)).bodies.set("/second", new Response("corrupt"));
+    await expect(withTimersRun(restart.requestGroups(buildId, []))).resolves.toEqual({
+      reason: "failed",
+      status: "unavailable",
+    });
+    // A compact candidate uses the existing union and activation barrier with semantic pins.
+    const nextManifest = grouped("fedcba9876543210", "b".repeat(40));
+    const next = startWorker(server, {}, encodePrecacheManifest(nextManifest), worker.storage, [
+      { id: "page" },
+    ]);
+    await withTimersRun(next.install());
+    expect(durable.builds.get(cacheNameFor(POLICY, nextManifest.version))).toEqual([
+      "first",
+      "second",
+      "third",
+    ]);
+    expect(await withTimersRun(next.requestActivation("page"))).toEqual(["activating"]);
+    await withTimersRun(next.activate());
+  });
+
+  it("rejects malformed compact input before reading worker globals or registering listeners", () => {
+    const addEventListener = vi.fn();
+    vi.stubGlobal("self", { addEventListener });
+    const wire = structuredClone(
+      encodePrecacheManifest(grouped("0123456789abcdef")),
+    ) as unknown as unknown[];
+    wire[0] = 99;
+    expect(() => runServiceWorker(POLICY, wire as unknown as PrecacheManifestWire)).toThrow();
+    expect(addEventListener).not.toHaveBeenCalled();
   });
 
   it("preserves base/initial groups, rejects unknown batches and survives a worker restart", async () => {

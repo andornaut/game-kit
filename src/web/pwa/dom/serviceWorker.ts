@@ -27,6 +27,7 @@ import {
 } from "../downloadProgress.ts";
 import { basePrecacheUrls, precacheGroupUrls, validatePrecacheGroups } from "../precacheGroups.ts";
 import type { PrecacheManifest } from "../precacheManifest.ts";
+import { decodePrecacheManifest, type PrecacheManifestWire } from "../precacheWire.ts";
 import type { SoundFormatParam } from "../serviceWorkerUrl.ts";
 import type { SkipWaitingMessage } from "../updateReady.ts";
 import { validateVerifiedJsonBodies, type VerifiedJsonBody } from "../verifiedJsonBody.ts";
@@ -494,7 +495,11 @@ async function readDownload(
 // their build's manifest and assets across another document's explicit activation and reload.
 // An activation handshake refuses unknown peers and incomplete stages. Cache reclamation occurs
 // only at a client-free activation; missing visibility or metadata preserves old builds.
-export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest): void {
+export function runServiceWorker(
+  policy: CachePolicy,
+  input: PrecacheManifest | PrecacheManifestWire,
+): void {
+  const manifest = decodePrecacheManifest(input);
   const worker = self as unknown as WorkerScope;
   const verifiedFamilies = (build: PrecacheManifest) => {
     const families = validateVerifiedJsonBodies(
@@ -604,7 +609,8 @@ export function runServiceWorker(policy: CachePolicy, manifest: PrecacheManifest
     if (response === undefined) {
       throw new TypeError("Missing document build manifest");
     }
-    const build = (await response.json()) as BuildRecord;
+    const stored = (await response.json()) as BuildRecord;
+    const build: BuildRecord = { ...stored, manifest: decodePrecacheManifest(stored.manifest) };
     verifiedFamilies(build.manifest);
     return build;
   };
