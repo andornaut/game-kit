@@ -470,6 +470,7 @@ Fixtures for game unit tests. They import no test framework and load no Phaser a
 
 - `numbers.clamp(minimum, maximum, value)` does not reorder bounds and propagates NaN; `lerp` does not clamp. See `src/numbers.ts`.
 - `text/bitmapFont.advanceWidth` measures pen advance, including trailing whitespace; `inkWidth` measures inked columns. See `src/text/bitmapFont.ts`.
+- `runtime/lines.splitBalancedGraphemes(measure, text)` returns two nonempty strings at a Unicode grapheme boundary, preserving the exact input. It measures every complete prefix/suffix pair and minimizes maximum width, then width difference, then boundary position. Empty or single-grapheme input returns `undefined` without measuring. Measurements must be finite and nonnegative or it throws `RangeError`; callback errors propagate. The caller can apply it to overwide words after `wrapWords`; it supplies no width limit or font policy and requires `Intl.Segmenter`.
 
 ## Standalone verification
 

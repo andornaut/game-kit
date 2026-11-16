@@ -83,6 +83,9 @@ import {
 } from '@andornaut/game-kit/runtime/achievements';
 import { NOTHING_PREVIEWED, previewAchievements } from '@andornaut/game-kit/runtime/achievements/preview';
 import { clamp } from '@andornaut/game-kit/runtime/numbers';
+import { splitBalancedGraphemes } from '@andornaut/game-kit/runtime/lines';
+assert.deepEqual(splitBalancedGraphemes(text=>text.length,'abcdef'),['abc','def']);
+assert.deepEqual(splitBalancedGraphemes(text=>text.length,'a\u0301b'),['a\u0301','b']);
 import { createProgressState } from '@andornaut/game-kit/runtime/progressState';
 import { memoryStorage } from '@andornaut/game-kit/runtime/save/storage';
 import * as storageModule from '@andornaut/game-kit/runtime/save/storage';
@@ -173,6 +176,8 @@ writeFileSync(
   `/// <reference types="@andornaut/game-kit/build/buildInfo" />
 import { buildLabel } from '@andornaut/game-kit/runtime/web/buildLabel';
 import type { PhaserBuild } from '@andornaut/game-kit/build/phaserBuild';
+import { splitBalancedGraphemes } from '@andornaut/game-kit/runtime/lines';
+export const balancedText: readonly [string,string] | undefined = splitBalancedGraphemes(text=>text.length,'abcde');
 import type { RgbaImage } from '@andornaut/game-kit/runtime/art/rgbaImage';
 import type { PrecacheManifest } from '@andornaut/game-kit/runtime/web/pwa/precacheManifest';
 import type { PrecacheManifest as LegacyManifest } from '@andornaut/game-kit/web/pwa/precacheList';
