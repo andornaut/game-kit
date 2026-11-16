@@ -99,6 +99,28 @@ import { shortCommit, UNKNOWN_COMMIT } from '@andornaut/game-kit/build/buildVers
 import { replacePhaserFlags } from '@andornaut/game-kit/build/phaserBuild';
 import { crashGate } from '@andornaut/game-kit/runtime/web/crash/crashModel';
 import { isBuildId } from '@andornaut/game-kit/runtime/web/pwa/buildIdentity';
+import { createAssetGroups } from '@andornaut/game-kit/runtime/web/pwa/dom/assetGroups';
+for (const mode of [undefined, 'inactivity']) {
+  const buildId = 'a'.repeat(40);
+  let requests = 0;
+  const groups = createAssetGroups({
+    buildId, requestTimeoutMs:1000,
+    ...(mode === undefined ? {} : {timeoutMode:mode}),
+    container:{getRegistration:async()=>undefined,controller:{postMessage(message, transfer){
+      requests++;
+      assert.equal(message.activity, mode === 'inactivity' ? true : undefined);
+      const port = transfer[0];
+      if (mode === 'inactivity') port.postMessage({type:'activity',buildId,
+        version:'artifact-proof',operationId:'artifact-work',sequence:1});
+      port.postMessage({type:'result',result:{status:'available',version:'artifact-proof',readyGroups:[]}});
+      port.close();
+    }}},
+  });
+  try {
+    assert.deepEqual(await groups.readState(),{status:'available',version:'artifact-proof',readyGroups:[]});
+    assert.equal(requests,1);
+  } finally { groups.dispose(); }
+}
 import { precacheFingerprint } from '@andornaut/game-kit/build/precacheList';
 import { createHash } from 'node:crypto';
 const jsonBody = '{}';
@@ -201,6 +223,10 @@ import type { RgbaImage } from '@andornaut/game-kit/runtime/art/rgbaImage';
 import type { PrecacheManifest } from '@andornaut/game-kit/runtime/web/pwa/precacheManifest';
 import type { PrecacheManifest as LegacyManifest } from '@andornaut/game-kit/web/pwa/precacheList';
 import type { PrecachePluginOptions } from '@andornaut/game-kit/build/precachePlugin';
+import type { AssetGroupsOptions } from '@andornaut/game-kit/runtime/web/pwa/dom/assetGroups';
+export const groupTiming: Pick<AssetGroupsOptions, 'timeoutMode' | 'requestTimeoutMs'> = {
+  timeoutMode:'inactivity',requestTimeoutMs:1000,
+};
 type VerifiedFamily = NonNullable<PrecacheManifest['verifiedJsonBodies']>[number];
 export const verifiedFamily: VerifiedFamily = {
   byteSize: 2, sha256: '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
