@@ -252,6 +252,8 @@ export function bindPointerAction(
     activation:'pointer-release',allowNonPrimaryTouch:true,guard,pointerTarget:root.ownerDocument,
     resolve:()=>action,resolvePointer:()=>action,
   };
+  const feedback: HoldAction = {...action,ownAriaDisabled:'refusal-feedback'};
+  void feedback;
   const binding = bindHoldActions(options,root);
   binding.cancel();
   return binding;
@@ -573,6 +575,24 @@ try {
   assert.equal(activations,3);
   assert.equal(click().defaultPrevented,true);
   pointer('pointerup',canvas,{...touch,pointerId:1});
+  binding();
+  control.setAttribute('aria-disabled','true');
+  let refusals=0;
+  action={...action,ownAriaDisabled:'refusal-feedback',activate:()=>{refusals++;}};
+  binding=bindHoldActions({activation:'pointer-release',guard:{gate},
+    resolve:()=>action,resolvePointer:()=>action,
+  },root);
+  pointer('pointerdown',control);
+  pointer('pointerup',control);
+  assert.equal(refusals,1);
+  assert.equal(click().defaultPrevented,true);
+  assert.equal(control.getAttribute('aria-disabled'),'true');
+  root.setAttribute('aria-disabled','true');
+  pointer('pointerdown',control);
+  pointer('pointerup',control);
+  assert.equal(refusals,1);
+  root.removeAttribute('aria-disabled');
+  control.removeAttribute('aria-disabled');
   binding();
   let retries=0, semantic;
   failure=mountLoadingFailure({onRetry:()=>{retries++;},bindHoldAction:value=>{
