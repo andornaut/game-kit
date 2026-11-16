@@ -563,6 +563,7 @@ try {
   assert.equal(activations,2);
   assert.equal(visual,null);
   pointer('pointerup',control);
+  await new Promise(resolve=>window.setTimeout(resolve,0));
   assert.equal(click().defaultPrevented,true);
   assert.equal(activations,2);
   modal.close();
