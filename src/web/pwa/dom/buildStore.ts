@@ -56,9 +56,10 @@ export interface BuildStore {
   findByHash(sha256: string): Promise<Response | undefined>;
   // Stores a verified response, which must carry BUILD_HASH_HEADER, in version's build cache.
   putFile(version: string, url: string, response: Response): Promise<void>;
-  // Deletes every build cache, and its manifest record, whose version is neither active, staged
-  // nor in liveVersions. Returns the deleted cache names.
-  reclaim(liveVersions: Iterable<string>): Promise<string[]>;
+  // Deletes every build cache, and its manifest record, whose version is neither active, staged,
+  // named by a pin nor in documentVersions. The router deletes the pins of closed clients, so a
+  // pin names a build a live window runs. Returns the deleted cache names.
+  reclaim(documentVersions: Iterable<string>): Promise<string[]>;
 }
 
 function assertVersion(version: string): void {
@@ -209,6 +210,24 @@ export function createBuildStore(
     return manifest.files.filter((_file, index) => absent[index]);
   };
 
+  const pinnedVersions = async (): Promise<Map<string, string>> => {
+    const cache = await records();
+    const pins = (await cache.keys())
+      .map((request) => keyPath(request.url))
+      .filter((path) => path.startsWith(PIN_PREFIX));
+    const versions = await Promise.all(
+      pins.map(async (path) => versionOf(await cache.match(keyOf(path)))),
+    );
+    const result = new Map<string, string>();
+    pins.forEach((path, index) => {
+      const version = versions[index];
+      if (version !== undefined) {
+        result.set(decodeURIComponent(path.slice(PIN_PREFIX.length)), version);
+      }
+    });
+    return result;
+  };
+
   return {
     complete: async (manifest) => (await missing(manifest)).length === 0,
 
@@ -237,23 +256,7 @@ export function createBuildStore(
 
     missing,
 
-    pinnedVersions: async () => {
-      const cache = await records();
-      const pins = (await cache.keys())
-        .map((request) => keyPath(request.url))
-        .filter((path) => path.startsWith(PIN_PREFIX));
-      const versions = await Promise.all(
-        pins.map(async (path) => versionOf(await cache.match(keyOf(path)))),
-      );
-      const result = new Map<string, string>();
-      pins.forEach((path, index) => {
-        const version = versions[index];
-        if (version !== undefined) {
-          result.set(decodeURIComponent(path.slice(PIN_PREFIX.length)), version);
-        }
-      });
-      return result;
-    },
+    pinnedVersions,
 
     putFile: async (version, url, response) => {
       assertVersion(version);
@@ -281,12 +284,13 @@ export function createBuildStore(
       };
     },
 
-    reclaim: async (liveVersions) => {
-      const [active, staged] = await Promise.all([
+    reclaim: async (documentVersions) => {
+      const [active, staged, pins] = await Promise.all([
         readVersion(keyOf(ACTIVE_RECORD_PATH)),
         readVersion(keyOf(STAGED_RECORD_PATH)),
+        pinnedVersions(),
       ]);
-      const kept = new Set<string>(liveVersions);
+      const kept = new Set<string>([...documentVersions, ...pins.values()]);
       for (const version of [active, staged]) {
         if (version !== undefined) {
           kept.add(version);

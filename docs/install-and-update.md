@@ -61,7 +61,7 @@ Chibi and Archie use an ungrouped precache. Defects 1, 7 and 10 (group store and
 - `dom/buildStore` (new): cache layout, records, reclaim.
 - `dom/buildInstaller` (new): fetch, verify, store, resume.
 - `dom/launch` (new): the one loader, silent launch activation and in-session Update now; replaces `startOfflinePlay` and `UpdateFlow`.
-- `dom/serviceWorker` (router only): serves the build named by `active` or the client's pin; `skipWaiting` plus `clients.claim`; downloads nothing. A client with no pin is served `active` instead of throwing (C7).
+- `dom/serviceWorker` (router only): serves the build named by `active` or the client's pin; `skipWaiting` plus `clients.claim`; downloads nothing. A client with no pin is served `active` instead of throwing (C7). It deletes the pins of closed clients at activate and on navigation at most once a minute, sparing pins written within that minute.
 
 **Driver (decided).** The page installer drives the download, under the visible loading screen: 6 lanes, default priority, 3 attempts, 30 s inactivity timeout, no SW event held open. Updates use the same installer in background mode: 2 lanes, `low`, paused while hidden.
 

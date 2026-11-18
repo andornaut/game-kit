@@ -300,6 +300,33 @@ async function deleteLegacy(storage: LaunchStorage, policy: BuildPolicy): Promis
   );
 }
 
+// The router's registration options. updateViaCache "none" fetches each router update past the
+// HTTP cache.
+const ROUTER_REGISTRATION = { scope: "/", updateViaCache: "none" } as const;
+
+// What registerRouter needs of navigator.serviceWorker.
+export type RouterContainer = Pick<LaunchContainer, "register">;
+
+// Registers the router from a site page, such as "/", that does not run the game launch, so an app
+// installed from that page is served by the router, offline too once a launch has installed a
+// build. Pass navigator.serviceWorker, which is undefined where the browser has no service
+// workers. Resolves whether the router registered; a failure is logged, never thrown.
+export async function registerRouter(
+  container: RouterContainer | undefined,
+  serviceWorkerUrl: string,
+): Promise<boolean> {
+  if (container === undefined) {
+    return false;
+  }
+  try {
+    await container.register(serviceWorkerUrl, ROUTER_REGISTRATION);
+    return true;
+  } catch (error) {
+    console.warn("Service worker registration failed; the app may not open offline.", error);
+    return false;
+  }
+}
+
 // The browser's page, store and installer for policy, or undefined where the browser has no
 // service workers or Cache Storage; the game then plays from the network.
 export function browserLaunchContext(policy: BuildPolicy): LaunchContext | undefined {
@@ -428,8 +455,7 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     return manifest;
   };
 
-  const register = () =>
-    page.container.register(options.serviceWorkerUrl, { scope: "/", updateViaCache: "none" });
+  const register = () => page.container.register(options.serviceWorkerUrl, ROUTER_REGISTRATION);
 
   const controlledByRouter = () => page.container.controller?.scriptURL === routerUrl;
 
@@ -579,11 +605,11 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     return "play";
   };
 
-  // K4 reclaim and legacy cleanup, then the launch update check.
+  // K4 reclaim and legacy cleanup, then the launch update check. Reclaim keeps the active and
+  // staged builds, each build a live window's pin names and this document's build.
   const afterLaunch = async () => {
     try {
-      const pinned = [...(await store.pinnedVersions()).values()];
-      await store.reclaim(documentVersion === undefined ? pinned : [...pinned, documentVersion]);
+      await store.reclaim(documentVersion === undefined ? [] : [documentVersion]);
     } catch (error) {
       console.warn("Could not reclaim unused builds.", error);
     }

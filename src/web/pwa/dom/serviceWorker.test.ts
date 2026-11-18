@@ -11,7 +11,8 @@ import {
   recordsCacheName,
 } from "../buildContract.ts";
 import type { VerifiedJsonBody } from "../verifiedJsonBody.ts";
-import { runServiceWorker } from "./serviceWorker.ts";
+import { createBuildStore } from "./buildStore.ts";
+import { PIN_PRUNE_MS, runServiceWorker } from "./serviceWorker.ts";
 
 const ORIGIN = "https://game.test";
 const POLICY: BuildPolicy = { cacheNamePrefix: "game-", hashedAssetPrefix: "/assets/" };
@@ -129,10 +130,13 @@ function startWorker(server: FakeServer, storage = new FakeCaches()) {
   vi.stubGlobal("fetch", fetches);
   const skipWaiting = vi.fn(() => Promise.resolve());
   const claim = vi.fn(() => Promise.resolve());
+  // The open clients. A client that makes a request is open until close() removes it.
+  const live = new Set<string>();
+  const matchAll = vi.fn(() => Promise.resolve([...live].map((id) => ({ id }))));
   vi.stubGlobal("self", {
     addEventListener: (type: string, listener: (event: unknown) => void) =>
       listeners.set(type, listener),
-    clients: { claim },
+    clients: { claim, matchAll },
     location: { origin: ORIGIN },
     skipWaiting,
   });
@@ -185,6 +189,11 @@ function startWorker(server: FakeServer, storage = new FakeCaches()) {
     request: Request,
     { clientId = "", resultingClientId = "" } = {},
   ): Promise<Response | undefined> => {
+    for (const id of [clientId, resultingClientId]) {
+      if (id !== "") {
+        live.add(id);
+      }
+    }
     let answer: Promise<Response> | undefined;
     const extended: Promise<unknown>[] = [];
     listeners.get("fetch")?.({
@@ -211,10 +220,12 @@ function startWorker(server: FakeServer, storage = new FakeCaches()) {
     respond(new Request(ORIGIN + path, init), { clientId });
   return {
     claim,
+    close: (id: string) => live.delete(id),
     fetches,
     get,
     lifecycle,
     listeners,
+    matchAll,
     navigate,
     readRecord,
     records,
@@ -245,6 +256,84 @@ describe("runServiceWorker's lifecycle", () => {
     expect(worker.claim).toHaveBeenCalledOnce();
     expect(worker.fetches).not.toHaveBeenCalled();
     expect([...worker.storage.named.keys()]).toEqual([]);
+  });
+});
+
+describe("pins", () => {
+  it("deletes the pins of closed clients at activate and keeps open clients' pins", async () => {
+    const worker = startWorker(new FakeServer(V1));
+    await worker.setRecord(pinKey("open"), "v1");
+    await worker.setRecord(pinKey("closed"), "v1");
+    await worker.setRecord(ACTIVE, "v1");
+    worker.matchAll.mockResolvedValueOnce([{ id: "open" }]);
+    await worker.lifecycle("activate");
+    expect(worker.matchAll).toHaveBeenCalledExactlyOnceWith({
+      includeUncontrolled: true,
+      type: "all",
+    });
+    expect(await worker.readRecord(pinKey("open"))).toBe("v1");
+    expect(await worker.readRecord(pinKey("closed"))).toBeUndefined();
+    expect(await worker.readRecord(ACTIVE)).toBe("v1");
+    await worker.lifecycle("activate");
+    expect(await worker.readRecord(pinKey("open"))).toBeUndefined();
+  });
+
+  it("prunes on navigation at most once a minute and spares a pin it wrote within that time", async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const worker = startWorker(new FakeServer(V1));
+    await worker.saveBuild(manifestOf("v1", V1), V1);
+    await worker.setRecord(ACTIVE, "v1");
+    await worker.navigate("/play/", "a");
+    expect(worker.matchAll).toHaveBeenCalledOnce();
+    // A navigation's client is not listed until its document runs.
+    worker.close("a");
+    await worker.navigate("/play/", "b");
+    expect(worker.matchAll).toHaveBeenCalledOnce();
+    worker.close("b");
+    now += PIN_PRUNE_MS - 1;
+    await worker.navigate("/play/", "c");
+    expect(worker.matchAll).toHaveBeenCalledOnce();
+    worker.close("c");
+    now += 1;
+    await worker.navigate("/play/", "d");
+    expect(worker.matchAll).toHaveBeenCalledTimes(2);
+    expect(await worker.readRecord(pinKey("a"))).toBeUndefined();
+    expect(await worker.readRecord(pinKey("b"))).toBeUndefined();
+    expect(await worker.readRecord(pinKey("c"))).toBe("v1");
+    expect(await worker.readRecord(pinKey("d"))).toBe("v1");
+    await worker.get("/app.js", "c");
+    expect(worker.matchAll).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets the page reclaim an old build once its windows close, and never while one pins it", async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const worker = startWorker(new FakeServer({}));
+    const store = createBuildStore(
+      { caches: worker.storage as unknown as CacheStorage, origin: ORIGIN },
+      POLICY,
+    );
+    await worker.saveBuild(manifestOf("v1", V1), V1);
+    await worker.setRecord(ACTIVE, "v1");
+    expect(await (await worker.navigate("/play/", "old"))!.text()).toBe("page v1");
+    await worker.saveBuild(manifestOf("v2", V2), V2);
+    await worker.setRecord(STAGED, "v2");
+    expect(await (await worker.navigate("/play/", "new"))!.text()).toBe("page v2");
+    expect(await store.reclaim(["v2"])).toEqual([]);
+    now += PIN_PRUNE_MS;
+    await worker.lifecycle("activate");
+    expect(await store.reclaim(["v2"])).toEqual([]);
+    expect(await (await worker.get("/app.js", "old"))!.text()).toBe("app v1");
+
+    worker.close("old");
+    now += PIN_PRUNE_MS;
+    await worker.navigate("/play/", "next");
+    expect(await worker.readRecord(pinKey("old"))).toBeUndefined();
+    expect(await store.reclaim(["v2"])).toEqual([buildCacheName(POLICY, "v1")]);
+    expect(await store.readManifest("v1")).toBeUndefined();
+    expect(await worker.readRecord(pinKey("new"))).toBe("v2");
+    expect(await (await worker.get("/app.js", "new"))!.text()).toBe("app v2");
   });
 });
 

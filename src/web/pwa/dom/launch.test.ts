@@ -28,6 +28,7 @@ import {
   type LaunchPage,
   legacyGroupDatabaseName,
   legacyRoutingCacheName,
+  registerRouter,
   type RequiredUpdateState,
   type SessionLike,
   UPDATE_CHECK_MS,
@@ -69,7 +70,6 @@ class FakeStore implements BuildStore {
   // Each version's stored files by URL.
   readonly files = new Map<string, Map<string, Response>>();
   missingFiles: BuildFile[] | undefined;
-  pinned: string[] = [];
   readonly calls: string[] = [];
 
   async readState(): Promise<BuildState> {
@@ -100,12 +100,12 @@ class FakeStore implements BuildStore {
   async complete(manifest: BuildManifest) {
     return this.completeVersions.has(manifest.version);
   }
-  async reclaim(live: Iterable<string>) {
-    this.calls.push(`reclaim ${[...live].join(",")}`);
+  async reclaim(documentVersions: Iterable<string>) {
+    this.calls.push(`reclaim ${[...documentVersions].join(",")}`);
     return [];
   }
   async pinnedVersions() {
-    return new Map(this.pinned.map((version, index) => [`client ${index}`, version]));
+    return new Map<string, string>();
   }
   async putFile(version: string, url: string, response: Response) {
     const files = this.files.get(version) ?? new Map<string, Response>();
@@ -488,12 +488,11 @@ describe("launch with an active build", () => {
   it("plays at once without fetching, then reclaims and checks for an update", async () => {
     const f = fixture();
     f.deploy(V1);
-    f.store.pinned = ["9999"];
     f.store.state = { active: "aaaa" };
     const result = f.launch.run();
     await expect(result).resolves.toBe("play");
     await settle();
-    expect(f.store.calls[0]).toBe("reclaim 9999,aaaa");
+    expect(f.store.calls[0]).toBe("reclaim aaaa");
     expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([BUILD_POINTER_URL]);
     expect(f.installBuild).not.toHaveBeenCalled();
     expect(f.offers).toEqual([]);
@@ -722,4 +721,25 @@ it("dispose stops checks and listeners", async () => {
   f.visibility.set("visible");
   await settle();
   expect(f.fetch.mock.calls.length).toBe(fetches);
+});
+
+describe("registerRouter", () => {
+  it("registers the router for scope / past the HTTP cache, without fetching or installing", async () => {
+    const container = new FakeContainer();
+    await expect(registerRouter(container, ROUTER)).resolves.toBe(true);
+    expect(container.register).toHaveBeenCalledExactlyOnceWith(ROUTER, {
+      scope: "/",
+      updateViaCache: "none",
+    });
+  });
+
+  it("resolves false where the browser has no service workers or registration fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await expect(registerRouter(undefined, ROUTER)).resolves.toBe(false);
+    const container = new FakeContainer();
+    container.register.mockRejectedValue(new Error("denied"));
+    await expect(registerRouter(container, ROUTER)).resolves.toBe(false);
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockRestore();
+  });
 });

@@ -206,9 +206,9 @@ describe("build caches", () => {
     expect(await store.findByHash(sha("a"))).toBeUndefined();
   });
 
-  it("reclaims builds neither active, staged nor live, and nothing else", async () => {
+  it("reclaims builds neither active, staged, pinned nor the document's, and nothing else", async () => {
     const { caches, store } = setup();
-    for (const version of ["v1", "v2", "v3", "v4", "v5"]) {
+    for (const version of ["v1", "v2", "v3", "v4", "v5", "v6"]) {
       // eslint-disable-next-line no-await-in-loop
       await store.saveManifest(manifestOf(version, {}));
       // eslint-disable-next-line no-await-in-loop
@@ -219,15 +219,16 @@ describe("build caches", () => {
     await store.setActive("v2");
     await store.setStaged("v3");
     await store.writePin("client", "v4");
-    expect(await store.reclaim(["v4"])).toEqual([
+    expect(await store.reclaim(["v5"])).toEqual([
       buildCacheName(policy, "v1"),
-      buildCacheName(policy, "v5"),
+      buildCacheName(policy, "v6"),
     ]);
     expect([...caches.named.keys()].sort()).toEqual(
       [
         "game-build-v2",
         "game-build-v3",
         "game-build-v4",
+        "game-build-v5",
         "game-legacy-v0",
         recordsCacheName(policy),
         "other-build-v1",
@@ -236,5 +237,12 @@ describe("build caches", () => {
     expect(await store.readManifest("v1")).toBeUndefined();
     expect(await store.readManifest("v4")).toBeDefined();
     expect(await store.readPin("client")).toBe("v4");
+    // The router deletes the pin once its window closes.
+    await store.deletePin("client");
+    expect(await store.reclaim([])).toEqual([
+      buildCacheName(policy, "v4"),
+      buildCacheName(policy, "v5"),
+    ]);
+    expect(await store.readManifest("v4")).toBeUndefined();
   });
 });

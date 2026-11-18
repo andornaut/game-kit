@@ -2,8 +2,10 @@
 // and vite/precachePlugin builds the entry to one classic script. The page downloads, verifies
 // and stores each build and its manifest, and writes the active and staged records
 // (buildContract). The worker downloads nothing: it serves each window the build its pin names,
-// or the active build, from that build's cache. The worker runs in a ServiceWorkerGlobalScope,
-// which the DOM typings do not describe, so the few members it uses are declared here.
+// or the active build, from that build's cache, and deletes the pins of closed clients, so the
+// page's reclaim keeps only builds a live window runs. The worker runs in a
+// ServiceWorkerGlobalScope, which the DOM typings do not describe, so the few members it uses are
+// declared here.
 //
 // CLEANUP (added 2026-11-18): remove once all three games deploy the router. Version caches and
 // routing records an earlier kit's worker wrote are left in place for the page to migrate and
@@ -47,7 +49,13 @@ interface FetchRequestEvent extends LifecycleEvent {
 }
 
 interface WorkerScope {
-  readonly clients: { claim(): Promise<void> };
+  readonly clients: {
+    claim(): Promise<void>;
+    matchAll(options: {
+      includeUncontrolled: boolean;
+      type: "all";
+    }): Promise<readonly { readonly id: string }[]>;
+  };
   addEventListener(type: "activate" | "install", listener: (event: LifecycleEvent) => void): void;
   addEventListener(type: "fetch", listener: (event: FetchRequestEvent) => void): void;
   readonly location: { readonly origin: string };
@@ -63,6 +71,12 @@ const versionRecord = (version: string) =>
 
 // How many cache entries a completeness check reads at once.
 const CHECK_CONCURRENCY = 16;
+
+// The shortest time between pin prunes that navigations start. A pin this worker wrote within it
+// is never pruned, because a navigation's client is not listed until its document runs.
+export const PIN_PRUNE_MS = 60_000;
+
+const PIN_PREFIX = pinRecordPath("");
 
 interface Build {
   readonly version: string;
@@ -143,7 +157,8 @@ function parseBuild(version: string, value: unknown): Build | undefined {
 // Serves each navigation and same-origin GET from the build its document is pinned to, or the
 // active build for a document with no pin, and pins the document to the build that served it.
 // A navigation with a complete staged build first promotes it to active. Without an active
-// build, and for a URL the build does not list, the request goes to the network.
+// build, and for a URL the build does not list, the request goes to the network. Pins of closed
+// clients are deleted at activate and, at most once per PIN_PRUNE_MS, on navigation.
 export function runServiceWorker(policy: BuildPolicy): void {
   const worker = self as unknown as WorkerScope;
   // Manifests are immutable per version, and a pin never changes for its client.
@@ -194,9 +209,67 @@ export function runServiceWorker(policy: BuildPolicy): void {
     return version;
   };
 
+  // When this worker wrote each pin, so a prune spares a client that is not listed yet.
+  const pinnedAt = new Map<string, number>();
   const writePin = async (records: Cache, clientId: string, version: string) => {
     await records.put(pinRecordPath(clientId), versionRecord(version));
     pins.set(clientId, version);
+    pinnedAt.set(clientId, Date.now());
+  };
+
+  // Deletes every pin whose client is gone. Worker clients are listed too, since the router pins
+  // every client that requests a build file.
+  const prunePins = async () => {
+    const name = recordsCacheName(policy);
+    if (!(await caches.has(name))) {
+      return;
+    }
+    const records = await caches.open(name);
+    const live = new Set(
+      (await worker.clients.matchAll({ includeUncontrolled: true, type: "all" })).map(
+        (client) => client.id,
+      ),
+    );
+    const now = Date.now();
+    for (const [clientId, time] of pinnedAt) {
+      if (now - time >= PIN_PRUNE_MS) {
+        pinnedAt.delete(clientId);
+      }
+    }
+    await Promise.all(
+      (await records.keys()).map(async (request) => {
+        const path = new URL(request.url).pathname;
+        if (!path.startsWith(PIN_PREFIX)) {
+          return;
+        }
+        const clientId = decodeURIComponent(path.slice(PIN_PREFIX.length));
+        if (live.has(clientId) || pinnedAt.has(clientId)) {
+          return;
+        }
+        pins.delete(clientId);
+        await records.delete(request);
+      }),
+    );
+  };
+
+  // Prunes at once with force, as at activate; otherwise at most once per PIN_PRUNE_MS.
+  let lastPrune: number | undefined;
+  let pruning: Promise<void> | undefined;
+  const prune = (force: boolean): Promise<void> | undefined => {
+    const now = Date.now();
+    if (
+      pruning !== undefined ||
+      (!force && lastPrune !== undefined && now - lastPrune < PIN_PRUNE_MS)
+    ) {
+      return pruning;
+    }
+    lastPrune = now;
+    pruning = prunePins()
+      .catch(() => undefined)
+      .finally(() => {
+        pruning = undefined;
+      });
+    return pruning;
   };
 
   // Complete: every file of the manifest is stored with its verified digest in the header.
@@ -368,12 +441,18 @@ export function runServiceWorker(policy: BuildPolicy): void {
   };
 
   worker.addEventListener("install", (event) => event.waitUntil(worker.skipWaiting()));
-  worker.addEventListener("activate", (event) => event.waitUntil(worker.clients.claim()));
+  worker.addEventListener("activate", (event) =>
+    event.waitUntil(worker.clients.claim().then(() => prune(true))),
+  );
   worker.addEventListener("fetch", (event) => {
     const { request } = event;
     if (request.method !== "GET" || new URL(request.url).origin !== worker.location.origin) {
       return;
     }
     event.respondWith(route(event));
+    const pruned = request.mode === "navigate" ? prune(false) : undefined;
+    if (pruned !== undefined) {
+      event.waitUntil(pruned);
+    }
   });
 }
