@@ -160,6 +160,8 @@
     "./runtime/web/pwa/dom/assetGroups": "./src/web/pwa/dom/assetGroups.ts",
     "./runtime/web/pwa/dom/audioUnlock": "./src/web/pwa/dom/audioUnlock.ts",
     "./runtime/web/pwa/dom/backNavigation": "./src/web/pwa/dom/backNavigation.ts",
+    "./runtime/web/pwa/dom/buildInstaller": "./src/web/pwa/dom/buildInstaller.ts",
+    "./runtime/web/pwa/dom/buildStore": "./src/web/pwa/dom/buildStore.ts",
     "./runtime/web/pwa/dom/downloadProgress": "./src/web/pwa/dom/downloadProgress.ts",
     "./runtime/web/pwa/dom/exitApp": "./src/web/pwa/dom/exitApp.ts",
     "./runtime/web/pwa/dom/installButton": "./src/web/pwa/dom/installButton.ts",

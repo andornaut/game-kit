@@ -14,6 +14,8 @@
     "src/web/pwa/dom/assetGroups.ts",
     "src/web/pwa/dom/audioUnlock.ts",
     "src/web/pwa/dom/backNavigation.ts",
+    "src/web/pwa/dom/buildInstaller.ts",
+    "src/web/pwa/dom/buildStore.ts",
     "src/web/pwa/dom/downloadProgress.ts",
     "src/web/pwa/dom/exitApp.ts",
     "src/web/pwa/dom/groupStore.ts",
