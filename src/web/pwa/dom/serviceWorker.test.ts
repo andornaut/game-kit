@@ -555,6 +555,26 @@ describe("verified JSON", () => {
     expect(stored.headers.has("content-encoding")).toBe(false);
   });
 
+  it.each([
+    ["a legacy family, no response URL", false, ""],
+    ["a legacy family, its cache key as the response URL", false, `${ORIGIN}/data/a.json`],
+    ["a data profile, no response URL", true, ""],
+    ["a data profile, its cache key as the response URL", true, `${ORIGIN}/data/a.json`],
+  ])(
+    "serves a stored entry the installer wrote, with only its type and digest, for %s",
+    async (_name, profile, url) => {
+      const { server, worker } = await start(profile);
+      const cache = await worker.storage.open(buildCacheName(POLICY, "v1"));
+      const stored = new Response(BODY, {
+        headers: { [BUILD_HASH_HEADER]: sha256(BODY), "content-type": "application/json" },
+      });
+      Object.defineProperty(stored, "url", { value: url });
+      cache.entries.set("/data/a.json", stored);
+      expect(await (await worker.get("/data/a.json", "doc"))!.text()).toBe(BODY);
+      expect(server.fetched).toEqual([]);
+    },
+  );
+
   it("serves a legacy family's stored response and rejects mismatched network bytes", async () => {
     const { server, worker } = await start(false, { omit: ["/data/b.json"] });
     expect(await (await worker.get("/data/a.json", "doc"))!.text()).toBe(BODY);

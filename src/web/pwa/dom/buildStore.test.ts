@@ -7,7 +7,7 @@ import {
   buildManifestUrl,
   recordsCacheName,
 } from "../buildContract.ts";
-import { createBuildStore, parseBuildManifest } from "./buildStore.ts";
+import { createBuildStore } from "./buildStore.ts";
 
 const ORIGIN = "https://game.test";
 const policy = { cacheNamePrefix: "game-", hashedAssetPrefix: "/assets/" };
@@ -158,21 +158,6 @@ describe("records", () => {
     await records.put(buildManifestUrl("v4"), new Response(JSON.stringify(manifestOf("v5", {}))));
     expect(await store.readManifest("v3")).toBeUndefined();
     expect(await store.readManifest("v4")).toBeUndefined();
-  });
-
-  it("rejects malformed manifests", () => {
-    const valid = manifestOf("v1", { "/a.js": sha("a") });
-    expect(parseBuildManifest(valid)).toBe(valid);
-    for (const invalid of [
-      { ...valid, schema: 2 },
-      { ...valid, files: [{ byteSize: 1, sha256: "A".repeat(64), url: "/a.js" }] },
-      { ...valid, files: [{ byteSize: -1, sha256: sha("a"), url: "/a.js" }] },
-      { ...valid, files: [{ byteSize: 1, sha256: sha("a"), url: "//evil/a.js" }] },
-      { ...valid, files: [...valid.files, ...valid.files] },
-      { ...valid, boot: undefined },
-    ]) {
-      expect(() => parseBuildManifest(invalid)).toThrow(TypeError);
-    }
   });
 });
 

@@ -4,11 +4,11 @@
 // record. Callers write a record only after they have verified what it names. There is no "none"
 // value: an absent active, staged or pin has no entry.
 //
-// Record keys are same-origin absolute URLs: active at /.game-kit/records/active, staged at
-// /.game-kit/records/staged and a pin at /.game-kit/records/pin/<encodeURIComponent(clientId)>,
-// each with the JSON body {"version": string}; a manifest at buildManifestUrl(version), with the
-// BuildManifest JSON as its body. File entries use the same-origin absolute URL of each file.
+// Record keys are the same-origin absolute URLs of ACTIVE_RECORD_PATH, STAGED_RECORD_PATH,
+// pinRecordPath(clientId) and buildManifestUrl(version). File entries use the same-origin
+// absolute URL of each file.
 import {
+  ACTIVE_RECORD_PATH,
   BUILD_HASH_HEADER,
   buildCacheName,
   type BuildFile,
@@ -16,12 +16,19 @@ import {
   buildManifestUrl,
   type BuildPolicy,
   type BuildState,
+  pinRecordPath,
   recordsCacheName,
+  STAGED_RECORD_PATH,
 } from "../buildContract.ts";
+import {
+  isBuildVersion,
+  parseBuildManifest,
+  parseVersionRecord,
+  RECORD_CONTENT_TYPE,
+  versionRecordText,
+} from "../buildRecords.ts";
 
-const ACTIVE_PATH = "/.game-kit/records/active";
-const STAGED_PATH = "/.game-kit/records/staged";
-const PIN_PREFIX = "/.game-kit/records/pin/";
+const PIN_PREFIX = pinRecordPath("");
 const MANIFEST_PATH = /^\/\.game-kit\/manifest-([^/]+)\.json$/;
 
 // How many entries a metadata scan reads at once.
@@ -55,7 +62,7 @@ export interface BuildStore {
 }
 
 function assertVersion(version: string): void {
-  if (typeof version !== "string" || version === "" || /[\s/]/.test(version)) {
+  if (!isBuildVersion(version)) {
     throw new TypeError(`Invalid build version: ${String(version)}`);
   }
 }
@@ -73,8 +80,8 @@ function keyPath(url: string): string {
 }
 
 const versionRecord = (version: string) =>
-  new Response(JSON.stringify({ version }), {
-    headers: { "content-type": "application/json; charset=utf-8" },
+  new Response(versionRecordText(version), {
+    headers: { "content-type": RECORD_CONTENT_TYPE },
   });
 
 // The version a record names, or undefined for an absent or unreadable record.
@@ -83,8 +90,7 @@ async function versionOf(response: Response | undefined): Promise<string | undef
     return undefined;
   }
   try {
-    const { version } = (await response.json()) as { version?: unknown };
-    return typeof version === "string" && version !== "" ? version : undefined;
+    return parseVersionRecord(await response.json());
   } catch {
     return undefined;
   }
@@ -110,46 +116,6 @@ async function mapBounded<T, R>(
   return results;
 }
 
-// Checks the shape of a manifest read from a record or the network. Throws TypeError.
-export function parseBuildManifest(value: unknown): BuildManifest {
-  const manifest = value as BuildManifest;
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    manifest.schema !== 1 ||
-    typeof manifest.version !== "string" ||
-    manifest.version === "" ||
-    typeof manifest.buildId !== "string" ||
-    !Array.isArray(manifest.files) ||
-    typeof manifest.sounds !== "object" ||
-    manifest.sounds === null ||
-    !Array.isArray(manifest.boot) ||
-    (manifest.verifiedJsonBodies !== undefined && !Array.isArray(manifest.verifiedJsonBodies))
-  ) {
-    throw new TypeError("Invalid build manifest");
-  }
-  assertVersion(manifest.version);
-  const urls = new Set<string>();
-  for (const file of manifest.files) {
-    if (
-      typeof file !== "object" ||
-      file === null ||
-      typeof file.url !== "string" ||
-      !file.url.startsWith("/") ||
-      file.url.startsWith("//") ||
-      urls.has(file.url) ||
-      typeof file.sha256 !== "string" ||
-      !SHA256_HEX.test(file.sha256) ||
-      !Number.isSafeInteger(file.byteSize) ||
-      file.byteSize < 0
-    ) {
-      throw new TypeError(`Invalid build manifest file: ${String(file?.url)}`);
-    }
-    urls.add(file.url);
-  }
-  return manifest;
-}
-
 export function createBuildStore(
   context: {
     readonly caches: CacheStorage;
@@ -163,7 +129,7 @@ export function createBuildStore(
     throw new TypeError(`Invalid origin: ${origin}`);
   }
   const keyOf = (path: string) => new URL(path, origin).href;
-  const pinKey = (clientId: string) => keyOf(PIN_PREFIX + encodeURIComponent(clientId));
+  const pinKey = (clientId: string) => keyOf(pinRecordPath(clientId));
   const recordsName = recordsCacheName(policy);
   const buildPrefix = buildCacheName(policy, "");
   const records = () => caches.open(recordsName);
@@ -306,8 +272,8 @@ export function createBuildStore(
 
     readState: async () => {
       const [active, staged] = await Promise.all([
-        readVersion(keyOf(ACTIVE_PATH)),
-        readVersion(keyOf(STAGED_PATH)),
+        readVersion(keyOf(ACTIVE_RECORD_PATH)),
+        readVersion(keyOf(STAGED_RECORD_PATH)),
       ]);
       return {
         ...(active === undefined ? {} : { active }),
@@ -317,8 +283,8 @@ export function createBuildStore(
 
     reclaim: async (liveVersions) => {
       const [active, staged] = await Promise.all([
-        readVersion(keyOf(ACTIVE_PATH)),
-        readVersion(keyOf(STAGED_PATH)),
+        readVersion(keyOf(ACTIVE_RECORD_PATH)),
+        readVersion(keyOf(STAGED_RECORD_PATH)),
       ]);
       const kept = new Set<string>(liveVersions);
       for (const version of [active, staged]) {
@@ -355,7 +321,7 @@ export function createBuildStore(
       ).put(
         keyOf(buildManifestUrl(manifest.version)),
         new Response(JSON.stringify(manifest), {
-          headers: { "content-type": "application/json; charset=utf-8" },
+          headers: { "content-type": RECORD_CONTENT_TYPE },
         }),
       );
       hashIndex = undefined;
@@ -363,16 +329,16 @@ export function createBuildStore(
 
     setActive: async (version) => {
       assertVersion(version);
-      await writeVersion(keyOf(ACTIVE_PATH), version);
+      await writeVersion(keyOf(ACTIVE_RECORD_PATH), version);
     },
 
     setStaged: async (version) => {
       if (version === undefined) {
-        await deleteKey(keyOf(STAGED_PATH));
+        await deleteKey(keyOf(STAGED_RECORD_PATH));
         return;
       }
       assertVersion(version);
-      await writeVersion(keyOf(STAGED_PATH), version);
+      await writeVersion(keyOf(STAGED_RECORD_PATH), version);
     },
 
     writePin: async (clientId, version) => {

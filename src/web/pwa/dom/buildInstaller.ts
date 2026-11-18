@@ -4,8 +4,10 @@
 // header. Only missing files are fetched, so a fresh call resumes an interrupted install. The
 // caller writes active or staged only after "complete".
 import { BUILD_HASH_HEADER, type BuildFile, type BuildManifest } from "../buildContract.ts";
-import { validateVerifiedJsonBodies, type VerifiedJsonBody } from "../verifiedJsonBody.ts";
+import { verifiedJsonFamilies } from "../buildRecords.ts";
+import type { VerifiedJsonBody } from "../verifiedJsonBody.ts";
 import type { BuildStore } from "./buildStore.ts";
+import { isJsonContentType, safeJsonSource } from "./verifiedJsonSource.ts";
 
 export type BuildInstallFailure = "network" | "quota" | "verification";
 
@@ -79,64 +81,6 @@ const PAUSE_POLL_MS = 1000;
 // A fetched body that does not match the pinned manifest.
 class BodyChanged extends Error {}
 
-const JSON_CONTENT_TYPE = /^application\/json(?:\s*;\s*charset\s*=\s*(?:"utf-8"|utf-8))?\s*$/i;
-
-// Response headers that change what a verified JSON body means or which cached response it is.
-// Any other header, such as a CDN's transport or diagnostic headers (priority, server-timing),
-// carries no body semantics and is ignored. content-type, cache-control, vary, content-encoding,
-// content-length and x-content-type-options are checked by value below.
-const JSON_SEMANTIC_HEADERS = [
-  "clear-site-data",
-  "content-disposition",
-  "content-location",
-  "content-range",
-  "refresh",
-  "set-cookie",
-] as const;
-
-// The verified JSON response rules the router applies, for a fetched response of url.
-function safeJsonSource(
-  origin: string,
-  family: VerifiedJsonBody,
-  url: string,
-  response: Response,
-): boolean {
-  const { headers } = response;
-  if (
-    response.status !== 200 ||
-    response.redirected ||
-    response.url === "" ||
-    !JSON_CONTENT_TYPE.test(headers.get("content-type") ?? "") ||
-    JSON_SEMANTIC_HEADERS.some((name) => headers.has(name)) ||
-    /(?:^|,)\s*(?:private|no-store)(?:\s|,|=|$)/i.test(headers.get("cache-control") ?? "") ||
-    (headers.get("vary") ?? "")
-      .split(",")
-      .some((name) => name.trim() !== "" && name.trim().toLowerCase() !== "accept-encoding") ||
-    (headers.has("x-content-type-options") &&
-      headers.get("x-content-type-options")?.toLowerCase() !== "nosniff")
-  ) {
-    return false;
-  }
-  const encoding = headers.get("content-encoding")?.toLowerCase();
-  const encodings = ["identity", "gzip", "br", "deflate"];
-  if (family.responseProfile === "fetch-json-data-v1") {
-    encodings.push("zstd");
-  }
-  if (encoding !== undefined && !encodings.includes(encoding)) {
-    return false;
-  }
-  const length = headers.get("content-length");
-  if (
-    length !== null &&
-    (!/^\d+$/.test(length) ||
-      !Number.isSafeInteger(Number(length)) ||
-      ((encoding === undefined || encoding === "identity") && Number(length) !== family.byteSize))
-  ) {
-    return false;
-  }
-  return new URL(response.url).origin === origin && response.url === new URL(url, origin).href;
-}
-
 const digestHex = (digest: ArrayBuffer) =>
   [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
@@ -150,39 +94,14 @@ function positiveInteger(name: string, value: number): number {
   return value;
 }
 
-// Each verified JSON URL's family, after checking that the families describe the manifest's own
-// files and digests.
+// Each verified JSON URL's family. Throws a BuildInstallError when the families do not describe
+// the manifest's own files and digests.
 function verifiedFamilies(manifest: BuildManifest): Map<string, VerifiedJsonBody> {
-  const byUrl = new Map<string, VerifiedJsonBody>();
-  if (manifest.verifiedJsonBodies === undefined) {
-    return byUrl;
-  }
-  const files = new Map(manifest.files.map((file) => [file.url, file]));
-  let families: VerifiedJsonBody[];
   try {
-    families = validateVerifiedJsonBodies(
-      {
-        byteSizes: Object.fromEntries(manifest.files.map((file) => [file.url, file.byteSize])),
-        urls: [...files.keys()],
-      },
-      manifest.verifiedJsonBodies,
-    );
+    return verifiedJsonFamilies(manifest);
   } catch (error) {
     throw new BuildInstallError("verification", "Invalid verified JSON families", undefined, error);
   }
-  for (const family of families) {
-    for (const url of family.urls) {
-      if (files.get(url)?.sha256 !== family.sha256) {
-        throw new BuildInstallError(
-          "verification",
-          `Verified JSON digest differs from the manifest for ${url}`,
-          url,
-        );
-      }
-      byUrl.set(url, family);
-    }
-  }
-  return byUrl;
 }
 
 // Installs options.manifest's missing files into its build cache. Resolves "complete" once every
@@ -247,7 +166,7 @@ export async function installBuild(
       run.signal.throwIfAborted();
       if (
         copy === undefined ||
-        (families.has(file.url) && !JSON_CONTENT_TYPE.test(copy.headers.get("content-type") ?? ""))
+        (families.has(file.url) && !isJsonContentType(copy.headers.get("content-type")))
       ) {
         toFetch.push(file);
         continue;
