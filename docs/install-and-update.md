@@ -61,7 +61,7 @@ Chibi and Archie use an ungrouped precache. Defects 1, 7 and 10 (group store and
 - `dom/buildStore` (new): cache layout, records, reclaim.
 - `dom/buildInstaller` (new): fetch, verify, store, resume.
 - `dom/launch` (new): the one loader, silent launch activation and in-session Update now; replaces `startOfflinePlay` and `UpdateFlow`.
-- `dom/serviceWorker` (router only): serves the build named by `active` or the client's pin; `skipWaiting` plus `clients.claim`; downloads nothing. A client with no pin is served `active` instead of throwing (C7).
+- `dom/serviceWorker` (router only): serves the build named by `active` or the client's pin; `skipWaiting` plus `clients.claim`; downloads nothing. A client with no pin is served `active` instead of throwing (C7). A `no-store` request, such as the installer's, goes to the network.
 
 **Driver (decided).** The page installer drives the download, under the visible loading screen: 6 lanes, default priority, 3 attempts, 30 s inactivity timeout, no SW event held open. Updates use the same installer in background mode: 2 lanes, `low`, paused while hidden.
 
@@ -69,7 +69,7 @@ Chibi and Archie use an ungrouped precache. Defects 1, 7 and 10 (group store and
 
 **Resume.** After a reload or worker restart, the installer diffs `cache.keys()` against the manifest and fetches only absent keys, with no re-hash.
 
-**Pinned manifest (decided).** Each install reads `build.json` once and pins that manifest. If a file's bytes stop matching it because the game redeployed mid-install, the installer re-reads `build.json` and restarts on the new manifest, reusing every verified entry by hash, so only changed files are fetched again. Game deploys are unchanged.
+**Pinned manifest (decided).** Each install reads `build.json` once and pins that manifest. If a file's bytes stop matching it, or the file is gone (404 or 410), because the game redeployed mid-install, the installer re-reads `build.json` and restarts on the new manifest, reusing every verified entry by hash, so only changed files are fetched again. Game deploys are unchanged.
 
 **Progress.** One determinate value in [0, 1]. Total = bytes to fetch + bytes of boot files read afterwards (all sizes are in the manifest). The installer reports received bytes; the Phaser loader reports settled files as their bytes; the record write is the last 1%. No valueless phases.
 

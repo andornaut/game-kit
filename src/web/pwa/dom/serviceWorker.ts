@@ -140,10 +140,11 @@ function parseBuild(version: string, value: unknown): Build | undefined {
   }
 }
 
-// Serves each navigation and same-origin GET from the build its document is pinned to, or the
-// active build for a document with no pin, and pins the document to the build that served it.
-// A navigation with a complete staged build first promotes it to active. Without an active
-// build, and for a URL the build does not list, the request goes to the network.
+// Serves each navigation and same-origin GET other than a no-store one from the build its
+// document is pinned to, or the active build for a document with no pin, and pins the document to
+// the build that served it. A navigation with a complete staged build first promotes it to
+// active. Without an active build, and for a URL the build does not list, the request goes to the
+// network.
 export function runServiceWorker(policy: BuildPolicy): void {
   const worker = self as unknown as WorkerScope;
   // Manifests are immutable per version, and a pin never changes for its client.
@@ -371,7 +372,13 @@ export function runServiceWorker(policy: BuildPolicy): void {
   worker.addEventListener("activate", (event) => event.waitUntil(worker.clients.claim()));
   worker.addEventListener("fetch", (event) => {
     const { request } = event;
-    if (request.method !== "GET" || new URL(request.url).origin !== worker.location.origin) {
+    // A no-store request, such as the page installer's download of a newer build's file at a URL
+    // the active build also lists, asks for the network, so the browser answers it.
+    if (
+      request.method !== "GET" ||
+      request.cache === "no-store" ||
+      new URL(request.url).origin !== worker.location.origin
+    ) {
       return;
     }
     event.respondWith(route(event));

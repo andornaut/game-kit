@@ -347,11 +347,17 @@ describe("installBuild", () => {
     expect(error).toBeInstanceOf(BuildInstallError);
     expect(error).toMatchObject({ reason: "network", url: "/a.js" });
 
-    const missing = setup(files);
-    missing.server.files.delete("/b.js");
+    const erroring = setup(files);
+    erroring.server.files.set("/b.js", { body: "bravo", status: 500 });
     await expect(
-      missing.install({ attempts: 1, manifest: buildOf("v1", files) }),
+      erroring.install({ attempts: 1, manifest: buildOf("v1", files) }),
     ).rejects.toMatchObject({ reason: "network", url: "/b.js" });
+  });
+
+  it.each([404, 410])("resolves changed when a pinned file is gone (%i)", async (status) => {
+    const { install, server } = setup(files);
+    server.files.set("/b.js", { body: "gone", status });
+    expect(await install({ attempts: 1, manifest: buildOf("v1", files) })).toBe("changed");
   });
 
   it("aborts an attempt with no progress within inactivityMs and retries it", async () => {
