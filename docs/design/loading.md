@@ -8,5 +8,6 @@ Reference: [Required loading failures](../../README.md#required-loading-failures
 
 ## Work items
 
-| ID  | Title | Link |
-| --- | ----- | ---- |
+| ID      | Title                                                   | Link                             |
+| ------- | ------------------------------------------------------- | -------------------------------- |
+| gk-0004 | Review the page-lifetime loading commit for integration | [gk-0004.md](../work/gk-0004.md) |
