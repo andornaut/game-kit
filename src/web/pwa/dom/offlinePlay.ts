@@ -15,11 +15,6 @@ import {
 } from "./updateReady.ts";
 import { type VisibilitySource, watchVisibility } from "./visibility.ts";
 
-// Deprecated: input no longer starts update checks, and nothing listens for these; arrival checks
-// run on UpdateFlow's arriveHome.
-// CLEANUP (added 2026-11-12): remove once every consuming game has dropped its imports.
-export const INTERACTION_EVENTS = ["keydown", "pointerdown"] as const;
-
 export type OfflineActivity = "idle" | "precaching" | "updating";
 
 export interface InstallationIdentity {

@@ -4,7 +4,6 @@ import { DOWNLOAD_PROGRESS_MESSAGE, type DownloadProgress } from "../downloadPro
 import { type RequiredUpdateState, RESUME_CHECK_MS, SKIP_WAITING_MESSAGE } from "../updateReady.ts";
 import {
   type InstallationState,
-  INTERACTION_EVENTS,
   type OfflineActivity,
   type OfflinePage,
   type OfflinePlay,
@@ -814,7 +813,6 @@ describe("startOfflinePlay", () => {
       "accept",
       "arriveHome",
       "dismissOffer",
-      "noteInteraction",
       "noteOnline",
       "requireNewer",
       "setOfferVisible",
@@ -830,7 +828,8 @@ describe("startOfflinePlay", () => {
 
   // A waiting version is offered on the home screen, whether or not the player has interacted.
   it.each<[string, string | undefined]>([
-    ...INTERACTION_EVENTS.map((type): [string, string] => [type, type]),
+    ["keydown", "keydown"],
+    ["pointerdown", "pointerdown"],
     ["no input", undefined],
   ])("on a controlled page, offers a waiting version after %s", async (_, interaction) => {
     const { clock, page, play, registration, shown } = openPage(true, "waiting");
@@ -888,7 +887,6 @@ describe("startOfflinePlay", () => {
     const { checks, page, play, shown } = await dismissedHome();
     play.flow.setOfferVisible(false);
     page.eventTarget.dispatchEvent(new Event("pointerdown"));
-    play.flow.noteInteraction();
     play.flow.setOfferVisible(true);
     expect({ checks: checks(), shown }).toEqual({ checks: 0, shown: [true, false] });
   });

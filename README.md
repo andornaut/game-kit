@@ -53,6 +53,10 @@ Shared runtime contracts have dedicated paths: `runtime/art/rgbaImage` provides 
 
 Every legacy API path remains available unchanged as a deprecated compatibility alias to the same implementation as its canonical replacement. This includes CSS and the type-only `buildInfo` declaration. Use canonical paths for new imports and migrate existing imports according to this mapping; aliases are not removed by this alignment. Internal helpers and private fixtures are not additional APIs. Older migration sections and the source inventory below retain legacy names under this compatibility policy. These package paths do not establish consumer adoption or game integration.
 
+## Migration to 0.57.0
+
+- `web/pwa/dom/updateReady`: `UpdateFlow.noteInteraction()` is removed, and `web/pwa/dom/offlinePlay` no longer exports `INTERACTION_EVENTS`. Both did nothing since 0.37.0. Delete any remaining calls, imports and test mocks; update checks run on `arriveHome()`, resume and start.
+
 ## Classic service-worker output
 
 The emitted worker carries an internal, versioned compact manifest with one shared URL table. The plugin fingerprints the semantic manifest before encoding; every URL, sound alternative, group, initial group order, hash, byte size, build ID and verified JSON family is retained. Optional fields distinguish absence from empty values. Worker entries pass `GAME_KIT_PRECACHE_MANIFEST` directly to `runServiceWorker`, which decodes and validates it before cache access or listener registration. No caller decoder is required. Legacy durable build records remain semantic manifests; explicit response profiles may require a newer wire schema. Semantic caller input remains accepted. Unknown wire versions and invalid references or metadata fail closed.
@@ -245,7 +249,7 @@ Use external top alignment for Buy/Details beside multiline copy, explicit centr
 ## Migration to 0.37.0
 
 - `web/pwa/dom/updateReady`: a dismissal (`flow.dismissOffer()`) now lasts only until the next arrival at the home screen, so an installed app kept alive in the background offers an update again. `UpdateFlow` gains `arriveHome()`: call it on the first launch and on each return to the title from play, with `setOfferVisible(true)` in either order, and not when a menu or card over the home screen closes. Each arrival clears the dismissal and checks for a newer version; the page coming back into view while the offer is eligible does the same, its check still throttled by `RESUME_CHECK_MS`. `setOfferVisible` no longer checks, so a game that does not call `arriveHome()` checks only at start and on resume. Keep the `setOfferVisible(false)` and `setOfferVisible(true)` calls around menus and cards. `requireNewer()` is unchanged.
-- `UpdateFlow.noteInteraction()` and `web/pwa/dom/offlinePlay`'s `INTERACTION_EVENTS` are deprecated and do nothing; `startOfflinePlay` no longer listens for input. Delete their uses; they are removed in a later release. Update game tests that expect a dismissal to last across returns home, or an arrival check from input and `setOfferVisible` alone.
+- `UpdateFlow.noteInteraction()` and `web/pwa/dom/offlinePlay`'s `INTERACTION_EVENTS` are deprecated and do nothing; `startOfflinePlay` no longer listens for input. Delete their uses; 0.57.0 removes them. Update game tests that expect a dismissal to last across returns home, or an arrival check from input and `setOfferVisible` alone.
 
 ## Migration to 0.36.0
 

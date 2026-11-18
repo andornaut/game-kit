@@ -147,9 +147,6 @@ export interface UpdateFlow {
   // (arriveHome) or the page coming back into view on the home screen (setVisible), without
   // consuming or activating its waiting worker.
   dismissOffer(): void;
-  // Deprecated no-op: arriveHome now starts the arrival check, so input no longer matters.
-  // CLEANUP (added 2026-11-12): remove once every consuming game has dropped its calls.
-  noteInteraction(): void;
   // The device reconnected (the window's online event). A required update retries.
   noteOnline(): void;
   // A save a newer version wrote: update by itself, never offering it, and report each state
@@ -372,9 +369,6 @@ export function createUpdateFlow(
       arrivalCheck();
     },
     dismissOffer: () => update({ dismissed: true }),
-    noteInteraction() {
-      // Deprecated no-op; see UpdateFlow.
-    },
     noteOnline: () => advance(true),
     requireNewer() {
       if (!state.required) {
