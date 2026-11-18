@@ -65,6 +65,18 @@ jobs:
           node-version-file: .nvmrc
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run lint
+  # The short browser install and update check, in the Playwright image that matches the
+  # playwright-core pin (tests/e2e/run.ts). It runs in about two minutes.
+  e2e:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - run: tests/container/e2e
   verify:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}

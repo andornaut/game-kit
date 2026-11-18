@@ -11,7 +11,7 @@ node_image=
 shellcheck_image=
 stock_image shellcheck_image "${SHELLCHECK_IMAGE}"
 stock_readonly "${shellcheck_image}" /bin/shellcheck -x -P SCRIPTDIR \
-    tests/container/stock tests/container/check-stock tests/container/node
+    tests/container/stock tests/container/check-stock tests/container/node tests/container/e2e
 stock_image node_image "${NODE_IMAGE}"
 STOCK_NETWORK=bridge stock_run "${node_image}" -- \
     env SOURCE_COMMIT="${source_commit}" SOURCE_DATE_EPOCH="${source_date_epoch}" sh tests/container/node
