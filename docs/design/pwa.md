@@ -11,3 +11,4 @@ Reference: [Classic service-worker output](../../README.md#classic-service-worke
 | ID      | Title                               | Link                             |
 | ------- | ----------------------------------- | -------------------------------- |
 | gk-0002 | Remove the deprecated update no-ops | [gk-0002.md](../work/gk-0002.md) |
+| gk-0005 | Add the Exit availability check     | [gk-0005.md](../work/gk-0005.md) |
