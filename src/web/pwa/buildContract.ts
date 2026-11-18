@@ -57,6 +57,15 @@ export function recordsCacheName(policy: BuildPolicy): string {
   return `${policy.cacheNamePrefix}records`;
 }
 
+// Record entries in recordsCacheName, keyed by same-origin URL. Each body is {"version": string};
+// an absent record is a missing entry, never a null. Manifests are stored in the same cache under
+// buildManifestUrl(version), with the BuildManifest JSON as the body.
+export const ACTIVE_RECORD_PATH = "/.game-kit/records/active";
+export const STAGED_RECORD_PATH = "/.game-kit/records/staged";
+export function pinRecordPath(clientId: string): string {
+  return `/.game-kit/records/pin/${encodeURIComponent(clientId)}`;
+}
+
 // The page writes active and staged; the router writes a pin per window client. Each is its own
 // record entry, so a page write and a router pin write never overwrite each other.
 export interface BuildState {
