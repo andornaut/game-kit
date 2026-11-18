@@ -5,65 +5,23 @@
 import {
   BUILD_HASH_HEADER,
   BUILD_POINTER_URL,
-  buildCacheName,
   type BuildFile,
   type BuildManifest,
-  buildManifestUrl,
   type BuildPointer,
   type BuildPolicy,
-  type BuildState,
   type LaunchFailure,
   type LaunchProgress,
   type LaunchResult,
   type UpdateOffer,
   type UpdateState,
 } from "../buildContract.ts";
+import { parseBuildManifest, parseBuildPointer } from "../buildRecords.ts";
 import { verifiedJsonAliasCachePrefix } from "../verifiedJsonBody.ts";
+import { BACKGROUND_INSTALL, FOREGROUND_INSTALL, installBuild } from "./buildInstaller.ts";
+import { type BuildStore, createBuildStore } from "./buildStore.ts";
 import { type VisibilitySource, watchVisibility } from "./visibility.ts";
 
-export type InstallFailureReason = "network" | "quota" | "verification";
-
-// The build store (dom/buildStore), as far as launch uses it. Every record write is atomic.
-export interface LaunchStore {
-  readState(): Promise<BuildState>;
-  setActive(version: string): Promise<void>;
-  setStaged(version: string | undefined): Promise<void>;
-  readManifest(version: string): Promise<BuildManifest | undefined>;
-  saveManifest(manifest: BuildManifest): Promise<void>;
-  // The manifest's files with no verified entry in its build cache.
-  missing(manifest: BuildManifest): Promise<readonly BuildFile[]>;
-  // A metadata check: every file has an entry whose recorded hash matches the manifest.
-  complete(manifest: BuildManifest): Promise<boolean>;
-  // Deletes every build that is neither active, staged nor named in pinned.
-  reclaim(pinned: readonly string[]): Promise<void>;
-  // The versions the router has pinned for live window clients.
-  pinnedVersions(): Promise<readonly string[]>;
-}
-
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
-
-export interface InstallContext {
-  readonly fetch: FetchLike;
-  readonly store: LaunchStore;
-}
-
-export interface InstallOptions {
-  readonly manifest: BuildManifest;
-  readonly lanes: number;
-  readonly priority: "auto" | "low";
-  readonly signal: AbortSignal;
-  // Received and total bytes of this install's fetches.
-  readonly onProgress: (receivedBytes: number, totalBytes: number) => void;
-  // Awaited before each request; resolves at once unless the install is paused.
-  readonly whenRunnable: () => Promise<void>;
-}
-
-// "changed": the deployed bytes stopped matching the pinned manifest. Rejections carry
-// { reason: InstallFailureReason }.
-export type InstallBuild = (
-  context: InstallContext,
-  options: InstallOptions,
-) => Promise<"complete" | "changed">;
 
 // The service worker container, as far as launch uses it.
 export interface LaunchContainer extends EventTarget {
@@ -79,7 +37,6 @@ export interface LaunchTimers {
 
 export interface CacheLike {
   match(url: string): Promise<Response | undefined>;
-  put(url: string, response: Response): Promise<void>;
 }
 
 export interface CacheStorageLike {
@@ -93,6 +50,8 @@ export type SessionLike = Pick<Storage, "getItem" | "removeItem" | "setItem">;
 export interface LaunchStorage {
   readonly caches: CacheStorageLike | undefined;
   readonly indexedDB: Pick<IDBFactory, "deleteDatabase"> | undefined;
+  // navigator.storage, which the installer asks for persistence and a quota estimate.
+  readonly manager: Pick<StorageManager, "estimate" | "persist"> | undefined;
   // The tab's sessionStorage. Without it the fallback launch reload never runs.
   readonly session: SessionLike | undefined;
 }
@@ -110,9 +69,12 @@ export interface LaunchPage {
 }
 
 export interface LaunchContext {
-  readonly installBuild: InstallBuild;
+  readonly installBuild: typeof installBuild;
   readonly page: LaunchPage;
-  readonly store: LaunchStore;
+  // The game's cache policy, which scopes the store's caches and the legacy caches launch deletes.
+  readonly policy: BuildPolicy;
+  // createBuildStore over the page's caches, origin and policy.
+  readonly store: BuildStore;
 }
 
 // A required update's state, for a save a newer version wrote. "updating": a newer build is being
@@ -128,7 +90,6 @@ export interface LaunchOptions {
   readonly onRequireNewer?: (state: RequiredUpdateState) => void;
   readonly onUpdateReady: (offer: UpdateOffer) => void;
   readonly onUpdateState: (state: UpdateState) => void;
-  readonly policy: BuildPolicy;
   // The router worker's URL, registered with scope "/".
   readonly serviceWorkerUrl: string;
 }
@@ -153,10 +114,6 @@ export const UPDATE_CHECK_MS = 60_000;
 
 // How long a completed first install waits for the router to control the page before reloading.
 export const CONTROL_WAIT_MS = 10_000;
-
-// Foreground and background installer settings.
-const FOREGROUND = { lanes: 6, priority: "auto" } as const;
-const BACKGROUND = { lanes: 2, priority: "low" } as const;
 
 // A redeploy restarts an install on the new manifest; this bounds repeated restarts.
 const MAX_RESTARTS = 3;
@@ -187,54 +144,6 @@ function failureReason(error: unknown): LaunchFailure["reason"] {
     reason === "unsupported"
     ? reason
     : "network";
-}
-
-const SHA256 = /^[0-9a-f]{64}$/;
-
-function isBuildPointer(value: unknown): value is BuildPointer {
-  const pointer = value as Partial<BuildPointer> | null;
-  return (
-    typeof pointer === "object" &&
-    pointer !== null &&
-    pointer.schema === 1 &&
-    typeof pointer.version === "string" &&
-    pointer.version.length > 0 &&
-    typeof pointer.buildId === "string" &&
-    pointer.manifest === buildManifestUrl(pointer.version)
-  );
-}
-
-function isBuildManifest(value: unknown, pointer: BuildPointer): value is BuildManifest {
-  const manifest = value as Partial<BuildManifest> | null;
-  if (
-    typeof manifest !== "object" ||
-    manifest === null ||
-    manifest.schema !== 1 ||
-    manifest.version !== pointer.version ||
-    manifest.buildId !== pointer.buildId ||
-    !Array.isArray(manifest.files) ||
-    !Array.isArray(manifest.boot) ||
-    typeof manifest.sounds !== "object" ||
-    manifest.sounds === null
-  ) {
-    return false;
-  }
-  const urls = new Set<string>();
-  for (const file of manifest.files as unknown[]) {
-    const { byteSize, sha256, url } = (file ?? {}) as Partial<BuildFile>;
-    if (
-      typeof url !== "string" ||
-      !url.startsWith("/") ||
-      typeof sha256 !== "string" ||
-      !SHA256.test(sha256) ||
-      !Number.isSafeInteger(byteSize) ||
-      (byteSize as number) < 0
-    ) {
-      return false;
-    }
-    urls.add(url);
-  }
-  return (manifest.boot as unknown[]).every((url) => typeof url === "string" && urls.has(url));
 }
 
 function bootBytesOf(manifest: BuildManifest): number {
@@ -318,10 +227,10 @@ const LEGACY_CONTROL_RELOAD_KEY = "game-kit:control-reload";
 const LEGACY_COPY_LANES = 4;
 
 // Copies each missing file an old version cache holds with the manifest's size and SHA-256 into
-// the new build's cache, hashing each copy once. Returns the bytes copied.
+// the new build's cache under its logical URL with its digest header, hashing each copy once.
 async function copyLegacyEntries(
   storage: LaunchStorage,
-  context: { readonly policy: BuildPolicy; readonly store: LaunchStore },
+  context: { readonly policy: BuildPolicy; readonly store: BuildStore },
   manifest: BuildManifest,
   onCopied: (bytes: number) => void,
 ): Promise<void> {
@@ -334,7 +243,6 @@ async function copyLegacyEntries(
     return;
   }
   const sources = await Promise.all(names.map((name) => caches.open(name)));
-  const target = await caches.open(buildCacheName(context.policy, manifest.version));
   // Tries each old cache in turn, stopping at the first copy with the manifest's size and hash.
   const copyFrom = async (file: BuildFile, index: number): Promise<void> => {
     const source = sources[index];
@@ -355,7 +263,11 @@ async function copyLegacyEntries(
     const headers = new Headers(response.headers);
     headers.set(BUILD_HASH_HEADER, file.sha256);
     headers.set("content-length", String(bytes.byteLength));
-    await target.put(file.url, new Response(bytes, { headers, status: 200 }));
+    await context.store.putFile(
+      manifest.version,
+      file.url,
+      new Response(bytes, { headers, status: 200 }),
+    );
     onCopied(bytes.byteLength);
   };
   const queue = [...(await context.store.missing(manifest))];
@@ -388,8 +300,9 @@ async function deleteLegacy(storage: LaunchStorage, policy: BuildPolicy): Promis
   );
 }
 
-// The browser's page, or undefined where it has no service workers or Cache Storage.
-export function browserLaunchPage(): LaunchPage | undefined {
+// The browser's page, store and installer for policy, or undefined where the browser has no
+// service workers or Cache Storage; the game then plays from the network.
+export function browserLaunchContext(policy: BuildPolicy): LaunchContext | undefined {
   if (!("serviceWorker" in navigator) || typeof caches === "undefined") {
     return undefined;
   }
@@ -399,7 +312,7 @@ export function browserLaunchPage(): LaunchPage | undefined {
   } catch {
     session = undefined;
   }
-  return {
+  const page: LaunchPage = {
     container: navigator.serviceWorker,
     eventTarget: window,
     fetch: (input, init) => fetch(input, init),
@@ -408,6 +321,7 @@ export function browserLaunchPage(): LaunchPage | undefined {
     storage: {
       caches,
       indexedDB: typeof indexedDB === "undefined" ? undefined : indexedDB,
+      manager: navigator.storage,
       session,
     },
     timers: {
@@ -417,6 +331,8 @@ export function browserLaunchPage(): LaunchPage | undefined {
     },
     visibility: document,
   };
+  const store = createBuildStore({ caches, origin: window.location.origin }, policy);
+  return { installBuild, page, policy, store };
 }
 
 // Call run() once at document boot. With no active build it installs the deployed build in the
@@ -425,8 +341,8 @@ export function browserLaunchPage(): LaunchPage | undefined {
 // build in the background. Staging never activates: a staged build becomes active through
 // Update now, requireNewer, or the router's promotion at the next launch navigation.
 export function createLaunch(context: LaunchContext, options: LaunchOptions): Launch {
-  const { installBuild, page, store } = context;
-  const { policy } = options;
+  const { page, policy, store } = context;
+  const install = context.installBuild;
   const { session } = page.storage;
   const routerUrl = new URL(options.serviceWorkerUrl, page.location.href).href;
   const aborts = new AbortController();
@@ -435,7 +351,6 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
   // The build this document runs, once run() resolves "play".
   let documentVersion: string | undefined;
   let visible = page.visibility.visibilityState !== "hidden";
-  let visibleWaiters: (() => void)[] = [];
   const cleanups: (() => void)[] = [];
 
   // One determinate value over download bytes plus boot bytes. RECORD_SHARE of it is held back
@@ -486,11 +401,12 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
   };
 
   const readPointer = async (): Promise<BuildPointer> => {
-    const pointer = await fetchJson(BUILD_POINTER_URL, { cache: "no-store" });
-    if (!isBuildPointer(pointer)) {
+    const value = await fetchJson(BUILD_POINTER_URL, { cache: "no-store" });
+    try {
+      return parseBuildPointer(value);
+    } catch {
       throw new LaunchError("verification", "Invalid build pointer");
     }
-    return pointer;
   };
 
   // The pinned manifest the pointer names, from the store when an earlier attempt saved it.
@@ -499,8 +415,14 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     if (saved !== undefined && saved.buildId === pointer.buildId) {
       return saved;
     }
-    const manifest = await fetchJson(pointer.manifest, {});
-    if (!isBuildManifest(manifest, pointer)) {
+    const value = await fetchJson(pointer.manifest, {});
+    let manifest: BuildManifest | undefined;
+    try {
+      manifest = parseBuildManifest(value);
+    } catch {
+      manifest = undefined;
+    }
+    if (manifest?.version !== pointer.version || manifest.buildId !== pointer.buildId) {
       throw new LaunchError("verification", `Invalid build manifest for ${pointer.version}`);
     }
     return manifest;
@@ -532,13 +454,6 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
       page.container.addEventListener("controllerchange", changed);
     });
 
-  const whenVisible = (): Promise<void> =>
-    visible || disposed
-      ? Promise.resolve()
-      : new Promise((resolve) => {
-          visibleWaiters.push(resolve);
-        });
-
   // First install, in the foreground. Resolves once this document can play the active build or
   // has reloaded into it.
   const firstInstall = async (): Promise<LaunchResult> => {
@@ -554,6 +469,16 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
   };
 
   // Installs the build the pointer names; a redeploy mid-install restarts on the new manifest.
+  const installContext = {
+    clearTimeout: (handle: unknown) => page.timers.clearTimeout(handle),
+    fetch: page.fetch,
+    now: () => page.timers.now(),
+    origin: new URL(page.location.href).origin,
+    setTimeout: (handler: () => void, ms: number) => page.timers.setTimeout(handler, ms),
+    storage: page.storage.manager,
+    store,
+  };
+
   const installDeployed = async (restarts: number): Promise<LaunchResult> => {
     const pointer = await readPointer();
     const manifest = await readPinnedManifest(pointer);
@@ -571,23 +496,19 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
       progress = { ...progress, received: copied };
       report("installing", 0);
     });
-    const result = await installBuild(
-      { fetch: page.fetch, store },
-      {
-        ...FOREGROUND,
-        manifest,
-        onProgress: (receivedBytes, totalBytes) => {
-          progress = {
-            ...progress,
-            received: copied + receivedBytes,
-            total: copied + totalBytes,
-          };
-          report("installing", 0);
-        },
-        signal: aborts.signal,
-        whenRunnable: () => Promise.resolve(),
+    const result = await install(installContext, {
+      ...FOREGROUND_INSTALL,
+      manifest,
+      onBytes: (receivedBytes, totalBytes) => {
+        progress = {
+          ...progress,
+          received: copied + receivedBytes,
+          total: copied + totalBytes,
+        };
+        report("installing", 0);
       },
-    );
+      signal: aborts.signal,
+    });
     if (result === "changed") {
       if (restarts + 1 >= MAX_RESTARTS) {
         throw new LaunchError("verification", "The deployed build kept changing during install");
@@ -661,7 +582,7 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
   // K4 reclaim and legacy cleanup, then the launch update check.
   const afterLaunch = async () => {
     try {
-      const pinned = await store.pinnedVersions();
+      const pinned = [...(await store.pinnedVersions()).values()];
       await store.reclaim(documentVersion === undefined ? pinned : [...pinned, documentVersion]);
     } catch (error) {
       console.warn("Could not reclaim unused builds.", error);
@@ -756,19 +677,17 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     }
     await store.saveManifest(manifest);
     reportUpdate({ phase: "staging", value: 0, version });
-    const result = await installBuild(
-      { fetch: page.fetch, store },
-      {
-        ...(required ? FOREGROUND : BACKGROUND),
-        manifest,
-        onProgress: (receivedBytes, totalBytes) => {
-          const value = totalBytes > 0 ? Math.min(1, receivedBytes / totalBytes) : 0;
-          reportUpdate({ phase: "staging", value, version });
-        },
-        signal: aborts.signal,
-        whenRunnable: whenVisible,
+    const result = await install(installContext, {
+      ...(required ? FOREGROUND_INSTALL : BACKGROUND_INSTALL),
+      manifest,
+      onBytes: (receivedBytes, totalBytes) => {
+        const value = totalBytes > 0 ? Math.min(1, receivedBytes / totalBytes) : 0;
+        reportUpdate({ phase: "staging", value, version });
       },
-    );
+      // An update waits while the page is hidden, and resumes when it comes back into view.
+      paused: () => !visible,
+      signal: aborts.signal,
+    });
     if (disposed) {
       return;
     }
@@ -884,11 +803,6 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
       if (!visible) {
         return;
       }
-      const waiters = visibleWaiters;
-      visibleWaiters = [];
-      for (const resume of waiters) {
-        resume();
-      }
       check(false);
       advanceRequired(true);
     }),
@@ -956,9 +870,6 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
       aborts.abort();
       for (const cleanup of cleanups.splice(0)) {
         cleanup();
-      }
-      for (const resume of visibleWaiters.splice(0)) {
-        resume();
       }
     },
     requireNewer() {

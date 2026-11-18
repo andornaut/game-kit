@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BUILD_HASH_HEADER,
   BUILD_POINTER_URL,
-  buildCacheName,
   type BuildFile,
   type BuildManifest,
   buildManifestUrl,
@@ -16,18 +15,17 @@ import {
   type UpdateOffer,
   type UpdateState,
 } from "../buildContract.ts";
+import type { BuildInstallOptions, installBuild } from "./buildInstaller.ts";
+import type { BuildStore } from "./buildStore.ts";
 import {
   type CacheLike,
   type CacheStorageLike,
   CONTROL_WAIT_MS,
   createLaunch,
   type FetchLike,
-  type InstallBuild,
-  type InstallOptions,
   LAUNCH_PROGRESS_KEY,
   LAUNCH_RELOAD_KEY,
   type LaunchPage,
-  type LaunchStore,
   legacyGroupDatabaseName,
   legacyRoutingCacheName,
   type RequiredUpdateState,
@@ -64,10 +62,12 @@ function buildOf(version: string, bodies: Record<string, string>, boot: string[]
   return { manifest, pointer };
 }
 
-class FakeStore implements LaunchStore {
+class FakeStore implements BuildStore {
   state: { active?: string; staged?: string } = {};
   readonly manifests = new Map<string, BuildManifest>();
   readonly completeVersions = new Set<string>();
+  // Each version's stored files by URL.
+  readonly files = new Map<string, Map<string, Response>>();
   missingFiles: BuildFile[] | undefined;
   pinned: string[] = [];
   readonly calls: string[] = [];
@@ -95,17 +95,31 @@ class FakeStore implements LaunchStore {
     this.manifests.set(manifest.version, manifest);
   }
   async missing(manifest: BuildManifest) {
-    return this.missingFiles ?? manifest.files;
+    return [...(this.missingFiles ?? manifest.files)];
   }
   async complete(manifest: BuildManifest) {
     return this.completeVersions.has(manifest.version);
   }
-  async reclaim(pinned: readonly string[]) {
-    this.calls.push(`reclaim ${[...pinned].join(",")}`);
+  async reclaim(live: Iterable<string>) {
+    this.calls.push(`reclaim ${[...live].join(",")}`);
+    return [];
   }
   async pinnedVersions() {
-    return this.pinned;
+    return new Map(this.pinned.map((version, index) => [`client ${index}`, version]));
   }
+  async putFile(version: string, url: string, response: Response) {
+    const files = this.files.get(version) ?? new Map<string, Response>();
+    files.set(url, response);
+    this.files.set(version, files);
+  }
+  async findByHash() {
+    return undefined;
+  }
+  async readPin() {
+    return undefined;
+  }
+  async writePin() {}
+  async deletePin() {}
 }
 
 class FakeCache implements CacheLike {
@@ -191,7 +205,7 @@ function fixture() {
     fetch,
     location: { href: `${ORIGIN}/play/`, reload },
     online: () => online,
-    storage: { caches, indexedDB: { deleteDatabase } as never, session },
+    storage: { caches, indexedDB: { deleteDatabase } as never, manager: undefined, session },
     timers: {
       clearTimeout: (id) => clearTimeout(id as ReturnType<typeof setTimeout>),
       now: () => now,
@@ -204,17 +218,23 @@ function fixture() {
     routes.set(build.pointer.manifest, () => Response.json(build.manifest));
   };
   const store = new FakeStore();
-  const installs: InstallOptions[] = [];
+  const installs: BuildInstallOptions[] = [];
   let results: (() => Promise<"complete" | "changed">)[] = [];
-  const installBuild = vi.fn<InstallBuild>(async (_context, options) => {
+  const install = vi.fn<typeof installBuild>(async (_context, options) => {
     installs.push(options);
     const total = options.manifest.files.reduce((sum, file) => sum + file.byteSize, 0);
-    options.onProgress(0, total);
-    await options.whenRunnable();
+    options.onBytes?.(0, total);
+    while (options.paused?.() === true) {
+      // The installer polls paused() before each fetch.
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => {
+        setImmediate(resolve);
+      });
+    }
     const next = results.shift();
     const result = next === undefined ? "complete" : await next();
     if (result === "complete") {
-      options.onProgress(total, total);
+      options.onBytes?.(total, total);
       store.completeVersions.add(options.manifest.version);
     }
     return result;
@@ -225,14 +245,13 @@ function fixture() {
   const updates: UpdateState[] = [];
   const required: RequiredUpdateState[] = [];
   const launch = createLaunch(
-    { installBuild, page, store },
+    { installBuild: install, page, policy: POLICY, store },
     {
       onFailure: (failure) => failures.push(failure),
       onProgress: (value) => progress.push(value),
       onRequireNewer: (state) => required.push(state),
       onUpdateReady: (offer) => offers.push(offer),
       onUpdateState: (state) => updates.push(state),
-      policy: POLICY,
       serviceWorkerUrl: ROUTER,
     },
   );
@@ -246,7 +265,7 @@ function fixture() {
     deploy,
     failures,
     fetch,
-    installBuild,
+    installBuild: install,
     installs,
     launch,
     offers,
@@ -438,16 +457,14 @@ describe("legacy migration", () => {
     let copiedBeforeInstall: string[] = [];
     f.setResults([
       async () => {
-        copiedBeforeInstall = [
-          ...(await f.caches.open(buildCacheName(POLICY, "aaaa"))).entries.keys(),
-        ];
+        copiedBeforeInstall = [...(f.store.files.get("aaaa")?.keys() ?? [])];
         expect(await f.caches.keys()).toContain("game-0123456789abcdef");
         return "complete";
       },
     ]);
     await expect(f.launch.run()).resolves.toBe("play");
     expect(copiedBeforeInstall).toEqual(["/a.js"]);
-    const copied = await (await f.caches.open(buildCacheName(POLICY, "aaaa"))).match("/a.js");
+    const copied = f.store.files.get("aaaa")?.get("/a.js");
     expect(copied?.headers.get(BUILD_HASH_HEADER)).toBe(sha("alpha"));
     expect(copied?.headers.get("content-type")).toBe("text/javascript");
     expect(await copied?.text()).toBe("alpha");
