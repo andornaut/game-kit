@@ -65,7 +65,7 @@ Chibi and Archie use an ungrouped precache. Defects 1, 7 and 10 (group store and
 
 **Driver (decided).** The page installer drives the download, under the visible loading screen: 6 lanes, default priority, 3 attempts, 30 s inactivity timeout, no SW event held open. Updates use the same installer in background mode: 2 lanes, `low`, paused while hidden.
 
-**Layout.** `<prefix>build-<version>` per build; `<prefix>records` holds `active`, `staged` and client pins. Entries are written only after size and SHA-256 pass, with header `x-game-kit-hash`; `Cache.put` is atomic, so presence plus header proves verification.
+**Layout.** `<prefix>build-<version>` per build; `<prefix>records` holds `active`, `staged` and client pins. Entries are written only after size and SHA-256 pass, with header `x-game-kit-sha256`; `Cache.put` is atomic, so presence plus header proves verification.
 
 **Resume.** After a reload or worker restart, the installer diffs `cache.keys()` against the manifest and fetches only absent keys, with no re-hash.
 
