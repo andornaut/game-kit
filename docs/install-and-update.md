@@ -69,7 +69,7 @@ Chibi and Archie use an ungrouped precache. Defects 1, 7 and 10 (group store and
 
 **Resume.** After a reload or worker restart, the installer diffs `cache.keys()` against the manifest and fetches only absent keys, with no re-hash.
 
-**Pinned manifest.** Each install reads `build.json` once and pins that manifest. Every file is fetched from an immutable content-addressed path (`/.game-kit/files/<hash>`), and the router serves it under its logical URL, so a mid-install redeploy of `/play/` cannot change the bytes. This needs each deploy to keep the previous build's immutable files for a retention window (game-owned deploy). If one is gone, the install restarts on the new manifest, reusing verified entries.
+**Pinned manifest (decided).** Each install reads `build.json` once and pins that manifest. If a file's bytes stop matching it because the game redeployed mid-install, the installer re-reads `build.json` and restarts on the new manifest, reusing every verified entry by hash, so only changed files are fetched again. Game deploys are unchanged.
 
 **Progress.** One determinate value in [0, 1]. Total = bytes to fetch + bytes of boot files read afterwards (all sizes are in the manifest). The installer reports received bytes; the Phaser loader reports settled files as their bytes; the record write is the last 1%. No valueless phases.
 
