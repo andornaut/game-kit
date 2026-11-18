@@ -1,0 +1,708 @@
+import { createHash } from "node:crypto";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import {
+  BUILD_HASH_HEADER,
+  BUILD_POINTER_URL,
+  buildCacheName,
+  type BuildFile,
+  type BuildManifest,
+  buildManifestUrl,
+  type BuildPointer,
+  type BuildState,
+  type LaunchFailure,
+  type LaunchProgress,
+  type UpdateOffer,
+  type UpdateState,
+} from "../buildContract.ts";
+import {
+  type CacheLike,
+  type CacheStorageLike,
+  CONTROL_WAIT_MS,
+  createLaunch,
+  type FetchLike,
+  type InstallBuild,
+  type InstallOptions,
+  LAUNCH_PROGRESS_KEY,
+  LAUNCH_RELOAD_KEY,
+  type LaunchPage,
+  type LaunchStore,
+  legacyGroupDatabaseName,
+  legacyRoutingCacheName,
+  type RequiredUpdateState,
+  type SessionLike,
+  UPDATE_CHECK_MS,
+} from "./launch.ts";
+
+const POLICY = { cacheNamePrefix: "game-", hashedAssetPrefix: "/assets/" };
+const ORIGIN = "https://game.test";
+const ROUTER = "/sw.js";
+
+const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+
+function buildOf(version: string, bodies: Record<string, string>, boot: string[] = []) {
+  const files: BuildFile[] = Object.entries(bodies).map(([url, body]) => ({
+    byteSize: new TextEncoder().encode(body).byteLength,
+    sha256: sha(body),
+    url,
+  }));
+  const manifest: BuildManifest = {
+    boot,
+    buildId: `id-${version}`,
+    files,
+    schema: 1,
+    sounds: {},
+    version,
+  };
+  const pointer: BuildPointer = {
+    buildId: manifest.buildId,
+    manifest: buildManifestUrl(version),
+    schema: 1,
+    version,
+  };
+  return { manifest, pointer };
+}
+
+class FakeStore implements LaunchStore {
+  state: { active?: string; staged?: string } = {};
+  readonly manifests = new Map<string, BuildManifest>();
+  readonly completeVersions = new Set<string>();
+  missingFiles: BuildFile[] | undefined;
+  pinned: string[] = [];
+  readonly calls: string[] = [];
+
+  async readState(): Promise<BuildState> {
+    return { ...this.state };
+  }
+  async setActive(version: string) {
+    this.calls.push(`setActive ${version}`);
+    this.state.active = version;
+  }
+  async setStaged(version: string | undefined) {
+    this.calls.push(`setStaged ${version}`);
+    if (version === undefined) {
+      delete this.state.staged;
+    } else {
+      this.state.staged = version;
+    }
+  }
+  async readManifest(version: string) {
+    return this.manifests.get(version);
+  }
+  async saveManifest(manifest: BuildManifest) {
+    this.calls.push(`saveManifest ${manifest.version}`);
+    this.manifests.set(manifest.version, manifest);
+  }
+  async missing(manifest: BuildManifest) {
+    return this.missingFiles ?? manifest.files;
+  }
+  async complete(manifest: BuildManifest) {
+    return this.completeVersions.has(manifest.version);
+  }
+  async reclaim(pinned: readonly string[]) {
+    this.calls.push(`reclaim ${[...pinned].join(",")}`);
+  }
+  async pinnedVersions() {
+    return this.pinned;
+  }
+}
+
+class FakeCache implements CacheLike {
+  readonly entries = new Map<string, Response>();
+  async match(url: string) {
+    return this.entries.get(url)?.clone();
+  }
+  async put(url: string, response: Response) {
+    this.entries.set(url, response);
+  }
+}
+
+class FakeCaches implements CacheStorageLike {
+  readonly caches = new Map<string, FakeCache>();
+  async delete(name: string) {
+    return this.caches.delete(name);
+  }
+  async keys() {
+    return [...this.caches.keys()];
+  }
+  async open(name: string) {
+    let cache = this.caches.get(name);
+    if (cache === undefined) {
+      cache = new FakeCache();
+      this.caches.set(name, cache);
+    }
+    return cache;
+  }
+}
+
+class FakeSession implements SessionLike {
+  readonly values = new Map<string, string>();
+  getItem(key: string) {
+    return this.values.get(key) ?? null;
+  }
+  removeItem(key: string) {
+    this.values.delete(key);
+  }
+  setItem(key: string, value: string) {
+    this.values.set(key, value);
+  }
+}
+
+class FakeContainer extends EventTarget {
+  controller: { scriptURL: string } | null = null;
+  readonly register = vi.fn(async () => ({}));
+
+  claim() {
+    this.controller = { scriptURL: `${ORIGIN}${ROUTER}` };
+    this.dispatchEvent(new Event("controllerchange"));
+  }
+}
+
+class FakeDocument extends EventTarget {
+  visibilityState: DocumentVisibilityState = "visible";
+  set(state: DocumentVisibilityState) {
+    this.visibilityState = state;
+    this.dispatchEvent(new Event("visibilitychange"));
+  }
+}
+
+function fixture() {
+  const container = new FakeContainer();
+  const visibility = new FakeDocument();
+  const window = new EventTarget();
+  const session = new FakeSession();
+  const caches = new FakeCaches();
+  const deleteDatabase = vi.fn();
+  const reload = vi.fn();
+  const routes = new Map<string, () => Response>();
+  const fetch = vi.fn<FetchLike>(async (input) => {
+    const route = routes.get(input);
+    if (route === undefined) {
+      throw new TypeError("Failed to fetch");
+    }
+    return route();
+  });
+  let now = 0;
+  let online = true;
+  const page: LaunchPage = {
+    container,
+    eventTarget: window,
+    fetch,
+    location: { href: `${ORIGIN}/play/`, reload },
+    online: () => online,
+    storage: { caches, indexedDB: { deleteDatabase } as never, session },
+    timers: {
+      clearTimeout: (id) => clearTimeout(id as ReturnType<typeof setTimeout>),
+      now: () => now,
+      setTimeout: (callback, ms) => setTimeout(callback, ms),
+    },
+    visibility,
+  };
+  const deploy = (build: ReturnType<typeof buildOf>) => {
+    routes.set(BUILD_POINTER_URL, () => Response.json(build.pointer));
+    routes.set(build.pointer.manifest, () => Response.json(build.manifest));
+  };
+  const store = new FakeStore();
+  const installs: InstallOptions[] = [];
+  let results: (() => Promise<"complete" | "changed">)[] = [];
+  const installBuild = vi.fn<InstallBuild>(async (_context, options) => {
+    installs.push(options);
+    const total = options.manifest.files.reduce((sum, file) => sum + file.byteSize, 0);
+    options.onProgress(0, total);
+    await options.whenRunnable();
+    const next = results.shift();
+    const result = next === undefined ? "complete" : await next();
+    if (result === "complete") {
+      options.onProgress(total, total);
+      store.completeVersions.add(options.manifest.version);
+    }
+    return result;
+  });
+  const progress: LaunchProgress[] = [];
+  const failures: LaunchFailure[] = [];
+  const offers: UpdateOffer[] = [];
+  const updates: UpdateState[] = [];
+  const required: RequiredUpdateState[] = [];
+  const launch = createLaunch(
+    { installBuild, page, store },
+    {
+      onFailure: (failure) => failures.push(failure),
+      onProgress: (value) => progress.push(value),
+      onRequireNewer: (state) => required.push(state),
+      onUpdateReady: (offer) => offers.push(offer),
+      onUpdateState: (state) => updates.push(state),
+      policy: POLICY,
+      serviceWorkerUrl: ROUTER,
+    },
+  );
+  return {
+    advance: (ms: number) => {
+      now += ms;
+    },
+    caches,
+    container,
+    deleteDatabase,
+    deploy,
+    failures,
+    fetch,
+    installBuild,
+    installs,
+    launch,
+    offers,
+    progress,
+    reload,
+    required,
+    routes,
+    session,
+    setOnline: (value: boolean) => {
+      online = value;
+      window.dispatchEvent(new Event(value ? "online" : "offline"));
+    },
+    setResults: (next: (() => Promise<"complete" | "changed">)[]) => {
+      results = next;
+    },
+    store,
+    updates,
+    visibility,
+  };
+}
+
+// Lets queued promise callbacks and store calls run, one macrotask turn at a time.
+const settle = (turns = 20): Promise<void> =>
+  turns === 0
+    ? Promise.resolve()
+    : new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      }).then(() => settle(turns - 1));
+
+const V1 = buildOf("aaaa", { "/a.js": "alpha", "/play/": "<html>" }, ["/a.js"]);
+const V2 = buildOf("bbbb", { "/a.js": "alpha2", "/play/": "<html>" }, ["/a.js"]);
+const V3 = buildOf("cccc", { "/a.js": "alpha3", "/play/": "<html>" }, ["/a.js"]);
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe("first install", () => {
+  it("registers the router, installs in the foreground and plays when the router controls the page", async () => {
+    const f = fixture();
+    f.deploy(V1);
+    f.container.register.mockImplementation(async () => {
+      f.container.claim();
+      return {};
+    });
+    await expect(f.launch.run()).resolves.toBe("play");
+    expect(f.container.register).toHaveBeenCalledWith(ROUTER, {
+      scope: "/",
+      updateViaCache: "none",
+    });
+    expect(f.fetch.mock.calls[0]).toEqual([BUILD_POINTER_URL, { cache: "no-store" }]);
+    expect(f.fetch.mock.calls[1]?.[0]).toBe(V1.pointer.manifest);
+    expect(f.installs[0]).toMatchObject({ lanes: 6, manifest: V1.manifest, priority: "auto" });
+    expect(f.store.calls.slice(0, 2)).toEqual(["saveManifest aaaa", "setActive aaaa"]);
+    expect(f.reload).not.toHaveBeenCalled();
+  });
+
+  it("reports one determinate, nondecreasing value over download and boot bytes", async () => {
+    const f = fixture();
+    f.deploy(V1);
+    f.container.register.mockImplementation(async () => {
+      f.container.claim();
+      return {};
+    });
+    await f.launch.run();
+    f.launch.bootProgress(0, 2);
+    f.launch.bootProgress(1, 2);
+    f.launch.bootProgress(2, 2);
+    const values = f.progress.map((p) => p.value);
+    expect(values.every((value) => Number.isFinite(value) && value >= 0 && value <= 1)).toBe(true);
+    expect(values).toEqual([...values].sort((a, b) => a - b));
+    const download = 5 + 6;
+    const boot = 5;
+    const installed = f.progress.filter((p) => p.phase === "installing").at(-1)!;
+    // The record write adds the held-back 1% after the download share.
+    expect(installed.value).toBeCloseTo(0.99 * (download / (download + boot)) + 0.01);
+    expect(installed.totalBytes).toBe(download + boot);
+    expect(f.progress.at(-1)).toEqual({
+      phase: "ready",
+      receivedBytes: download + boot,
+      totalBytes: download + boot,
+      value: 1,
+    });
+  });
+
+  it("reloads once into the router when it does not yet control the page", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    f.deploy(V1);
+    const result = f.launch.run();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.reload).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(CONTROL_WAIT_MS);
+    await expect(result).resolves.toBe("reloading");
+    expect(f.reload).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(f.session.getItem(LAUNCH_PROGRESS_KEY)!)).toEqual({
+      bootBytes: 5,
+      receivedBytes: 11,
+      version: "aaaa",
+    });
+  });
+
+  it("reloads as soon as the router claims the page", async () => {
+    const f = fixture();
+    f.deploy(V1);
+    const result = f.launch.run();
+    await settle();
+    f.container.claim();
+    await expect(result).resolves.toBe("reloading");
+    expect(f.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-reads the pointer and restarts on the new manifest when the build changed", async () => {
+    const f = fixture();
+    f.deploy(V1);
+    f.container.claim();
+    f.setResults([
+      async () => {
+        f.deploy(V2);
+        return "changed";
+      },
+    ]);
+    await expect(f.launch.run()).resolves.toBe("play");
+    expect(f.installs.map((o) => o.manifest.version)).toEqual(["aaaa", "bbbb"]);
+    expect(f.store.state.active).toBe("bbbb");
+    expect(f.store.calls).not.toContain("saveManifest aaaa");
+  });
+
+  it("reports a failure with a retry that resumes, and resolves once the retry succeeds", async () => {
+    const f = fixture();
+    f.deploy(V1);
+    f.container.claim();
+    f.setResults([() => Promise.reject(Object.assign(new Error("full"), { reason: "quota" }))]);
+    let result: string | undefined;
+    void f.launch.run().then((value) => {
+      result = value;
+    });
+    await settle();
+    expect(f.failures.map((failure) => failure.reason)).toEqual(["quota"]);
+    expect(result).toBeUndefined();
+    expect(f.store.state.active).toBeUndefined();
+    f.failures[0]!.retry();
+    f.failures[0]!.retry();
+    await settle();
+    expect(result).toBe("play");
+    expect(f.installs).toHaveLength(2);
+  });
+
+  it("fails with network when the pointer cannot be fetched", async () => {
+    const f = fixture();
+    void f.launch.run();
+    await settle();
+    expect(f.failures.map((failure) => failure.reason)).toEqual(["network"]);
+    expect(f.installBuild).not.toHaveBeenCalled();
+  });
+
+  it("fails with unsupported when the router cannot register", async () => {
+    const f = fixture();
+    f.deploy(V1);
+    f.container.register.mockRejectedValue(new Error("denied"));
+    void f.launch.run();
+    await settle();
+    expect(f.failures.map((failure) => failure.reason)).toEqual(["unsupported"]);
+  });
+
+  it("rejects a manifest that does not match the pointer", async () => {
+    const f = fixture();
+    f.deploy(V1);
+    f.routes.set(V1.pointer.manifest, () => Response.json({ ...V1.manifest, version: "other" }));
+    void f.launch.run();
+    await settle();
+    expect(f.failures.map((failure) => failure.reason)).toEqual(["verification"]);
+  });
+});
+
+describe("legacy migration", () => {
+  it("copies verified entries from old version caches, then deletes the old state after setActive", async () => {
+    const f = fixture();
+    f.deploy(V1);
+    f.container.claim();
+    const old = await f.caches.open("game-0123456789abcdef");
+    await old.put(
+      "/a.js",
+      new Response("alpha", { headers: { "content-type": "text/javascript" } }),
+    );
+    await old.put("/play/", new Response("<stale>"));
+    await f.caches.open(legacyRoutingCacheName(POLICY));
+    await f.caches.open("other-cache");
+    let copiedBeforeInstall: string[] = [];
+    f.setResults([
+      async () => {
+        copiedBeforeInstall = [
+          ...(await f.caches.open(buildCacheName(POLICY, "aaaa"))).entries.keys(),
+        ];
+        expect(await f.caches.keys()).toContain("game-0123456789abcdef");
+        return "complete";
+      },
+    ]);
+    await expect(f.launch.run()).resolves.toBe("play");
+    expect(copiedBeforeInstall).toEqual(["/a.js"]);
+    const copied = await (await f.caches.open(buildCacheName(POLICY, "aaaa"))).match("/a.js");
+    expect(copied?.headers.get(BUILD_HASH_HEADER)).toBe(sha("alpha"));
+    expect(copied?.headers.get("content-type")).toBe("text/javascript");
+    expect(await copied?.text()).toBe("alpha");
+    expect(await f.caches.keys()).not.toContain("game-0123456789abcdef");
+    expect(await f.caches.keys()).not.toContain(legacyRoutingCacheName(POLICY));
+    expect(await f.caches.keys()).toContain("other-cache");
+    expect(f.deleteDatabase).toHaveBeenCalledWith(legacyGroupDatabaseName(POLICY));
+  });
+});
+
+async function playing(f: ReturnType<typeof fixture>) {
+  f.store.state = { active: "aaaa" };
+  f.store.manifests.set("aaaa", V1.manifest);
+  f.store.completeVersions.add("aaaa");
+  f.container.claim();
+  await expect(f.launch.run()).resolves.toBe("play");
+  await settle();
+}
+
+describe("launch with an active build", () => {
+  it("plays at once without fetching, then reclaims and checks for an update", async () => {
+    const f = fixture();
+    f.deploy(V1);
+    f.store.pinned = ["9999"];
+    f.store.state = { active: "aaaa" };
+    const result = f.launch.run();
+    await expect(result).resolves.toBe("play");
+    await settle();
+    expect(f.store.calls[0]).toBe("reclaim 9999,aaaa");
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([BUILD_POINTER_URL]);
+    expect(f.installBuild).not.toHaveBeenCalled();
+    expect(f.offers).toEqual([]);
+  });
+
+  it("reloads once when this document is older than a complete staged build", async () => {
+    const f = fixture();
+    f.store.state = { active: "aaaa", staged: "bbbb" };
+    f.store.manifests.set("bbbb", V2.manifest);
+    f.store.completeVersions.add("bbbb");
+    await expect(f.launch.run()).resolves.toBe("reloading");
+    expect(f.reload).toHaveBeenCalledTimes(1);
+    expect(f.session.getItem(LAUNCH_RELOAD_KEY)).toBe("bbbb");
+    expect(f.store.calls).not.toContain("setActive bbbb");
+
+    const again = fixture();
+    again.session.setItem(LAUNCH_RELOAD_KEY, "bbbb");
+    again.store.state = { active: "aaaa", staged: "bbbb" };
+    again.store.manifests.set("bbbb", V2.manifest);
+    again.store.completeVersions.add("bbbb");
+    await expect(again.launch.run()).resolves.toBe("play");
+    expect(again.reload).not.toHaveBeenCalled();
+  });
+
+  it("continues first-install progress carried across the reload", async () => {
+    const f = fixture();
+    f.session.setItem(
+      LAUNCH_PROGRESS_KEY,
+      JSON.stringify({ bootBytes: 10, receivedBytes: 90, version: "aaaa" }),
+    );
+    f.store.state = { active: "aaaa" };
+    await f.launch.run();
+    f.launch.bootProgress(1, 2);
+    expect(f.progress.at(-1)).toMatchObject({
+      phase: "booting",
+      receivedBytes: 95,
+      totalBytes: 100,
+    });
+    expect(f.progress.at(-1)!.value).toBeCloseTo(0.99 * 0.95 + 0.01);
+    f.launch.bootProgress(2, 2);
+    expect(f.progress.at(-1)).toMatchObject({ phase: "ready", value: 1 });
+    expect(f.session.getItem(LAUNCH_PROGRESS_KEY)).toBeNull();
+  });
+});
+
+describe("background updates", () => {
+  it("stages a newer build in the background and offers it once", async () => {
+    const f = fixture();
+    f.deploy(V2);
+    await playing(f);
+    expect(f.installs[0]).toMatchObject({ lanes: 2, manifest: V2.manifest, priority: "low" });
+    expect(f.store.calls).toContain("saveManifest bbbb");
+    expect(f.store.state).toEqual({ active: "aaaa", staged: "bbbb" });
+    expect(f.updates.map((u) => u.phase)).toEqual(["staging", "staging", "ready"]);
+    expect(f.offers.map((o) => o.version)).toEqual(["bbbb"]);
+    expect(f.failures).toEqual([]);
+    expect(f.reload).not.toHaveBeenCalled();
+
+    f.offers[0]!.dismiss();
+    f.advance(UPDATE_CHECK_MS);
+    f.visibility.set("hidden");
+    f.visibility.set("visible");
+    await settle();
+    expect(f.offers).toHaveLength(1);
+    expect(f.store.state.active).toBe("aaaa");
+
+    f.deploy(V3);
+    f.advance(UPDATE_CHECK_MS);
+    f.visibility.set("hidden");
+    f.visibility.set("visible");
+    await settle();
+    expect(f.offers.map((o) => o.version)).toEqual(["bbbb", "cccc"]);
+    expect(f.store.state).toEqual({ active: "aaaa", staged: "cccc" });
+  });
+
+  it("checks on resume at most once per UPDATE_CHECK_MS", async () => {
+    const f = fixture();
+    f.deploy(V1);
+    await playing(f);
+    const pointerFetches = () => f.fetch.mock.calls.filter(([url]) => url === BUILD_POINTER_URL);
+    expect(pointerFetches()).toHaveLength(1);
+    f.advance(UPDATE_CHECK_MS - 1);
+    f.visibility.set("hidden");
+    f.visibility.set("visible");
+    await settle();
+    expect(pointerFetches()).toHaveLength(1);
+    f.advance(1);
+    f.visibility.set("hidden");
+    f.visibility.set("visible");
+    await settle();
+    expect(pointerFetches()).toHaveLength(2);
+  });
+
+  it("pauses staging while hidden", async () => {
+    const f = fixture();
+    f.deploy(V2);
+    f.visibility.set("hidden");
+    await playing(f);
+    expect(f.installs).toHaveLength(1);
+    expect(f.store.state.staged).toBeUndefined();
+    f.visibility.set("visible");
+    await settle();
+    expect(f.store.state.staged).toBe("bbbb");
+  });
+
+  it("reports a failed update through onUpdateState only, and retries at the next check", async () => {
+    const f = fixture();
+    f.deploy(V2);
+    f.setResults([
+      () => Promise.reject(Object.assign(new Error("offline"), { reason: "network" })),
+    ]);
+    await playing(f);
+    expect(f.updates.at(-1)).toEqual({ phase: "failed", version: "bbbb" });
+    expect(f.failures).toEqual([]);
+    expect(f.offers).toEqual([]);
+    f.advance(UPDATE_CHECK_MS);
+    f.visibility.set("hidden");
+    f.visibility.set("visible");
+    await settle();
+    expect(f.offers.map((o) => o.version)).toEqual(["bbbb"]);
+  });
+
+  it("Update now awaits the save, then activates the staged build and reloads with no download", async () => {
+    const f = fixture();
+    f.deploy(V2);
+    await playing(f);
+    const fetches = f.fetch.mock.calls.length;
+    let saved!: () => void;
+    const save = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          saved = resolve;
+        }),
+    );
+    const switching = f.offers[0]!.updateNow(save);
+    await settle();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(f.store.state.active).toBe("aaaa");
+    expect(f.reload).not.toHaveBeenCalled();
+    saved();
+    await switching;
+    expect(f.store.calls.slice(-2)).toEqual(["setActive bbbb", "setStaged undefined"]);
+    expect(f.store.state).toEqual({ active: "bbbb" });
+    expect(f.reload).toHaveBeenCalledTimes(1);
+    expect(f.fetch.mock.calls.length).toBe(fetches);
+  });
+
+  it("Update now does not switch when the save fails", async () => {
+    const f = fixture();
+    f.deploy(V2);
+    await playing(f);
+    await expect(
+      f.offers[0]!.updateNow(() => Promise.reject(new Error("save failed"))),
+    ).rejects.toThrow("save failed");
+    expect(f.store.state.active).toBe("aaaa");
+    expect(f.reload).not.toHaveBeenCalled();
+  });
+});
+
+describe("requireNewer", () => {
+  it("activates a complete staged build and reloads without an offer", async () => {
+    const f = fixture();
+    f.deploy(V1);
+    await playing(f);
+    f.store.state.staged = "bbbb";
+    f.store.manifests.set("bbbb", V2.manifest);
+    f.store.completeVersions.add("bbbb");
+    f.launch.requireNewer();
+    await settle();
+    expect(f.required).toEqual(["updating"]);
+    expect(f.store.state).toEqual({ active: "bbbb" });
+    expect(f.reload).toHaveBeenCalledTimes(1);
+    expect(f.offers).toEqual([]);
+  });
+
+  it("stages a newer build and switches to it, never offering it", async () => {
+    const f = fixture();
+    f.deploy(V1);
+    await playing(f);
+    f.deploy(V2);
+    f.launch.requireNewer();
+    await settle();
+    expect(f.installs.at(-1)).toMatchObject({ lanes: 6, manifest: V2.manifest });
+    expect(f.required).toEqual(["updating"]);
+    expect(f.store.state).toEqual({ active: "bbbb" });
+    expect(f.reload).toHaveBeenCalledTimes(1);
+    expect(f.offers).toEqual([]);
+  });
+
+  it("reports unavailable with nothing newer, and retries when the device reconnects", async () => {
+    const f = fixture();
+    f.deploy(V1);
+    await playing(f);
+    f.setOnline(false);
+    f.launch.requireNewer();
+    await settle();
+    expect(f.required).toEqual(["unavailable"]);
+    f.deploy(V2);
+    f.setOnline(true);
+    await settle();
+    expect(f.required).toEqual(["unavailable", "updating"]);
+    expect(f.store.state.active).toBe("bbbb");
+    expect(f.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("reloads into a newer build another window already activated", async () => {
+    const f = fixture();
+    f.deploy(V1);
+    await playing(f);
+    f.store.state.active = "bbbb";
+    f.launch.requireNewer();
+    await settle();
+    expect(f.required).toEqual(["updating"]);
+    expect(f.reload).toHaveBeenCalledTimes(1);
+  });
+});
+
+it("dispose stops checks and listeners", async () => {
+  const f = fixture();
+  f.deploy(V1);
+  await playing(f);
+  f.launch.dispose();
+  const fetches = f.fetch.mock.calls.length;
+  f.advance(UPDATE_CHECK_MS);
+  f.visibility.set("hidden");
+  f.visibility.set("visible");
+  await settle();
+  expect(f.fetch.mock.calls.length).toBe(fetches);
+});

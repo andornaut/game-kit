@@ -267,18 +267,14 @@ import {
   type LoadingFailureActionTextStyle,
   type LoadingFailurePresentation, type LoadingFailurePresentationView,
 } from '@andornaut/game-kit/runtime/web/progress/dom/loadingFailure';
-import type {
-  InstallationIdentity, InstallationState, OfflinePlay, OfflinePlayOptions,
-} from '@andornaut/game-kit/runtime/web/pwa/dom/offlinePlay';
-export const installationIdentity: InstallationIdentity = {attempt:1,operationId:undefined,version:undefined};
-export const installation: InstallationState = {
-  ...installationIdentity,kind:'failed',stage:'installation',error:new Error('failed'),
-};
-export function mountInstallationFailure(
-  offline: OfflinePlay, parent: HTMLElement,
-): OfflinePlayOptions['onInstallationState'] {
-  const failure = mountLoadingFailure({onRetry:async () => { await offline.retryInstallation(); }},parent);
-  return state => failure.update(state);
+import type { LaunchOptions } from '@andornaut/game-kit/runtime/web/pwa/dom/launch';
+export function mountInstallationFailure(parent: HTMLElement): LaunchOptions['onFailure'] {
+  let retry: (() => void) | undefined;
+  const failure = mountLoadingFailure({onRetry(){ retry?.(); }},parent);
+  return state => {
+    retry = state.retry;
+    failure.update({attempt:1,kind:'failed',error:new Error(state.reason)});
+  };
 }
 export function configuredFailure(
   presentation: LoadingFailurePresentation, parent: HTMLElement,
