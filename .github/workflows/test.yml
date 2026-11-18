@@ -15,7 +15,59 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # A push or pull request that changes only docs/ runs lint alone, and verify reports as
+  # skipped. Tags, new branches, forced pushes, manual runs and anything it cannot classify run
+  # every job.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Classify changed paths
+        id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          FORCED: ${{ github.event.forced }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # A forced push, a new branch or tag (an all-zero before) or a base this clone does not
+          # have leaves base empty, which runs everything.
+          base=
+          if [ "$EVENT" = pull_request ]; then
+            base=$PR_BASE
+          elif [ "$EVENT" = push ] && [ "$FORCED" != true ]; then
+            base=$BEFORE
+          fi
+          code=true
+          if [ -n "$base" ] && [ -n "${base//0/}" ] \
+            && git merge-base --is-ancestor "$base" HEAD 2>/dev/null \
+            && paths=$(git diff --name-only --no-renames "$base" HEAD) \
+            && [ -n "$paths" ] && ! grep -qv '^docs/' <<<"$paths"; then
+            code=false
+          fi
+          echo "code=$code" >>"$GITHUB_OUTPUT"
+          echo "changed paths outside docs/: $code"
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run lint
   verify:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     # Verification is capped at fifteen minutes: a job still running then
     # has hung rather than completed its bounded source and package checks.
@@ -28,7 +80,6 @@ jobs:
         with:
           node-version-file: .nvmrc
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npm run lint
       - run: npm test
       - name: Build and prove the release artifact
         run: SOURCE_COMMIT="$GITHUB_SHA" SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" npm run build
