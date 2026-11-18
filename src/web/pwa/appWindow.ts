@@ -99,3 +99,13 @@ export function appCannotClose(
   const guardEntry = createCloseWatcher === undefined || host.history.length > 1;
   return guardEntry || !APP_WINDOW_CLOSES[appPlatform(userAgent, maxTouchPoints)];
 }
+
+// Whether a start screen offers Exit: the page runs in an installed app's window (runsInAppWindow)
+// that a script can close (appCannotClose false). A browser tab never offers it, so exitApp's
+// home-page fallback is not offered as Exit. Read it as the page loads, as appCannotClose.
+export function canExitApp(
+  createCloseWatcher: (() => unknown) | undefined,
+  host: AppCloseHost,
+): boolean {
+  return runsInAppWindow(host) && !appCannotClose(createCloseWatcher, host);
+}

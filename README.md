@@ -53,6 +53,10 @@ Shared runtime contracts have dedicated paths: `runtime/art/rgbaImage` provides 
 
 Every legacy API path remains available unchanged as a deprecated compatibility alias to the same implementation as its canonical replacement. This includes CSS and the type-only `buildInfo` declaration. Use canonical paths for new imports and migrate existing imports according to this mapping; aliases are not removed by this alignment. Internal helpers and private fixtures are not additional APIs. Older migration sections and the source inventory below retain legacy names under this compatibility policy. These package paths do not establish consumer adoption or game integration.
 
+## Exit availability in 0.58.0
+
+Additive. `runtime/web/pwa/appWindow` exports `canExitApp(createCloseWatcher, host)`: true only where the page runs in an installed app's window that a script can close, so a start screen shows Exit only there. It is `runsInAppWindow(host) && !appCannotClose(createCloseWatcher, host)`; read it as the page loads, and call `exitApp` when Exit is chosen.
+
 ## Migration to 0.57.0
 
 - `web/pwa/dom/updateReady`: `UpdateFlow.noteInteraction()` is removed, and `web/pwa/dom/offlinePlay` no longer exports `INTERACTION_EVENTS`. Both did nothing since 0.37.0. Delete any remaining calls, imports and test mocks; update checks run on `arriveHome()`, resume and start.

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { appCannotClose, type AppPlatform, appPlatform, runsInAppWindow } from "./appWindow.ts";
+import {
+  appCannotClose,
+  type AppPlatform,
+  appPlatform,
+  canExitApp,
+  runsInAppWindow,
+} from "./appWindow.ts";
 import { INSTALLED_APP_DISPLAY_QUERY } from "./backNavigation.ts";
 
 const AGENTS = {
@@ -76,5 +82,22 @@ describe("appCannotClose", () => {
     ["macOS Safari's Dock app", AGENTS.mac, true, watcher, 1, true],
   ])("finds %s cannot close: %s", (_, userAgent, installed, factory, length, cannot) => {
     expect(appCannotClose(factory, host(userAgent, installed, length))).toBe(cannot);
+  });
+});
+
+describe("canExitApp", () => {
+  const watcher = () => ({});
+
+  it.each<[string, string, boolean, (() => unknown) | undefined, number, boolean]>([
+    ["a browser tab", AGENTS.androidChrome, false, watcher, 1, false],
+    ["Chrome's Android app with a close watcher", AGENTS.androidChrome, true, watcher, 1, true],
+    ["Chrome's desktop app window", AGENTS.desktopChrome, true, watcher, 1, true],
+    ["Chrome's app with pages before the game", AGENTS.androidChrome, true, watcher, 2, false],
+    ["Chrome's app needing a guard entry", AGENTS.androidChrome, true, undefined, 1, false],
+    ["Firefox for Android's app", AGENTS.androidFirefox, true, watcher, 1, false],
+    ["an iOS Home Screen app", AGENTS.iphone, false, watcher, 1, false],
+  ])("offers Exit in %s: %s", (_, userAgent, installed, factory, length, offered) => {
+    const page = host(userAgent, installed, length, userAgent === AGENTS.iphone ? true : undefined);
+    expect(canExitApp(factory, page)).toBe(offered);
   });
 });
