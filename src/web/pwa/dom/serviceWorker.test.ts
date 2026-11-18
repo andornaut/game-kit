@@ -488,6 +488,14 @@ describe("subresources", () => {
     expect(await worker.get("/app.js", "doc", { body: "x", method: "POST" })).toBeUndefined();
   });
 
+  it("leaves no-store requests, such as the installer's, to the browser", async () => {
+    const worker = startWorker(new FakeServer(V2));
+    await worker.saveBuild(manifestOf("v1", V1), V1);
+    await worker.setRecord(ACTIVE, "v1");
+    expect(await worker.get("/play/", "doc", { cache: "no-store" })).toBeUndefined();
+    expect(await (await worker.get("/play/", "doc"))!.text()).toBe("page v1");
+  });
+
   it("goes to the network for a pinned build whose manifest is gone", async () => {
     const server = new FakeServer(V2);
     const worker = startWorker(server);

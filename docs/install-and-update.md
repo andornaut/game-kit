@@ -61,7 +61,7 @@ Chibi and Archie use an ungrouped precache. Defects 1, 7 and 10 (group store and
 - `dom/buildStore` (new): cache layout, records, reclaim.
 - `dom/buildInstaller` (new): fetch, verify, store, resume.
 - `dom/launch` (new): the one loader, silent launch activation and in-session Update now; replaces `startOfflinePlay` and `UpdateFlow`.
-- `dom/serviceWorker` (router only): serves the build named by `active` or the client's pin; `skipWaiting` plus `clients.claim`; downloads nothing. A client with no pin is served `active` instead of throwing (C7). It deletes the pins of closed clients at activate and on navigation at most once a minute, sparing pins written within that minute.
+- `dom/serviceWorker` (router only): serves the build named by `active` or the client's pin; `skipWaiting` plus `clients.claim`; downloads nothing. A client with no pin is served `active` instead of throwing (C7). A `no-store` request, such as the installer's, goes to the network. It deletes the pins of closed clients at activate and on navigation at most once a minute, sparing pins written within that minute.
 
 **Driver (decided).** The page installer drives the download, under the visible loading screen: 6 lanes, default priority, 3 attempts, 30 s inactivity timeout, no SW event held open. Updates use the same installer in background mode: 2 lanes, `low`, paused while hidden.
 
@@ -69,7 +69,7 @@ Chibi and Archie use an ungrouped precache. Defects 1, 7 and 10 (group store and
 
 **Resume.** After a reload or worker restart, the installer diffs `cache.keys()` against the manifest and fetches only absent keys, with no re-hash.
 
-**Pinned manifest (decided).** Each install reads `build.json` once and pins that manifest. If a file's bytes stop matching it because the game redeployed mid-install, the installer re-reads `build.json` and restarts on the new manifest, reusing every verified entry by hash, so only changed files are fetched again. Game deploys are unchanged.
+**Pinned manifest (decided).** Each install reads `build.json` once and pins that manifest. If a file's bytes stop matching it, or the file is gone (404 or 410), because the game redeployed mid-install, the installer re-reads `build.json` and restarts on the new manifest, reusing every verified entry by hash, so only changed files are fetched again. Game deploys are unchanged.
 
 **Progress.** One determinate value in [0, 1]. Total = bytes to fetch + bytes of boot files read afterwards (all sizes are in the manifest). The installer reports received bytes; the Phaser loader reports settled files as their bytes; the record write is the last 1%. No valueless phases.
 
@@ -117,7 +117,7 @@ Chibi and Archie use an ungrouped precache. Defects 1, 7 and 10 (group store and
 - Unit: verified JSON passes with unknown Cloudflare headers (`priority`, `server-timing`) and HTTP/1.1 `connection` and `keep-alive`, and fails on each of the six rejected headers; an unpinned client is served `active`; reuse performs no digest; resume after a kill mid-file and mid-record, hash mismatch, deploy mid-install, quota failure, record atomicity, delta reuse, reclaim with pins.
 - Header coverage: run the install over HTTP/3 against the Cloudflare-served deploy, or replay recorded h3 response headers. h2 and HTTP/1.1 runs do not exercise the failure.
 - Switch: at 1 CPU, Update now reloads within the bound with no re-hash.
-- Container Playwright Chromium (stock launcher), on an 8,340-file 38 MB fixture with CDP network throttle (about 1.6 Mbps, 150 ms) and 4x CPU throttle. Assert:
+- Container Playwright Chromium (stock launcher, `npm run test:e2e`), with CDP network throttle (about 1.6 Mbps, 300 ms) on every page and service worker, 4x CPU throttle on every page and Cloudflare's h3 headers on every response. The long run (`npm run test:e2e:long`, 4,500 files, 46 MB) asserts the 5 min bound; the short run (400 files) asserts the rest in CI. Assert:
   - the install exceeds 5 min wall time and completes;
   - a reload and `ServiceWorker.stopWorker` mid-install resume with no repeat requests;
   - play works offline afterwards;

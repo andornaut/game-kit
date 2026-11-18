@@ -11,10 +11,10 @@ import { isJsonContentType, safeJsonSource } from "./verifiedJsonSource.ts";
 
 export type BuildInstallFailure = "network" | "quota" | "verification";
 
-// "changed": a fetched body did not match the pinned manifest, as when the game redeploys during
-// the install. The caller re-reads the build pointer and installs the manifest it names, reusing
-// every verified entry; an unchanged pointer means the deploy serves bytes its manifest does not
-// describe, which the caller reports as "verification".
+// "changed": a fetched body did not match the pinned manifest, or a pinned file was gone (404 or
+// 410), as when the game redeploys during the install. The caller re-reads the build pointer and
+// installs the manifest it names, reusing every verified entry; an unchanged pointer means the
+// deploy serves bytes its manifest does not describe, which the caller reports as "verification".
 export type BuildInstallResult = "changed" | "complete";
 
 export class BuildInstallError extends Error {
@@ -233,6 +233,11 @@ export async function installBuild(
           aborted,
         ]);
         touch();
+        // A deploy removes the previous build's hashed files, so a pinned file that is gone means
+        // the build changed.
+        if (response.status === 404 || response.status === 410) {
+          throw new BodyChanged(`HTTP ${response.status} for ${file.url}`);
+        }
         if (response.status !== 200) {
           throw new Error(`HTTP ${response.status} for ${file.url}`);
         }

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Runs the browser install and update check (tests/e2e/run.ts) in the Playwright image whose
+# version matches the playwright-core devDependency. Arguments pass through, e.g. --long.
+set -euo pipefail
+checkout=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
+# shellcheck source=tests/container/stock
+source "${checkout}/tests/container/stock"
+playwright_version=$(sed -nE 's/^ *"playwright-core": "([0-9.]+)",?$/\1/p' "${checkout}/package.json")
+: "${playwright_version:?playwright-core must be pinned to an exact version in package.json}"
+: "${PLAYWRIGHT_IMAGE:=mcr.microsoft.com/playwright:v${playwright_version}-noble}"
+export CHECK_TIMEOUT_SECONDS=${CHECK_TIMEOUT_SECONDS:-3600}
+export CHECK_SCRATCH_SIZE=${CHECK_SCRATCH_SIZE:-1500m}
+# Chromium's Cache Storage fails writes under the default 256 descriptors.
+export CHECK_NOFILE=${CHECK_NOFILE:-4096}
+stock_begin "${checkout}"
+image=
+stock_image image "${PLAYWRIGHT_IMAGE}"
+# shellcheck disable=SC2016
+STOCK_NETWORK=bridge stock_run "${image}" -- /bin/sh -ec \
+    'npm ci --ignore-scripts --no-audit --no-fund --maxsockets=4 >&2; exec node tests/e2e/run.ts "$@"' sh "$@"
+stock_finish

@@ -9,8 +9,10 @@
   "scripts": {
     "check": "npm run lint && npm test && npm run build",
     "format": "prettier --write . && eslint --fix .",
-    "lint": "shellcheck -x -P SCRIPTDIR tests/container/stock tests/container/check-stock tests/container/node && markdownlint-cli2 && node scripts/typecheck.ts && prettier --check . && eslint --max-warnings 0 .",
+    "lint": "shellcheck -x -P SCRIPTDIR tests/container/stock tests/container/check-stock tests/container/node tests/container/e2e && markdownlint-cli2 && node scripts/typecheck.ts && prettier --check . && eslint --max-warnings 0 .",
     "test": "vitest run --maxWorkers=4",
+    "test:e2e": "tests/container/e2e",
+    "test:e2e:long": "tests/container/e2e --long",
     "verify": "npm run check",
     "prepare": "husky",
     "build": "node scripts/package-source.ts .claude/release-output && node scripts/release-artifact.ts .claude/release-output/game-kit-$npm_package_version.tgz"
@@ -28,6 +30,7 @@
     "lint-staged": "17.6.0",
     "markdownlint-cli2": "0.24.0",
     "phaser": "^4.2.1",
+    "playwright-core": "1.65.1",
     "prettier": "^3.9.10",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.71.2",

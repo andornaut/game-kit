@@ -70,7 +70,7 @@ _stock_container() {
     set +e
     timeout --signal=TERM --kill-after=10 "${CHECK_TIMEOUT_SECONDS:-900}" docker run --rm \
         --cidfile "${cidfile}" --user 19001:19001 --cpus 4 --memory "${CHECK_MEMORY:-4g}" \
-        --ulimit nofile=256:256 --pids-limit 512 --read-only --cap-drop ALL --security-opt no-new-privileges \
+        --ulimit "nofile=${CHECK_NOFILE:-256}:${CHECK_NOFILE:-256}" --pids-limit 512 --read-only --cap-drop ALL --security-opt no-new-privileges \
         --network "${network}" "${mounts[@]}" \
         --tmpfs "/scratch:rw,exec,nosuid,size=${CHECK_SCRATCH_SIZE:-1g},mode=1777" \
         --tmpfs "/tmp:rw,exec,nosuid,size=${CHECK_TMP_SIZE:-1g},mode=1777" \
