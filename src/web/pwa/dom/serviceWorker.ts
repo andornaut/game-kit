@@ -92,29 +92,18 @@ const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
   "x-content-type-options": "nosniff",
 };
-const JSON_SOURCE_HEADERS = new Set([
-  "age",
-  "cache-control",
-  "cf-cache-status",
-  "cf-ray",
-  "content-encoding",
-  "content-length",
-  "content-type",
-  "date",
-  "etag",
-  "expires",
-  "last-modified",
-  "server",
-  "vary",
-  "x-content-type-options",
-]);
-const DATA_SOURCE_HEADERS = new Set([
-  "alt-svc",
-  "nel",
-  "permissions-policy",
-  "referrer-policy",
-  "report-to",
-]);
+// Response headers that change what a verified JSON body means or which cached response it is.
+// Any other header, such as a CDN's transport or diagnostic headers (priority, server-timing),
+// carries no body semantics and is ignored. content-type, cache-control, vary, content-encoding,
+// content-length and x-content-type-options are checked by value below.
+const JSON_SEMANTIC_HEADERS = [
+  "clear-site-data",
+  "content-disposition",
+  "content-location",
+  "content-range",
+  "refresh",
+  "set-cookie",
+] as const;
 const dataProfile = (verified: VerifiedSource | undefined) =>
   verified?.family.responseProfile === "fetch-json-data-v1";
 const hasDataProfile = (build: PrecacheManifest) =>
@@ -129,10 +118,7 @@ function safeJsonSource(verified: VerifiedSource, url: string, response: Respons
     !/^application\/json(?:\s*;\s*charset\s*=\s*(?:"utf-8"|utf-8))?\s*$/i.test(
       headers.get("content-type") ?? "",
     ) ||
-    [...headers.keys()].some(
-      (name) =>
-        !JSON_SOURCE_HEADERS.has(name) && !(dataProfile(verified) && DATA_SOURCE_HEADERS.has(name)),
-    ) ||
+    JSON_SEMANTIC_HEADERS.some((name) => headers.has(name)) ||
     /(?:^|,)\s*(?:private|no-store)(?:\s|,|=|$)/i.test(headers.get("cache-control") ?? "") ||
     (headers.get("vary") ?? "")
       .split(",")

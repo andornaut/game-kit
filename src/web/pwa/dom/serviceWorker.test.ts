@@ -2313,7 +2313,7 @@ describe("guarded JSON data response profile", () => {
     });
   });
 
-  it("rejects colliding namespaces before resources and rejects unknown profile headers", async () => {
+  it("rejects colliding namespaces before resources and rejects body-semantics headers", async () => {
     const f = dataProfileFixture();
     const open = vi.fn();
     const listener = vi.fn();
@@ -2329,13 +2329,48 @@ describe("guarded JSON data response profile", () => {
     const source = vi.mocked(f.server.fetch).getMockImplementation()!;
     vi.mocked(f.server.fetch).mockImplementation(async (request) => {
       const response = await source(request);
-      response.headers.set("x-unqualified", "test");
+      response.headers.set("content-disposition", "attachment");
       return response;
     });
     const worker = startWorker(f.server, {}, f.manifest);
     await expect(withTimersRun(worker.install())).rejects.toThrow("Precache failed");
     expect(f.server.fetched).toHaveLength(9);
   });
+
+  // Cloudflare adds priority and server-timing to browser fetches; neither changes the body.
+  it("installs verified JSON whose responses carry headers without body semantics", async () => {
+    const f = dataProfileFixture();
+    const source = vi.mocked(f.server.fetch).getMockImplementation()!;
+    vi.mocked(f.server.fetch).mockImplementation(async (request) => {
+      const response = await source(request);
+      response.headers.set("priority", "u=3,i");
+      response.headers.set("server-timing", "cfExtPri");
+      response.headers.set("x-unqualified", "test");
+      return response;
+    });
+    const worker = startWorker(f.server, {}, f.manifest, undefined, [{ id: "page" }]);
+    await withTimersRun(worker.install());
+    expect(f.server.fetched).toHaveLength(3);
+    const aliases = await worker.storage.open(
+      verifiedJsonAliasCachePrefix(POLICY) + f.manifest.version,
+    );
+    expect(aliases.bodies.size).toBe(11);
+  });
+
+  it.each(["clear-site-data", "content-range", "refresh", "set-cookie"])(
+    "fails the install when verified JSON carries %s",
+    async (name) => {
+      const f = dataProfileFixture();
+      const source = vi.mocked(f.server.fetch).getMockImplementation()!;
+      vi.mocked(f.server.fetch).mockImplementation(async (request) => {
+        const response = await source(request);
+        response.headers.set(name, "x");
+        return response;
+      });
+      const worker = startWorker(f.server, {}, f.manifest);
+      await expect(withTimersRun(worker.install())).rejects.toThrow("Precache failed");
+    },
+  );
 
   it("preserves live profile pairs and reclaims both caches only after complete client-free activation", async () => {
     const f = dataProfileFixture();

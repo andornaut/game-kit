@@ -53,6 +53,10 @@ Shared runtime contracts have dedicated paths: `runtime/art/rgbaImage` provides 
 
 Every legacy API path remains available unchanged as a deprecated compatibility alias to the same implementation as its canonical replacement. This includes CSS and the type-only `buildInfo` declaration. Use canonical paths for new imports and migrate existing imports according to this mapping; aliases are not removed by this alignment. Internal helpers and private fixtures are not additional APIs. Older migration sections and the source inventory below retain legacy names under this compatibility policy. These package paths do not establish consumer adoption or game integration.
 
+## Verified JSON response headers in 0.58.1
+
+Fix. A verified JSON response no longer fails on a header name outside a fixed list, so browser fetches through a CDN that adds `priority` or `server-timing` install. Only `clear-site-data`, `content-disposition`, `content-location`, `content-range`, `refresh` and `set-cookie` fail it, alongside the existing content-type, cache-control, vary, encoding, length, nosniff, redirect and source URL checks. No game change is needed beyond the version.
+
 ## Exit availability in 0.58.0
 
 Additive. `runtime/web/pwa/appWindow` exports `canExitApp(createCloseWatcher, host)`: true only where the page runs in an installed app's window that a script can close, so a start screen shows Exit only there. It is `runsInAppWindow(host) && !appCannotClose(createCloseWatcher, host)`; read it as the page loads, and call `exitApp` when Exit is chosen.
