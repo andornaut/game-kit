@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 
-import { createGroupStore } from "./groupStore.ts";
+import { ACTIVATING_GRACE_MS, createGroupStore } from "./groupStore.ts";
 
 const context = (indexedDB: IDBFactory | undefined) => ({ indexedDB, now: () => 0 });
 
@@ -295,6 +295,17 @@ export async function proveNativeGroupStore(indexedDB: IDBFactory): Promise<read
       same(await resumed.commit("old", []), "blocked", "wrong rollback token remains fenced");
       await resumed.release("rollback");
       same(await resumed.commit("old", []), "stored", "explicit matching token releases intent");
+
+      check((await resumed.freeze("next", "orphan", 30000)) !== undefined, "orphan barrier");
+      same(await resumed.markActivating("orphan"), true, "orphan activation intent");
+      time = 30000 + ACTIVATING_GRACE_MS - 1;
+      same(await resumed.commit("old", []), "blocked", "activating intent holds through its grace");
+      time = 30000 + ACTIVATING_GRACE_MS;
+      same(
+        await resumed.commit("old", []),
+        "stored",
+        "a replaced owner's activating intent expires after its grace",
+      );
       await resumed.remove("__proto__");
       same(await resumed.read("__proto__"), undefined, "remove deletes only selected build");
       same(await resumed.read("constructor"), ["__proto__"], "other special build retained");

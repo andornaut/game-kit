@@ -292,6 +292,20 @@ async function storedCopy(
   return undefined;
 }
 
+// This version's own caches hold only entries that passed their checks when stored, so a switch
+// or activation proves an ordinary entry by presence instead of re-hashing every file within its
+// deadline. Verified JSON bodies and earlier versions' caches are still verified by storedCopy.
+async function presentCopy(holders: readonly Cache[], url: string): Promise<Response | undefined> {
+  for (const own of holders) {
+    // eslint-disable-next-line no-await-in-loop
+    const response = await own.match(url);
+    if (response !== undefined) {
+      return response;
+    }
+  }
+  return undefined;
+}
+
 const wait = (ms: number) =>
   new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
@@ -673,6 +687,7 @@ export function runServiceWorker(
     listedUrls: readonly string[],
     tracker: ReturnType<typeof createDownloadProgress>,
     activity: () => void,
+    trustOwn = false,
   ) => {
     const families = verifiedFamilies(build);
     const cache = await caches.open(name);
@@ -683,13 +698,18 @@ export function runServiceWorker(
       REUSE_CONCURRENCY,
       async (url) => {
         const verified = verifiedFor(build, url);
-        const response = await storedCopy(
-          dataProfile(verified) ? [dataCache!, cache] : [cache],
-          build.contentHashes[url],
-          build.byteSizes?.[url],
-          verified,
-          url,
-        );
+        const own = dataProfile(verified) ? [dataCache!, cache] : [cache];
+        // Verified JSON bodies keep their full identity check; only ordinary entries trust presence.
+        const response =
+          trustOwn && verified === undefined
+            ? await presentCopy(own, url)
+            : await storedCopy(
+                own,
+                build.contentHashes[url],
+                build.byteSizes?.[url],
+                verified,
+                url,
+              );
         if (response !== undefined && dataProfile(verified) && response.url !== "") {
           await dataCache!.put(url, jsonResponse(await response.arrayBuffer()));
         }
@@ -975,6 +995,7 @@ export function runServiceWorker(
     name: string,
     build: BuildRecord,
     activity: () => void = () => undefined,
+    trustOwn = false,
   ): Promise<boolean> => {
     const ready = build.manifest.groups === undefined ? [] : await groups.read(name);
     if (ready === undefined) {
@@ -987,14 +1008,18 @@ export function runServiceWorker(
     const complete = await mapBounded(
       REUSE_CONCURRENCY,
       async (url) => {
+        const verified = verifiedFor(build.manifest, url);
+        const own = dataProfile(verified) ? [dataCache!] : [cache];
         const complete =
-          (await storedCopy(
-            dataProfile(verifiedFor(build.manifest, url)) ? [dataCache!] : [cache],
-            build.manifest.contentHashes[url],
-            build.manifest.byteSizes?.[url],
-            verifiedFor(build.manifest, url),
-            url,
-          )) !== undefined;
+          (trustOwn && verified === undefined
+            ? await presentCopy(own, url)
+            : await storedCopy(
+                own,
+                build.manifest.contentHashes[url],
+                build.manifest.byteSizes?.[url],
+                verifiedFor(build.manifest, url),
+                url,
+              )) !== undefined;
         activity();
         return complete;
       },
@@ -1003,9 +1028,10 @@ export function runServiceWorker(
     return complete.every(Boolean);
   };
   const selectCompleteBuild = async (allowCurrent = true): Promise<boolean> => {
-    // Persist failure first so an interrupted activation cannot select an incomplete cache.
-    await writeRecord("selection", cacheName, null);
-    if (allowCurrent && (await completeBuild(cacheName, currentBuild))) {
+    // Remove the selection before checking, so an interrupted activation leaves no selection
+    // rather than a stale or failed one; navigationBuild then selects on demand.
+    await (await routing()).delete(recordUrl("selection", cacheName));
+    if (allowCurrent && (await completeBuild(cacheName, currentBuild, undefined, true))) {
       await writeRecord("selection", cacheName, cacheName);
       return true;
     }
@@ -1031,9 +1057,17 @@ export function runServiceWorker(
   };
   const navigationBuild = async (): Promise<string> => {
     const record = await (await routing()).match(recordUrl("selection", cacheName));
-    if (record === undefined) {
-      if (await completeBuild(cacheName, currentBuild)) {
+    // A missing record, or a null one an earlier kit left after an interrupted activation,
+    // selects on demand instead of failing every navigation.
+    const recorded: unknown = record === undefined ? undefined : await record.clone().json();
+    if (record === undefined || recorded === null) {
+      if (await selectCompleteBuild()) {
         return cacheName;
+      }
+      const fallback = await (await routing()).match(recordUrl("selection", cacheName));
+      const name: unknown = fallback === undefined ? undefined : await fallback.json();
+      if (typeof name === "string" && name.startsWith(policy.cacheNamePrefix)) {
+        return name;
       }
       throw new TypeError("No complete cached build");
     }
@@ -1460,13 +1494,23 @@ export function runServiceWorker(
           ]),
         ];
         await serialized(async (activity) => {
-          await stage(cacheName, manifest, requiredUrls(currentBuild, ids), progress, activity);
+          await stage(
+            cacheName,
+            manifest,
+            requiredUrls(currentBuild, ids),
+            progress,
+            activity,
+            true,
+          );
           if ((await groups.commit(cacheName, ids, barrierToken)) !== "stored") {
             throw new TypeError("Asset group activation barrier expired");
           }
         });
       }
-      if (!(await completeBuild(cacheName, currentBuild)) || Date.now() >= deadline) {
+      if (
+        !(await completeBuild(cacheName, currentBuild, undefined, true)) ||
+        Date.now() >= deadline
+      ) {
         port.postMessage("blocked");
         return;
       }
@@ -1515,7 +1559,14 @@ export function runServiceWorker(
             // Functional fetch events wait until this activation promise settles.
             await serialized(async (activity) => {
               const ids = [...new Set([...manifest.groups!.initial, ...(await installedUnion())])];
-              await stage(cacheName, manifest, requiredUrls(currentBuild, ids), progress, activity);
+              await stage(
+                cacheName,
+                manifest,
+                requiredUrls(currentBuild, ids),
+                progress,
+                activity,
+                true,
+              );
               if ((await groups.commit(cacheName, ids)) !== "stored") {
                 throw new TypeError("Asset group activation could not commit readiness");
               }

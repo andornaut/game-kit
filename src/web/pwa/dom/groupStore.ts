@@ -1,5 +1,10 @@
 export type GroupSnapshot = Readonly<Record<string, readonly string[]>>;
 
+// How long an activating barrier outlives its deadline. A browser ends an activate event that runs
+// longer than about five minutes, so an owner replaced or terminated before finishing activation
+// no longer blocks other builds' commits after this.
+export const ACTIVATING_GRACE_MS = 5 * 60_000;
+
 export interface GroupFreeze {
   readonly activating: boolean;
   readonly snapshot: GroupSnapshot;
@@ -175,7 +180,11 @@ export function createGroupStore(
     return time;
   };
   const currentBarrier = (state: StoredState, time = clock()): Barrier | undefined => {
-    if (state.barrier?.phase === "pending" && time >= state.barrier.deadline) {
+    const barrier = state.barrier;
+    if (
+      barrier !== undefined &&
+      time >= barrier.deadline + (barrier.phase === "activating" ? ACTIVATING_GRACE_MS : 0)
+    ) {
       delete state.barrier;
     }
     return state.barrier;

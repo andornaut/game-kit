@@ -53,6 +53,10 @@ Shared runtime contracts have dedicated paths: `runtime/art/rgbaImage` provides 
 
 Every legacy API path remains available unchanged as a deprecated compatibility alias to the same implementation as its canonical replacement. This includes CSS and the type-only `buildInfo` declaration. Use canonical paths for new imports and migrate existing imports according to this mapping; aliases are not removed by this alignment. Internal helpers and private fixtures are not additional APIs. Older migration sections and the source inventory below retain legacy names under this compatibility policy. These package paths do not establish consumer adoption or game integration.
 
+## Activation recovery in 0.58.2
+
+Fix. An interrupted or failed activation no longer leaves every navigation failing with "No complete cached build": the worker removes its selection before checking and selects a complete build on demand at the next navigation. An activating group barrier whose owner was replaced expires `ACTIVATING_GRACE_MS` (five minutes) after its deadline, so later installs are no longer blocked. A switch and an activation check this version's own ordinary cached entries by presence instead of re-hashing them, since each was verified when stored; verified JSON bodies keep their full identity check, so Update now completes within `SWITCH_TIMEOUT_MS` on slow devices. No game change is needed beyond the version.
+
 ## Verified JSON response headers in 0.58.1
 
 Fix. A verified JSON response no longer fails on a header name outside a fixed list, so browser fetches through a CDN that adds `priority` or `server-timing` install. Only `clear-site-data`, `content-disposition`, `content-location`, `content-range`, `refresh` and `set-cookie` fail it, alongside the existing content-type, cache-control, vary, encoding, length, nosniff, redirect and source URL checks. No game change is needed beyond the version.

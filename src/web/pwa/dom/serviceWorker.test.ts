@@ -1373,6 +1373,44 @@ describe("document build pins", () => {
     expect(server.fetched).toEqual([]);
   });
 
+  it("recovers navigation after an interrupted activation left a null selection", async () => {
+    const worker = startWorker(new FakeServer(secondFiles), {}, manifestFor("b", secondFiles));
+    await worker.install();
+    const routing = await worker.storage.open("game-kit-routing:game-");
+    await routing.put(
+      `${ORIGIN}/.game-kit-routing/selection/game-b`,
+      new Response(JSON.stringify(null)),
+    );
+    expect(await worker.respond(requestFor("/play/", true), "", "new-document")).toBe("page B");
+  });
+
+  it("switches to an installed build without re-hashing its verified entries", async () => {
+    const storage = new FakeCaches();
+    const clients = [{ id: "requester" }];
+    const first = startWorker(
+      new FakeServer(firstFiles),
+      {},
+      manifestFor("a", firstFiles),
+      storage,
+      clients,
+    );
+    await first.install();
+    await first.activate();
+    const second = startWorker(
+      new FakeServer(secondFiles),
+      {},
+      manifestFor("b", secondFiles),
+      storage,
+      clients,
+    );
+    await second.install();
+    const digest = vi.spyOn(crypto.subtle, "digest");
+    expect(await second.requestActivation("requester")).toEqual(["activating"]);
+    await second.activate();
+    expect(digest).not.toHaveBeenCalled();
+    digest.mockRestore();
+  });
+
   it("does not serve B when natural activation has no complete cached build", async () => {
     const worker = startWorker(new FakeServer(secondFiles), {}, manifestFor("b", secondFiles));
     await worker.install();
