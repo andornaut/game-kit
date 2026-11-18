@@ -331,16 +331,15 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
 
   it("builds one self-contained classic worker with no manifest written in", async () => {
     const root = site("icon");
-    const shared = fileURLToPath(new URL("../downloadProgress.ts", import.meta.url));
+    const shared = fileURLToPath(new URL("../buildContract.ts", import.meta.url));
     writeFileSync(
       join(root, "main.js"),
-      'import { downloadByteTotal } from "@progress";' +
-        'console.log(downloadByteTotal({a: 7}, ["a"]));',
+      'import { buildManifestUrl } from "@contract"; console.log(buildManifestUrl("page"));',
     );
     writeFileSync(
       join(root, "sw.js"),
-      'import { downloadByteTotal } from "@progress";' +
-        'self.total = downloadByteTotal({a: 11}, ["a"]);' +
+      'import { buildManifestUrl } from "@contract";' +
+        'self.total = buildManifestUrl("worker");' +
         "self.marker = __WORKER_MARKER__;",
     );
     const workerOf = async (icon: string) => {
@@ -358,7 +357,7 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
             serviceWorkerSource: join(root, "sw.js"),
           }),
         ],
-        resolve: { alias: { "@progress": shared } },
+        resolve: { alias: { "@contract": shared } },
         root,
       });
       if (!("output" in result)) {
@@ -373,14 +372,14 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     }
     const scope: Record<string, unknown> = {};
     new Script(worker.source).runInNewContext({ self: scope });
-    expect(scope.total).toBe(11);
+    expect(scope.total).toBe("/.game-kit/manifest-worker.json");
     expect(scope.marker).toBe("captured");
-    expect(worker.source).toContain("downloadByteTotal");
+    expect(worker.source).toContain("buildManifestUrl");
     const page = output.filter((file) => file.type === "chunk");
     expect(page).toHaveLength(1);
     expect(page[0]?.imports).toEqual([]);
     expect(page[0]?.dynamicImports).toEqual([]);
-    expect(page[0]?.code).toContain("downloadByteTotal");
+    expect(page[0]?.code).toContain("buildManifestUrl");
     const redrawn = (await workerOf("redrawn")).find(
       ({ fileName }) => fileName === "offline-worker.js",
     );
@@ -397,9 +396,9 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
             serviceWorkerSource: join(root, "sw.js"),
           }),
         ],
-        resolve: { alias: { "@progress": shared } },
+        resolve: { alias: { "@contract": shared } },
         root,
-        worker: { rolldownOptions: { external: ["@progress"] } },
+        worker: { rolldownOptions: { external: ["@contract"] } },
       }),
     ).rejects.toThrow(/split or external/);
     for (const code of [

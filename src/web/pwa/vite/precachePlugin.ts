@@ -261,13 +261,8 @@ export function precachePlugin({
             isHashedAssetUrl(policy, url) ? "" : contentHash(bytes),
           ]),
         );
-        const fingerprint = `${precacheFingerprint(
-          policy,
-          contentHashes,
-          byteSizes,
-          undefined,
-          verified,
-        )}\n${JSON.stringify({ boot: bootUrls, buildId: recordedBuildId, sounds })}`;
+        const identity = JSON.stringify({ boot: bootUrls, buildId: recordedBuildId, sounds });
+        const fingerprint = `${precacheFingerprint(policy, contentHashes, byteSizes, verified)}\n${identity}`;
 
         const createManifest = (): BuildManifest => {
           try {

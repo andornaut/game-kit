@@ -1,13 +1,9 @@
-import { isBuildId } from "./buildIdentity.ts";
 import { type CachePolicy, isHashedAssetUrl } from "./cachePolicy.ts";
-import { type PrecacheGroups, validatePrecacheGroups } from "./precacheGroups.ts";
 import {
   validateVerifiedJsonBodies,
   verifiedJsonAliasCachePrefix,
   type VerifiedJsonBody,
 } from "./verifiedJsonBody.ts";
-
-export type { PrecacheManifest } from "./precacheManifest.ts";
 
 // The build output, reduced to what the precache walk reads. Vite records the CSS and assets a
 // chunk imports under viteMetadata.
@@ -66,34 +62,19 @@ export function webManifestIconUrls(manifestJson: unknown): string[] {
 // The text a version hash is computed over: each URL with its content hash, in URL order.
 // Legacy hashed assets need no content hash because their name changes with their content.
 // Optional byte sizes must cover exactly those URLs and become part of the version fingerprint.
-// Grouped builds include every hash, canonical partition and full source identity.
 export function precacheFingerprint(
   policy: CachePolicy,
   contentHashes: ReadonlyMap<string, string>,
   byteSizes?: ReadonlyMap<string, number>,
-  grouped?: { readonly buildId: string; readonly groups: PrecacheGroups },
   verifiedJsonBodies?: readonly VerifiedJsonBody[],
 ): string {
   if (byteSizes !== undefined && byteSizes.size !== contentHashes.size) {
     throw new RangeError("Precache byte sizes must cover exactly the listed URLs");
   }
   const urls = [...contentHashes.keys()].sort();
-  let metadata: { readonly buildId: string; readonly groups: PrecacheGroups } | undefined;
-  if (grouped !== undefined) {
-    if (!isBuildId(grouped.buildId)) {
-      throw new RangeError("Grouped precache requires a full 40-character source build ID");
-    }
-    metadata = { buildId: grouped.buildId, groups: validatePrecacheGroups(urls, grouped.groups) };
-    if (urls.some((url) => !contentHashes.get(url))) {
-      throw new RangeError("Grouped precache requires a content hash for every URL");
-    }
-  }
   const files = urls
     .map((url) => {
-      const hash =
-        metadata === undefined && isHashedAssetUrl(policy, url)
-          ? ""
-          : (contentHashes.get(url) ?? "");
+      const hash = isHashedAssetUrl(policy, url) ? "" : (contentHashes.get(url) ?? "");
       const entry = `${url} ${hash}`;
       if (byteSizes === undefined) {
         return entry;
@@ -108,10 +89,9 @@ export function precacheFingerprint(
   if (verifiedJsonBodies?.some((family) => family.responseProfile !== undefined)) {
     verifiedJsonAliasCachePrefix(policy);
   }
-  const legacy = metadata === undefined ? files : `${files}\n${JSON.stringify(metadata)}`;
   return verifiedJsonBodies === undefined
-    ? legacy
-    : `${legacy}\n${JSON.stringify({
+    ? files
+    : `${files}\n${JSON.stringify({
         verifiedJsonBodies: validateVerifiedJsonBodies(
           {
             urls,

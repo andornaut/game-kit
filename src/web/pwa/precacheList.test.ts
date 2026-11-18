@@ -148,59 +148,6 @@ describe("precacheFingerprint", () => {
       `/a hash ${Number.MAX_SAFE_INTEGER}`,
     );
   });
-
-  it("fingerprints full build identity, ordered initial groups, partition and every grouped content hash", () => {
-    const buildId = "0123456789abcdef0123456789abcdef01234567";
-    const hashes = new Map([
-      ["/assets/a.bin", "a"],
-      ["/b", "b"],
-    ]);
-    const groups = {
-      initial: ["first", "second"],
-      urls: { first: ["/assets/a.bin"], second: ["/b"] },
-    };
-    const fingerprint = precacheFingerprint(policy, hashes, undefined, { buildId, groups });
-    expect(
-      precacheFingerprint(policy, new Map([...hashes].reverse()), undefined, {
-        buildId,
-        groups: {
-          initial: [...groups.initial],
-          urls: Object.fromEntries([
-            ["second", ["/b", "/b"]],
-            ["first", ["/assets/a.bin"]],
-          ]),
-        },
-      }),
-    ).toBe(fingerprint);
-    for (const metadata of [
-      { buildId: "1123456789abcdef0123456789abcdef01234567", groups },
-      { buildId, groups: { ...groups, initial: ["second", "first"] } },
-      {
-        buildId,
-        groups: { initial: groups.initial, urls: { first: ["/b"], second: ["/assets/a.bin"] } },
-      },
-    ]) {
-      expect(precacheFingerprint(policy, hashes, undefined, metadata)).not.toBe(fingerprint);
-    }
-    expect(
-      precacheFingerprint(policy, new Map(hashes).set("/assets/a.bin", "changed"), undefined, {
-        buildId,
-        groups,
-      }),
-    ).not.toBe(fingerprint);
-    expect(() =>
-      precacheFingerprint(policy, hashes, undefined, { buildId: buildId.slice(0, 8), groups }),
-    ).toThrow(/full 40/);
-    expect(() =>
-      precacheFingerprint(policy, hashes, undefined, { buildId: `${buildId}\n`, groups }),
-    ).toThrow(/full 40/);
-    expect(() =>
-      precacheFingerprint(policy, new Map(hashes).set("/assets/a.bin", ""), undefined, {
-        buildId,
-        groups,
-      }),
-    ).toThrow(/content hash/);
-  });
 });
 
 it("fingerprints canonical full-body reuse metadata without changing the absent legacy form", () => {
@@ -215,16 +162,14 @@ it("fingerprints canonical full-body reuse metadata without changing the absent 
   ]);
   const family = { byteSize: 12, sha256: "a".repeat(64), urls: ["/b.json", "/a.json"] };
   const old = precacheFingerprint(policy, hashes, sizes);
-  expect(precacheFingerprint(policy, hashes, sizes, undefined, undefined)).toBe(old);
-  const enabled = precacheFingerprint(policy, hashes, sizes, undefined, [family]);
+  expect(precacheFingerprint(policy, hashes, sizes, undefined)).toBe(old);
+  const enabled = precacheFingerprint(policy, hashes, sizes, [family]);
   expect(enabled).not.toBe(old);
   expect(
-    precacheFingerprint(policy, hashes, sizes, undefined, [
-      { ...family, urls: [...family.urls].reverse() },
-    ]),
+    precacheFingerprint(policy, hashes, sizes, [{ ...family, urls: [...family.urls].reverse() }]),
   ).toBe(enabled);
   expect(
-    precacheFingerprint(policy, hashes, sizes, undefined, [{ ...family, sha256: "b".repeat(64) }]),
+    precacheFingerprint(policy, hashes, sizes, [{ ...family, sha256: "b".repeat(64) }]),
   ).not.toBe(enabled);
 });
 
@@ -234,11 +179,11 @@ it("fingerprints the explicit response profile while leaving legacy metadata unc
   const hashes = new Map(urls.map((url) => [url, "AAAAAAAA"]));
   const sizes = new Map(urls.map((url) => [url, 2]));
   const family = { byteSize: 2, sha256: "0".repeat(64), urls };
-  const legacy = precacheFingerprint(policy, hashes, sizes, undefined, [family]);
+  const legacy = precacheFingerprint(policy, hashes, sizes, [family]);
   const profile = { ...family, responseProfile: "fetch-json-data-v1" as const };
-  expect(precacheFingerprint(policy, hashes, sizes, undefined, [profile])).not.toBe(legacy);
-  expect(precacheFingerprint(policy, hashes, sizes, undefined, [family])).toBe(legacy);
+  expect(precacheFingerprint(policy, hashes, sizes, [profile])).not.toBe(legacy);
+  expect(precacheFingerprint(policy, hashes, sizes, [family])).toBe(legacy);
   expect(() =>
-    precacheFingerprint({ ...policy, cacheNamePrefix: "" }, hashes, sizes, undefined, [profile]),
+    precacheFingerprint({ ...policy, cacheNamePrefix: "" }, hashes, sizes, [profile]),
   ).toThrow("collides");
 });

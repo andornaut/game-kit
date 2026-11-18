@@ -122,14 +122,33 @@ const bodyHashes = new Map(verifiedFamily.urls.map((url) => [url,
 const bodySizes = new Map(verifiedFamily.urls.map((url) => [url, 2]));
 const bodyPolicy = {cacheNamePrefix:'proof-',hashedAssetPrefix:'/assets/'};
 const legacyFingerprint = precacheFingerprint(bodyPolicy, bodyHashes, bodySizes);
-assert.equal(precacheFingerprint(bodyPolicy, bodyHashes, bodySizes, undefined, undefined), legacyFingerprint);
-assert.notEqual(precacheFingerprint(bodyPolicy, bodyHashes, bodySizes, undefined, [verifiedFamily]), legacyFingerprint);
-for (const privateHelper of ['runtime/web/pwa/verifiedJsonBody', 'web/pwa/verifiedJsonBody',
-  'runtime/web/pwa/precacheWire', 'web/pwa/precacheWire']) {
-  assert.throws(() => import.meta.resolve('@andornaut/game-kit/' + privateHelper), {
+assert.equal(precacheFingerprint(bodyPolicy, bodyHashes, bodySizes, undefined), legacyFingerprint);
+assert.notEqual(precacheFingerprint(bodyPolicy, bodyHashes, bodySizes, [verifiedFamily]), legacyFingerprint);
+for (const unexported of ['runtime/web/pwa/verifiedJsonBody', 'web/pwa/verifiedJsonBody',
+  'runtime/web/pwa/buildRecords', 'runtime/web/pwa/dom/verifiedJsonSource',
+  'runtime/web/pwa/precacheManifest', 'runtime/web/pwa/updateReady',
+  'runtime/web/pwa/downloadProgress', 'runtime/web/pwa/serviceWorkerUrl',
+  'runtime/web/pwa/dom/offlinePlay', 'runtime/web/pwa/dom/updateReady',
+  'runtime/web/pwa/assetGroups', 'runtime/web/pwa/precacheGroups']) {
+  assert.throws(() => import.meta.resolve('@andornaut/game-kit/' + unexported), {
     code: 'ERR_PACKAGE_PATH_NOT_EXPORTED'
   });
 }
+import { createBuildManifest, createBuildPointer } from '@andornaut/game-kit/build/buildManifest';
+import { BUILD_POINTER_URL, buildManifestUrl } from '@andornaut/game-kit/runtime/web/pwa/buildContract';
+const builtManifest = createBuildManifest({
+  boot: ['/play/'], buildId: UNKNOWN_COMMIT,
+  files: [{ byteSize: 2, sha256: verifiedFamily.sha256, url: '/play/' }],
+  sounds: {}, version: '0123456789abcdef',
+});
+assert.deepEqual(createBuildPointer(builtManifest), {
+  buildId: UNKNOWN_COMMIT, manifest: buildManifestUrl('0123456789abcdef'), schema: 1,
+  version: '0123456789abcdef',
+});
+assert.equal(BUILD_POINTER_URL, '/.game-kit/build.json');
+import { browserLaunchContext, createLaunch } from '@andornaut/game-kit/runtime/web/pwa/dom/launch';
+assert.equal(browserLaunchContext(bodyPolicy), undefined);
+assert.equal(typeof createLaunch, 'function');
 import { validateLayoutTree } from '@andornaut/game-kit/runtime/ui/layoutTree';
 import { mountLoadingFailure } from '@andornaut/game-kit/runtime/web/progress/dom/loadingFailure';
 validateLayoutTree({}, {kind:'columns',key:'columns',gap:0,padding:0,sizing:{mode:'equal'},children:[]});
@@ -237,11 +256,12 @@ export function factoryActionPorts(bind: HoldActionBinding): [
   Pick<LoadingFailureContext,'bindHoldAction'>,Pick<CrashScreenOptions,'bindHoldAction'>,
 ] { return [{bindHoldAction:bind},{bindHoldAction:bind}]; }
 import type { RgbaImage } from '@andornaut/game-kit/runtime/art/rgbaImage';
-import type { PrecacheManifest } from '@andornaut/game-kit/runtime/web/pwa/precacheManifest';
+import type {
+  BuildManifest, LaunchProgress, UpdateOffer, UpdateState,
+} from '@andornaut/game-kit/runtime/web/pwa/buildContract';
 import { runServiceWorker } from '@andornaut/game-kit/runtime/web/pwa/dom/serviceWorker';
-import type { PrecacheManifest as LegacyManifest } from '@andornaut/game-kit/web/pwa/precacheList';
 import type { PrecachePluginOptions } from '@andornaut/game-kit/build/precachePlugin';
-type VerifiedFamily = NonNullable<PrecacheManifest['verifiedJsonBodies']>[number];
+type VerifiedFamily = NonNullable<BuildManifest['verifiedJsonBodies']>[number];
 export const verifiedFamily: VerifiedFamily = {
   byteSize: 2, sha256: '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
   urls: ['/left.json', '/right.json'],
@@ -257,9 +277,11 @@ export const profiledBodyOptions: Pick<PrecachePluginOptions, 'verifiedJsonBodie
 };
 import { storageFixture } from '@andornaut/game-kit/test/storageFixture';
 export const image: RgbaImage = { data: new Uint8Array(4), height: 1, width: 1 };
-export const manifest: PrecacheManifest = { contentHashes: {}, sounds: {}, urls: [], version: 'proof' };
+export const manifest: BuildManifest = {
+  boot: [], buildId: 'unknown', files: [], schema: 1, sounds: {}, version: 'proof',
+};
 export function bootWorker(policy: Parameters<typeof runServiceWorker>[0]):void { runServiceWorker(policy); }
-export const legacyManifest: LegacyManifest = { ...manifest, verifiedJsonBodies: [verifiedFamily] };
+export const familyManifest: BuildManifest = { ...manifest, verifiedJsonBodies: [verifiedFamily] };
 export const fixture = storageFixture();
 import type { LayoutColumnSizing, LayoutColumnTrack, LayoutNode } from '@andornaut/game-kit/runtime/ui/layoutTree';
 import {
@@ -267,7 +289,19 @@ import {
   type LoadingFailureActionTextStyle,
   type LoadingFailurePresentation, type LoadingFailurePresentationView,
 } from '@andornaut/game-kit/runtime/web/progress/dom/loadingFailure';
-import type { LaunchOptions } from '@andornaut/game-kit/runtime/web/pwa/dom/launch';
+import {
+  browserLaunchContext, createLaunch, type Launch, type LaunchOptions,
+} from '@andornaut/game-kit/runtime/web/pwa/dom/launch';
+export function startLaunch(
+  onProgress: (progress: LaunchProgress) => void, onUpdateState: (state: UpdateState) => void,
+  onUpdateReady: (offer: UpdateOffer) => void,
+): Launch | undefined {
+  const context = browserLaunchContext({cacheNamePrefix:'proof-',hashedAssetPrefix:'/assets/'});
+  return context === undefined ? undefined : createLaunch(context, {
+    onFailure(failure) { failure.retry(); }, onProgress, onUpdateReady, onUpdateState,
+    serviceWorkerUrl:'/sw.js',
+  });
+}
 export function mountInstallationFailure(parent: HTMLElement): LaunchOptions['onFailure'] {
   let retry: (() => void) | undefined;
   const failure = mountLoadingFailure({onRetry(){ retry?.(); }},parent);
