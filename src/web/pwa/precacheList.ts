@@ -9,11 +9,6 @@ import {
 
 export type { PrecacheManifest } from "./precacheManifest.ts";
 
-// The identifier a worker entry declares (declare const GAME_KIT_PRECACHE_MANIFEST:
-// PrecacheManifest) and passes to dom/serviceWorker's runServiceWorker; vite/precachePlugin
-// replaces it with the manifest's JSON.
-export const PRECACHE_MANIFEST_PLACEHOLDER = "GAME_KIT_PRECACHE_MANIFEST";
-
 // The build output, reduced to what the precache walk reads. Vite records the CSS and assets a
 // chunk imports under viteMetadata.
 export interface BundleFile {

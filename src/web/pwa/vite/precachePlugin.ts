@@ -5,23 +5,22 @@ import type { Plugin, ResolvedConfig } from "vite";
 import { isBuildId } from "../../build/buildVersion.ts";
 import { contentHash } from "../../build/vite/contentHash.ts";
 import { gitBuildMetadata } from "../../build/vite/gitHead.ts";
+import { BUILD_POINTER_URL, type BuildManifest, buildManifestUrl } from "../buildContract.ts";
+import { createBuildManifest, createBuildPointer, UNKNOWN_BUILD_ID } from "../buildManifest.ts";
 import { cacheKeyFor, type CachePolicy, isHashedAssetUrl } from "../cachePolicy.ts";
-import { type PrecacheGroups, validatePrecacheGroups } from "../precacheGroups.ts";
 import {
   bundleDependencies,
   type BundleFile,
-  PRECACHE_MANIFEST_PLACEHOLDER,
   precacheFingerprint,
-  type PrecacheManifest,
   rootRelativeUrls,
   webManifestIconUrls,
 } from "../precacheList.ts";
-import { encodePrecacheManifest } from "../precacheWire.ts";
 import { validateVerifiedJsonBodies } from "../verifiedJsonBody.ts";
-import { assertClassicWorker, classicWorker } from "./classicWorker.ts";
+import { classicWorker } from "./classicWorker.ts";
 
 // Hashed files the page loads at runtime rather than links, such as a game's art: the URLs to
-// precache, and sound files by format, for the worker to store the format the page plays.
+// precache, and each sound's logical URL mapped to its format alternatives' URLs, for the
+// installer to store the alternative the page plays.
 export interface HashedFiles {
   readonly sounds: Readonly<Record<string, readonly string[]>>;
   readonly urls: readonly string[];
@@ -35,11 +34,15 @@ export type VerifiedJsonFamilySelection =
     };
 
 export interface PrecachePluginOptions {
+  // The full source commit the build is made from (web/build/buildVersion's BuildMetadata). When
+  // set, the build fails unless it matches clean Git source and the app's __BUILD_ID__ define.
+  // The manifest records UNKNOWN_BUILD_ID when unset.
   readonly buildId?: string | undefined;
+  // The files the game reads while booting after install, selected from the final discovery
+  // like verifiedJsonBodies. None when unset.
+  readonly boot?: (files: HashedFiles) => readonly string[];
   // Explicit public, URL-independent JSON families selected from final emitted discovery.
   readonly verifiedJsonBodies?: (files: HashedFiles) => readonly VerifiedJsonFamilySelection[];
-  // Called on the complete final normalized discovery, including public links and all sounds.
-  readonly groups?: (files: HashedFiles) => PrecacheGroups;
   // The hashed files beyond what the page links, read once the bundle is written: bundleFile
   // gives a build output file's bytes by its URL. Throws to fail the build.
   hashedFiles?: (bundleFile: (url: string) => Uint8Array | undefined) => HashedFiles;
@@ -48,7 +51,7 @@ export interface PrecachePluginOptions {
   pageHtmlFile: string;
   readonly policy: CachePolicy;
   // The worker entry's source module, as an absolute path. It calls dom/serviceWorker's
-  // runServiceWorker with the policy and the GAME_KIT_PRECACHE_MANIFEST it declares.
+  // runServiceWorker with the policy.
   serviceWorkerSource: string;
   // The worker's file name in the build output; "sw.js" when unset.
   serviceWorkerFileName?: string;
@@ -58,13 +61,21 @@ function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-// Builds the service worker with the game page's precache list written into it: the page, the
+// Builds the service worker as one self-contained classic script, and writes the build's
+// manifest and pointer into the build output. The manifest, at buildManifestUrl(version), lists
+// every file the complete build needs offline with its full SHA-256 and byte size: the page, the
 // build output it loads, the public files it links, the web app manifest's icons and the hashed
-// files hashedFiles names. Sounds are listed apart, by format, for the worker to precache the one
-// format the page plays.
+// files hashedFiles names, every sound alternative included. The pointer, at BUILD_POINTER_URL,
+// names the current version, its buildId and its manifest URL. The version changes with any
+// listed file's content and with the buildId, sounds or boot files.
+//
+// Games must serve BUILD_POINTER_URL (/.game-kit/build.json) with Cache-Control: no-store, so
+// every launch and resume reads the deployed build, and every /.game-kit/manifest-<version>.json
+// as immutable (Cache-Control: public, max-age=31536000, immutable), since a version names one
+// manifest's content.
 export function precachePlugin({
+  boot,
   buildId,
-  groups,
   hashedFiles = () => ({ sounds: {}, urls: [] }),
   pageHtmlFile,
   policy,
@@ -76,19 +87,11 @@ export function precachePlugin({
   let config: ResolvedConfig;
   const checkIdentity = () => {
     if (!isBuildId(buildId) || gitBuildMetadata(root, process.env).buildId !== buildId) {
-      throw new Error("precache: grouped builds require a matching clean source and full buildId");
+      throw new Error("precache: buildId requires a matching clean source and full buildId");
     }
   };
   return {
-    apply:
-      groups === undefined
-        ? "build"
-        : (_config, env) => {
-            if (env.command !== "build") {
-              throw new Error("precache: grouped precache is unavailable in development");
-            }
-            return true;
-          },
+    apply: "build",
     async buildStart() {
       const worker = await classicWorker(config, serviceWorkerFileName, serviceWorkerSource);
       for (const file of worker.watchFiles) {
@@ -99,10 +102,10 @@ export function precachePlugin({
     configResolved(resolved) {
       config = resolved;
       root = config.root;
-      if (groups !== undefined) {
+      if (buildId !== undefined) {
         checkIdentity();
         if (config.define?.__BUILD_ID__ !== JSON.stringify(buildId)) {
-          throw new Error("precache: app __BUILD_ID__ must match the grouped worker buildId");
+          throw new Error("precache: app __BUILD_ID__ must match the precache buildId");
         }
       }
     },
@@ -196,36 +199,30 @@ export function precachePlugin({
           }
         }
 
-        // Each listed file outside the hashed build output, sounds included, by its content: the
-        // version changes with any of them, and an install reuses an earlier version's copy of
-        // one only where its content is unchanged. A hashed file's name stands for its content.
+        // Every listed file, sound alternatives included, by its content.
         const listed = new Map([
           ...contents,
           ...soundUrls.map((url) => [cacheKeyFor(url), requiredBundleBytes(url)] as const),
         ]);
         const sounds = Object.fromEntries(
-          Object.entries(hashed.sounds).map(([format, urls]) => [
-            format,
-            [...new Set(urls.map(cacheKeyFor))],
-          ]),
+          Object.entries(hashed.sounds)
+            .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+            .map(([logical, urls]) => [logical, [...new Set(urls.map(cacheKeyFor))]]),
         );
-        let grouped: { buildId: string; groups: PrecacheGroups } | undefined;
         const discovery: HashedFiles = Object.freeze({
           sounds: Object.freeze(
             Object.fromEntries(
-              Object.entries(sounds).map(([format, urls]) => [format, Object.freeze([...urls])]),
+              Object.entries(sounds).map(([logical, urls]) => [logical, Object.freeze([...urls])]),
             ),
           ),
           urls: Object.freeze([...contents.keys()].sort()),
         });
-        if (groups !== undefined) {
+        if (buildId !== undefined) {
           checkIdentity();
-          grouped = {
-            buildId: buildId!,
-            groups: validatePrecacheGroups([...listed.keys()], groups(discovery)),
-          };
         }
         const byteSizes = new Map([...listed].map(([url, bytes]) => [url, bytes.byteLength]));
+        const sha256s = new Map([...listed].map(([url, bytes]) => [url, sha256Hex(bytes)]));
+        const bootUrls = [...(boot?.(discovery) ?? [])];
         const verified =
           verifiedJsonBodies === undefined
             ? undefined
@@ -242,12 +239,7 @@ export function precachePlugin({
                   }
                   JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
                   for (const url of urls) {
-                    const other = listed.get(url);
-                    if (
-                      other === undefined ||
-                      other.byteLength !== body.byteLength ||
-                      other.some((byte, i) => byte !== body[i])
-                    ) {
+                    if (sha256s.get(url) !== sha256s.get(urls[0]!)) {
                       throw new Error("precache: verified JSON family bodies differ");
                     }
                   }
@@ -256,56 +248,63 @@ export function precachePlugin({
                     ...(descriptor === undefined
                       ? {}
                       : { responseProfile: descriptor.responseProfile }),
-                    sha256: sha256Hex(body),
+                    sha256: sha256s.get(urls[0]!)!,
                     urls,
                   };
                 }),
               );
+        const recordedBuildId = buildId ?? UNKNOWN_BUILD_ID;
+        // Hashed build output contributes its name and size, as its name changes with its content.
         const contentHashes = new Map(
-          [...listed]
-            .filter(([url]) => grouped !== undefined || !isHashedAssetUrl(policy, url))
-            .map(([url, bytes]) => [url, contentHash(bytes)] as const),
+          [...listed].map(([url, bytes]) => [
+            url,
+            isHashedAssetUrl(policy, url) ? "" : contentHash(bytes),
+          ]),
         );
-        const fingerprint = sha256Hex(
-          encoder.encode(
-            precacheFingerprint(
-              policy,
-              new Map([...listed.keys()].map((url) => [url, contentHashes.get(url) ?? ""])),
-              byteSizes,
-              grouped,
-              verified,
-            ),
-          ),
-        );
-        const manifest: PrecacheManifest = {
-          ...(grouped === undefined ? {} : grouped),
-          byteSizes: Object.fromEntries(
-            [...byteSizes.keys()].sort().map((url) => [url, byteSizes.get(url)!]),
-          ),
-          contentHashes: Object.fromEntries(
-            [...contentHashes.keys()].sort().map((url) => [url, contentHashes.get(url) ?? ""]),
-          ),
-          sounds,
-          ...(verified === undefined ? {} : { verifiedJsonBodies: verified }),
-          urls: [...contents.keys()].sort(),
-          version: fingerprint.slice(0, 16),
-        };
+        const fingerprint = `${precacheFingerprint(
+          policy,
+          contentHashes,
+          byteSizes,
+          undefined,
+          verified,
+        )}\n${JSON.stringify({ boot: bootUrls, buildId: recordedBuildId, sounds })}`;
 
-        const serviceWorker = bundle[serviceWorkerFileName];
-        if (
-          serviceWorker?.type !== "asset" ||
-          typeof serviceWorker.source !== "string" ||
-          !serviceWorker.source.includes(PRECACHE_MANIFEST_PLACEHOLDER)
-        ) {
-          this.error(
-            `precache: ${serviceWorkerFileName} has no ${PRECACHE_MANIFEST_PLACEHOLDER} to replace`,
-          );
+        const createManifest = (): BuildManifest => {
+          try {
+            return createBuildManifest({
+              boot: bootUrls,
+              buildId: recordedBuildId,
+              files: [...listed.keys()].map((url) => ({
+                byteSize: byteSizes.get(url)!,
+                sha256: sha256s.get(url)!,
+                url,
+              })),
+              sounds,
+              version: sha256Hex(encoder.encode(fingerprint)).slice(0, 16),
+              ...(verified === undefined ? {} : { verifiedJsonBodies: verified }),
+            });
+          } catch (error) {
+            return this.error(`precache: ${(error as Error).message}`);
+          }
+        };
+        const manifest = createManifest();
+        const manifestFileName = buildManifestUrl(manifest.version).slice(1);
+        const pointerFileName = BUILD_POINTER_URL.slice(1);
+        for (const fileName of [manifestFileName, pointerFileName]) {
+          if (fileName in bundle) {
+            this.error(`precache: ${fileName} is reserved for the build manifest`);
+          }
         }
-        serviceWorker.source = serviceWorker.source.replaceAll(
-          PRECACHE_MANIFEST_PLACEHOLDER,
-          JSON.stringify(encodePrecacheManifest(manifest)),
-        );
-        assertClassicWorker(serviceWorkerFileName, serviceWorker.source);
+        this.emitFile({
+          fileName: manifestFileName,
+          source: JSON.stringify(manifest),
+          type: "asset",
+        });
+        this.emitFile({
+          fileName: pointerFileName,
+          source: JSON.stringify(createBuildPointer(manifest)),
+          type: "asset",
+        });
       },
       order: "post",
     },

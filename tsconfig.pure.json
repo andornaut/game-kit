@@ -75,6 +75,7 @@
     "src/web/pwa/assetGroups.ts",
     "src/web/pwa/backNavigation.ts",
     "src/web/pwa/buildIdentity.ts",
+    "src/web/pwa/buildManifest.ts",
     "src/web/pwa/cachePolicy.ts",
     "src/web/pwa/downloadProgress.ts",
     "src/web/pwa/hashedIcons.ts",
