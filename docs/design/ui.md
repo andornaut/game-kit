@@ -8,7 +8,7 @@ Reference: [High-density game UI](../../README.md#high-density-game-ui), [Dialog
 
 ## Work items
 
-| ID                                    | Title                                              | Link                                                                                         |
-| ------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| game-kit-controls-041-publication     | Publish the shared button and control presentation | [game-kit-controls-041-publication.md](../work/game-kit-controls-041-publication.md)         |
-| game-kit-typed-layout-041-publication | Publish the typed layout tree and its exports      | [game-kit-typed-layout-041-publication.md](../work/game-kit-typed-layout-041-publication.md) |
+| ID      | Title                                              | Link                             |
+| ------- | -------------------------------------------------- | -------------------------------- |
+| gk-0010 | Publish the shared button and control presentation | [gk-0010.md](../work/gk-0010.md) |
+| gk-0011 | Publish the typed layout tree and its exports      | [gk-0011.md](../work/gk-0011.md) |

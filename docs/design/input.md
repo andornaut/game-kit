@@ -8,6 +8,6 @@ Reference: [Explicit pointer-release actions](../../README.md#explicit-pointer-r
 
 ## Work items
 
-| ID                                    | Title                                            | Link                                                                                         |
-| ------------------------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| game-kit-hold-routing-054-publication | Route holds from pointer release and coordinates | [game-kit-hold-routing-054-publication.md](../work/game-kit-hold-routing-054-publication.md) |
+| ID      | Title                                            | Link                             |
+| ------- | ------------------------------------------------ | -------------------------------- |
+| gk-0021 | Route holds from pointer release and coordinates | [gk-0021.md](../work/gk-0021.md) |
