@@ -181,17 +181,16 @@ function load(
   return { failures, launch, networkPlay, store };
 }
 
-// Lets queued promise callbacks and cache calls run, one macrotask turn at a time.
-const settle = (turns = 30): Promise<void> =>
-  turns === 0
-    ? Promise.resolve()
-    : new Promise<void>((resolve) => {
-        setImmediate(resolve);
-      }).then(() => settle(turns - 1));
+// The bound on waiting for an observable install outcome.
+const WAIT = { interval: 1, timeout: 5000 };
 
 const storedPaths = (caches: MemoryCaches, build: Build) => [
   ...(caches.named.get(buildCacheName(POLICY, build.manifest.version))?.entries.keys() ?? []),
 ];
+
+// Resolves once count of the build's files are stored.
+const storedCount = (caches: MemoryCaches, build: Build, count: number): Promise<void> =>
+  vi.waitFor(() => expect(storedPaths(caches, build)).toHaveLength(count), WAIT);
 
 const roomFor = (free: number): Pick<StorageManager, "estimate" | "persist"> => ({
   estimate: async () => ({ quota: 1_000_000, usage: 1_000_000 - free }),
@@ -244,9 +243,12 @@ describe("resume", () => {
     // A response that never arrives, as when the page is killed mid-file.
     const never = new Promise<void>(() => {});
     server.hold = (url) => (url === "/c.js" ? never : undefined);
+    const { fileFetches } = server;
     const killed = load(caches, server);
     void killed.launch.run();
-    await settle();
+    // The kill lands once every other file is stored and /c.js is in flight.
+    await storedCount(caches, V1, 3);
+    await vi.waitFor(() => expect(fileFetches).toContain("/c.js"), WAIT);
     killed.launch.dispose();
     const stored = storedPaths(caches, V1);
     expect(stored.sort()).toEqual(["/a.js", "/b.js", "/play/"]);
@@ -267,7 +269,8 @@ describe("resume", () => {
       path === ACTIVE_RECORD_PATH ? new Error("The page was closed") : undefined;
     const killed = load(caches, server);
     void killed.launch.run();
-    await settle();
+    // The refused active record ends the attempt with a failure.
+    await vi.waitFor(() => expect(killed.failures).toHaveLength(1), WAIT);
     killed.launch.dispose();
     expect(storedPaths(caches, V1).sort()).toEqual(Object.keys(V1.bodies).sort());
     expect(await killed.store.readState()).toEqual({});
@@ -286,17 +289,12 @@ describe("redeploy mid-install", () => {
     const caches = new MemoryCaches();
     const server = new FakeServer(V1);
     // The deploy lands once every other file of V1 is stored, so /a.js arrives with V2's bytes.
-    server.hold = async (url) => {
-      if (url !== "/a.js" || server.deployed !== V1) {
-        return;
-      }
-      while (storedPaths(caches, V1).length < 3) {
-        // Polls the cache until the other lanes have stored their files.
-        // eslint-disable-next-line no-await-in-loop
-        await settle(1);
-      }
-      server.deployed = V2;
-    };
+    server.hold = (url) =>
+      url === "/a.js" && server.deployed === V1
+        ? storedCount(caches, V1, 3).then(() => {
+            server.deployed = V2;
+          })
+        : undefined;
     const page = load(caches, server);
     await expect(page.launch.run()).resolves.toBe("play");
     expect(server.fileFetches.filter((url) => url === "/a.js")).toHaveLength(2);
