@@ -8,5 +8,6 @@ Reference: [API namespaces and migration](../../README.md#api-namespaces-and-mig
 
 ## Work items
 
-| ID  | Title | Link |
-| --- | ----- | ---- |
+| ID                             | Title                                        | Link                                                                           |
+| ------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------ |
+| game-kit-classic-worker-repair | Emit a self-contained classic service worker | [game-kit-classic-worker-repair.md](../work/game-kit-classic-worker-repair.md) |

@@ -10,7 +10,9 @@ Reference: [Standalone verification](../../README.md#standalone-verification), [
 
 ## Work items
 
-| ID      | Title                                                           | Link                             |
-| ------- | --------------------------------------------------------------- | -------------------------------- |
-| gk-0001 | Adopt design and work files, and run only lint for docs-only CI | [gk-0001.md](../work/gk-0001.md) |
-| gk-0003 | Release the merged task and proof worktrees                     | [gk-0003.md](../work/gk-0003.md) |
+| ID                                      | Title                                                           | Link                                                                                             |
+| --------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| gk-0001                                 | Adopt design and work files, and run only lint for docs-only CI | [gk-0001.md](../work/gk-0001.md)                                                                 |
+| gk-0003                                 | Release the merged task and proof worktrees                     | [gk-0003.md](../work/gk-0003.md)                                                                 |
+| game-kit-test-pruning-target            | Close the kit test-reduction target                             | [game-kit-test-pruning-target.md](../work/game-kit-test-pruning-target.md)                       |
+| game-kit-api-namespaces-047-publication | Publish the runtime, build and test namespaces                  | [game-kit-api-namespaces-047-publication.md](../work/game-kit-api-namespaces-047-publication.md) |
