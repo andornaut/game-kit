@@ -141,6 +141,7 @@ function load(
   manager?: Pick<StorageManager, "estimate" | "persist">,
   soundFormat?: string,
 ) {
+  const reload = vi.fn();
   const container = Object.assign(new EventTarget(), {
     controller: null as { scriptURL: string } | null,
     register: vi.fn(async () => {
@@ -152,7 +153,7 @@ function load(
     container,
     eventTarget: new EventTarget(),
     fetch: server.fetch,
-    location: { href: `${ORIGIN}/play/`, reload: vi.fn() },
+    location: { href: `${ORIGIN}/play/`, reload },
     online: () => true,
     storage: { caches, indexedDB: undefined, manager, session: undefined },
     timers: {
@@ -180,7 +181,7 @@ function load(
       soundFormat,
     },
   );
-  return { failures, launch, networkPlay, store };
+  return { failures, launch, networkPlay, reload, store };
 }
 
 // The bound on waiting for an observable install outcome.
@@ -287,6 +288,28 @@ describe("resume", () => {
 });
 
 describe("redeploy mid-install", () => {
+  it("reloads the controlled old document into the new build instead of playing it", async () => {
+    const caches = new MemoryCaches();
+    const server = new FakeServer(V1);
+    server.hold = (url) =>
+      url === "/a.js" && server.deployed === V1
+        ? storedCount(caches, V1, 3).then(() => {
+            server.deployed = V2;
+          })
+        : undefined;
+    const page = load(caches, server);
+    await expect(page.launch.run()).resolves.toBe("reloading");
+    expect(page.reload).toHaveBeenCalledTimes(1);
+    expect(await page.store.readState()).toEqual({ active: "bbbb" });
+
+    // The reloaded document is the new build's, served from the active build with no fetch.
+    const fetched = server.fileFetches.length;
+    const next = load(caches, server);
+    await expect(next.launch.run()).resolves.toBe("play");
+    expect(next.reload).not.toHaveBeenCalled();
+    expect(server.fileFetches.slice(fetched)).toEqual([]);
+  });
+
   it("restarts on the new manifest and fetches only the files it changed", async () => {
     const caches = new MemoryCaches();
     const server = new FakeServer(V1);
@@ -298,7 +321,7 @@ describe("redeploy mid-install", () => {
           })
         : undefined;
     const page = load(caches, server);
-    await expect(page.launch.run()).resolves.toBe("play");
+    await expect(page.launch.run()).resolves.toBe("reloading");
     expect(server.fileFetches.filter((url) => url === "/a.js")).toHaveLength(2);
     expect(server.fileFetches.filter((url) => url !== "/a.js").sort()).toEqual([
       "/b.js",

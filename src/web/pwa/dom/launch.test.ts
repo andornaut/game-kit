@@ -398,7 +398,7 @@ describe("first install", () => {
     expect(f.reload).toHaveBeenCalledTimes(1);
   });
 
-  it("re-reads the pointer and restarts on the new manifest when the build changed", async () => {
+  it("restarts on the new manifest when the build changed, then reloads the old document into it", async () => {
     const f = fixture();
     f.deploy(V1);
     f.container.claim();
@@ -408,10 +408,48 @@ describe("first install", () => {
         return "changed";
       },
     ]);
-    await expect(f.launch.run()).resolves.toBe("play");
+    await expect(f.launch.run()).resolves.toBe("reloading");
     expect(f.installs.map((o) => o.manifest.version)).toEqual(["aaaa", "bbbb"]);
     expect(f.store.state.active).toBe("bbbb");
     expect(f.store.calls).not.toContain("saveManifest aaaa");
+    expect(f.reload).toHaveBeenCalledTimes(1);
+    expect(f.session.getItem(LAUNCH_RELOAD_KEY)).toBe("bbbb");
+    expect(JSON.parse(f.session.getItem(LAUNCH_PROGRESS_KEY)!)).toMatchObject({
+      version: "bbbb",
+    });
+  });
+
+  it("plays instead of reloading again when the document before it already reloaded into the build", async () => {
+    const f = fixture();
+    f.deploy(V1);
+    f.container.claim();
+    f.session.setItem(LAUNCH_RELOAD_KEY, "bbbb");
+    f.setResults([
+      async () => {
+        f.deploy(V2);
+        return "changed";
+      },
+    ]);
+    await expect(f.launch.run()).resolves.toBe("play");
+    expect(f.reload).not.toHaveBeenCalled();
+    expect(f.session.getItem(LAUNCH_RELOAD_KEY)).toBeNull();
+  });
+
+  it("reloads once onto the newer deployed build when a restarted install plays from the network", async () => {
+    const f = fixture();
+    f.deploy(V1);
+    f.container.claim();
+    f.setResults([
+      async () => {
+        f.deploy(V2);
+        return "changed";
+      },
+      () => Promise.reject(Object.assign(new Error("full"), { reason: "quota" })),
+    ]);
+    await expect(f.launch.run()).resolves.toBe("reloading");
+    expect(f.reload).toHaveBeenCalledTimes(1);
+    expect(f.networkPlay).toEqual([]);
+    expect(f.store.state.active).toBeUndefined();
   });
 
   it("reports a failure with a retry that resumes, and resolves once the retry succeeds", async () => {

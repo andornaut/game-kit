@@ -138,8 +138,8 @@ const MAX_RESTARTS = 3;
 // The progress share held back until the active record is written.
 const RECORD_SHARE = 0.01;
 
-// Session keys: the build a fallback launch reload targeted, and first-install progress carried
-// across the reload that boots the new build.
+// Session keys: the build a launch reload targeted, and first-install progress carried across the
+// reload that boots the new build.
 export const LAUNCH_RELOAD_KEY = "game-kit:launch-reload";
 export const LAUNCH_PROGRESS_KEY = "game-kit:launch-progress";
 
@@ -398,6 +398,12 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
   let reloading = false;
   // The build this document runs, once run() resolves "play".
   let documentVersion: string | undefined;
+  // The build this document booted from during a first install: the first pointer it reads. The
+  // network served the document, so the page cannot name its build otherwise; the two come from
+  // one deploy unless a deploy lands between the document's request and that read.
+  let bootVersion: string | undefined;
+  // The build the latest first-install attempt pinned.
+  let installingVersion: string | undefined;
   let visible = page.visibility.visibilityState !== "hidden";
   const cleanups: (() => void)[] = [];
 
@@ -533,8 +539,28 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     store,
   };
 
+  // Records a launch reload into version and returns true, or returns false when the document
+  // before this one already reloaded into it, so a launch reloads at most once per build. Without
+  // session storage it always reloads: the reloaded document boots from that build, so it reloads
+  // again only after another deploy.
+  const claimReload = (version: string): boolean => {
+    let target: string | null | undefined;
+    try {
+      target = session?.getItem(LAUNCH_RELOAD_KEY);
+    } catch {
+      target = undefined;
+    }
+    if (target === version) {
+      return false;
+    }
+    writeSession(session, LAUNCH_RELOAD_KEY, version);
+    return true;
+  };
+
   const installDeployed = async (restarts: number): Promise<LaunchResult> => {
     const pointer = await readPointer();
+    bootVersion ??= pointer.version;
+    installingVersion = pointer.version;
     const manifest = await readPinnedManifest(pointer);
     let copied = 0;
     progress = { ...progress, bootBytes: bootBytesOf(manifest), received: 0, total: 0 };
@@ -577,12 +603,18 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     await deleteLegacy(page.storage, policy).catch((error: unknown) =>
       console.warn("Could not delete legacy offline caches.", error),
     );
+    // A controlled document plays the installed build only when it booted from it. A redeploy
+    // mid-install activated a newer build, whose files this document does not reference, so it
+    // reloads once into the router's active build.
     if (controlledByRouter()) {
-      return play(manifest.version);
-    }
-    await waitForRouter();
-    if (disposed) {
-      return "reloading";
+      if (manifest.version === bootVersion || !claimReload(manifest.version)) {
+        return play(manifest.version);
+      }
+    } else {
+      await waitForRouter();
+      if (disposed) {
+        return "reloading";
+      }
     }
     writeSession(
       session,
@@ -608,6 +640,18 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
           }
           const reason = failureReason(error);
           if (reason === "unsupported" || reason === "quota") {
+            // The network now serves a newer build than this document's, so the document
+            // reloads once to play that build.
+            if (
+              installingVersion !== undefined &&
+              installingVersion !== bootVersion &&
+              claimReload(installingVersion)
+            ) {
+              reload();
+              resolve("reloading");
+              return;
+            }
+            writeSession(session, LAUNCH_RELOAD_KEY, undefined);
             console.warn("First install failed; playing from the network.", error);
             try {
               options.onNetworkPlay({ reason });

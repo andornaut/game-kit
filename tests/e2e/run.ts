@@ -244,7 +244,7 @@ async function main(): Promise<number> {
       page,
       "the first install",
       30 * 60_000,
-      (s) => s.phase === "playing" || s.failures.length > 0,
+      (s) => s.phase === "playing" || s.failures.length > 0 || s.errors.length > 0,
     );
     const installMs = Date.now() - installStarted;
     const installLog = buildRequests(server.log);
@@ -262,6 +262,32 @@ async function main(): Promise<number> {
         `${(fetchedBytes / 1e6).toFixed(1)} MB at ` +
         `${((fetchedBytes * 8) / (installMs / 1000) / 1e6).toFixed(2)} Mbit/s, ` +
         `throttled targets ${JSON.stringify(network.throttled())}`,
+    );
+    // The controlled document that started the install is a's; it must reload into a2 rather
+    // than import a's code, which the a2 deployment no longer serves. Until the installer restarts
+    // on a2 it may still request a-only files, so only requests after a2's last new file count.
+    const pathsOf = (deployment: Deployment) =>
+      new Set(deployment.manifest.files.map((file) => file.url));
+    const aPaths = pathsOf(a);
+    const a2Paths = pathsOf(a2);
+    const afterDeploy = since(deployMark);
+    const lastNew = afterDeploy
+      .map((r) => a2Paths.has(r.path) && !aPaths.has(r.path))
+      .lastIndexOf(true);
+    const oldAfterInstall = afterDeploy
+      .slice(lastNew + 1)
+      .filter((r) => aPaths.has(r.path) && !a2Paths.has(r.path));
+    check(
+      "a redeploy mid-install reloads the controlled old document into the new build with no 404",
+      installed.phase === "playing" &&
+        installed.variant === "a2" &&
+        installed.gameVariant === "a2" &&
+        installed.errors.length === 0 &&
+        lastNew >= 0 &&
+        oldAfterInstall.length === 0,
+      `running ${installed.variant}, game ${installed.gameVariant}, ` +
+        `errors [${installed.errors.join(", ")}], requests for a-only files after the install: ` +
+        `${oldAfterInstall.map((r) => `${r.path} ${r.status}`).join(", ") || "none"}`,
     );
     ensure(
       "first install completes with no Loading failed",
@@ -329,7 +355,7 @@ async function main(): Promise<number> {
     const offline = await waitFor(page, "offline play", 60_000, (s) => s.phase === "playing");
     check(
       "play works offline afterwards",
-      offline.bootVariant === "a" &&
+      offline.bootVariant === "a2" &&
         offline.failures.length === 0 &&
         since(offlineMark).length === 0 &&
         (await ticking(page)),
@@ -385,7 +411,7 @@ async function main(): Promise<number> {
         promptShown &&
         pausedTicks &&
         resumed &&
-        served === "a" &&
+        served === "a2" &&
         dismissedRecords.active === a2.manifest.version &&
         dismissedRecords.staged === b.manifest.version &&
         afterDismiss?.updateReady.length === 1,

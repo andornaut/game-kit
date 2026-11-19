@@ -18,6 +18,8 @@ export interface E2eState {
   phase: "launching" | "booting" | "playing" | "reloading" | "unsupported";
   // The variant the boot index read through the router names.
   bootVariant?: string;
+  // The variant of the game code imported after boot.
+  gameVariant?: string;
   bootFiles: number;
   progress?: { phase: string; value: number; receivedBytes: number; totalBytes: number };
   failures: string[];
@@ -149,6 +151,7 @@ if (context === undefined) {
       }),
     );
     state.bootFiles = done;
+    state.gameVariant = (await import("./game.ts")).GAME_VARIANT;
     state.phase = "playing";
   };
 

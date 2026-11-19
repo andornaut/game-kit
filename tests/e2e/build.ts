@@ -15,9 +15,9 @@ import { POLICY } from "./fixture/policy.ts";
 
 const FIXTURE = fileURLToPath(new URL("fixture/", import.meta.url));
 
-// a: the first deployment. a2: a redeploy during the first install that changes only hashed
-// assets, as an art-only deploy does, so its page and code equal a's. b and c: updates. d: an
-// update whose download the server fails.
+// a: the first deployment. a2: a redeploy during the first install that changes the page, the
+// code and the last hashed assets the installer fetches. b and c: updates. d: an update whose
+// download the server fails.
 export const VARIANTS = ["a", "a2", "b", "c", "d"] as const;
 export type Variant = (typeof VARIANTS)[number];
 
@@ -40,11 +40,6 @@ const SOUNDS = 3;
 const SOUND_FORMATS = ["ogg", "m4a"] as const;
 const SHARED_JSON = ["/data/shared-a.json", "/data/shared-b.json"];
 const INDEX_URL = "/data/index.json";
-
-// The variant the page's code and boot index name.
-function codeVariant(variant: Variant): Variant {
-  return variant === "a2" ? "a" : variant;
-}
 
 // The asset indexes each variant changes from the one before it.
 function changedAssets(variant: Variant, files: number): number[] {
@@ -126,10 +121,7 @@ function fixtureFiles(
       for (const url of SHARED_JSON) {
         emit(url, shared);
       }
-      emit(
-        INDEX_URL,
-        JSON.stringify({ files: [...levels, ...SHARED_JSON], variant: codeVariant(variant) }),
-      );
+      emit(INDEX_URL, JSON.stringify({ files: [...levels, ...SHARED_JSON], variant }));
     },
     name: "e2e-fixture-files",
   };
@@ -156,7 +148,7 @@ export async function buildDeployment(
       rolldownOptions: { input: join(FIXTURE, "play/index.html") },
     },
     configFile: false,
-    define: { __VARIANT__: JSON.stringify(codeVariant(variant)) },
+    define: { __VARIANT__: JSON.stringify(variant) },
     envDir: false,
     logLevel: "warn",
     plugins: [

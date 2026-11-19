@@ -71,7 +71,7 @@ Chibi and Archie use an ungrouped precache. Defects 1, 7 and 10 (group store and
 
 **Resume.** After a reload or worker restart, the installer diffs `cache.keys()` against the manifest and fetches only absent keys, with no re-hash.
 
-**Pinned manifest (decided).** Each install reads `build.json` once and pins that manifest. If a file's bytes stop matching it, or the file is gone (404 or 410), because the game redeployed mid-install, the installer re-reads `build.json` and restarts on the new manifest, reusing every verified entry by hash, so only changed files are fetched again. Game deploys are unchanged.
+**Pinned manifest (decided).** Each install reads `build.json` once and pins that manifest. If a file's bytes stop matching it, or the file is gone (404 or 410), because the game redeployed mid-install, the installer re-reads `build.json` and restarts on the new manifest, reusing every verified entry by hash, so only changed files are fetched again. The document that started the install came from the old build, so once the new build is active it reloads once into it rather than play (at most once per build, carried in `sessionStorage`). The page takes its document's build to be the first `build.json` it read. Game deploys are unchanged.
 
 **Progress.** One determinate value in [0, 1]. Total = bytes to fetch + bytes of boot files read afterwards (all sizes are in the manifest). The installer reports received bytes; the Phaser loader reports settled files as their bytes; the record write is the last 1%. The document the first install reloads into reports the carried value as soon as `run()` restores it. No valueless phases.
 
@@ -125,7 +125,7 @@ Chibi and Archie use an ungrouped precache. Defects 1, 7 and 10 (group store and
   - a reload and `ServiceWorker.stopWorker` mid-install resume with no repeat requests;
   - play works offline afterwards;
   - an update fetches only the delta;
-  - a redeploy mid-install does not fail the pinned install;
+  - a redeploy mid-install does not fail the pinned install, and a controlled old document reloads into the new build with no 404;
   - when staging completes mid-session, `onUpdateReady` fires once on any screen, with a test game prompt that pauses play, while `dismiss()` leaves the active build serving;
   - the next launch promotes silently with zero requests and no prompt;
   - `updateNow(save)` awaits `save` before it switches, with zero requests;
