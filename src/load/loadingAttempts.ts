@@ -212,6 +212,8 @@ interface RequiredFlight {
 // Page-lifetime required leases. Providers own status and I/O, callers invalidate on changes.
 // A void retry that still reports failed remains in flight until an explicit invalidation,
 // a status change or lease removal. Promise retries also wait for their callbacks to settle.
+// A status check that throws while retry starts rejects that retry and ends its flight, so the
+// next retry starts a fresh attempt; snapshots count a throwing status check as failed.
 // Ready resources are retained. No polling, storage, activation or progress display is owned.
 export function createRequiredLoading(
   initial: readonly RequiredLoadingResource[] = [],
@@ -396,8 +398,10 @@ export function createRequiredLoading(
       }
       const failed = snapshot().failed;
       let resolve!: () => void;
-      const promise = new Promise<void>((done) => {
+      let reject!: (error: unknown) => void;
+      const promise = new Promise<void>((done, fail) => {
         resolve = done;
+        reject = fail;
       });
       const active: RequiredFlight = {
         awaiting: new Set(),
@@ -409,12 +413,27 @@ export function createRequiredLoading(
       };
       flight = active;
       attempt += 1;
+      let statusFailed = false;
+      let statusError: unknown;
       try {
         for (const resource of failed) {
           if (disposed) {
             break;
           }
-          if (!resources.has(resource) || resource.status() !== "failed") {
+          if (!resources.has(resource)) {
+            continue;
+          }
+          let status: ReturnType<RequiredLoadingResource["status"]>;
+          try {
+            status = resource.status();
+          } catch (error) {
+            if (!statusFailed) {
+              statusFailed = true;
+              statusError = error;
+            }
+            continue;
+          }
+          if (status !== "failed") {
             continue;
           }
           active.awaiting.add(resource);
@@ -439,6 +458,10 @@ export function createRequiredLoading(
         }
       } finally {
         active.starting = false;
+        if (statusFailed && flight === active) {
+          flight = undefined;
+          reject(statusError);
+        }
         settle();
       }
       return promise;

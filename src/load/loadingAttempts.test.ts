@@ -283,9 +283,15 @@ describe("loading cancellation ownership", () => {
 });
 
 function resource(initial: ReturnType<RequiredLoadingResource["status"]>) {
-  const value = { kind: initial };
+  const value: { kind: typeof initial; statusFailure?: Error } = { kind: initial };
   const retry = vi.fn<RequiredLoadingResource["retry"]>();
-  return { provider: { retry, status: () => value.kind }, retry, value };
+  const status = () => {
+    if (value.statusFailure !== undefined) {
+      throw value.statusFailure;
+    }
+    return value.kind;
+  };
+  return { provider: { retry, status }, retry, value };
 }
 
 describe("createRequiredLoading", () => {
@@ -436,6 +442,61 @@ describe("createRequiredLoading", () => {
     work.resolve();
     await task;
     expect(ready).toHaveBeenCalledTimes(1);
+    expect(item.retry).toHaveBeenCalledTimes(1);
+    required.dispose();
+  });
+
+  it("rejects a retry whose failed-resource status check throws and starts a fresh attempt", async () => {
+    const first = resource("failed");
+    const second = resource("failed");
+    const failure = new Error("Status check failed");
+    first.retry.mockImplementationOnce(() => {
+      second.value.statusFailure = failure;
+    });
+    const required = createRequiredLoading([first.provider, second.provider]);
+    let task: Promise<void> | undefined;
+    expect(() => {
+      task = required.retry();
+    }).not.toThrow();
+    await expect(task).rejects.toBe(failure);
+    expect(required.state).toMatchObject({ error: failure, kind: "failed" });
+    expect(second.retry).not.toHaveBeenCalled();
+    delete second.value.statusFailure;
+    first.retry.mockImplementation(() => {
+      first.value.kind = "ready";
+    });
+    second.retry.mockImplementation(() => {
+      second.value.kind = "ready";
+    });
+    const next = required.retry();
+    expect(next).not.toBe(task);
+    await next;
+    expect(required.state.kind).toBe("ready");
+    expect(first.retry).toHaveBeenCalledTimes(2);
+    expect(second.retry).toHaveBeenCalledTimes(1);
+    required.dispose();
+  });
+
+  it("rejects a retry whose status check throws from its initial refresh and starts a fresh attempt", async () => {
+    const item = resource("failed");
+    const failure = new Error("Status check failed");
+    const required = createRequiredLoading([item.provider]);
+    item.value.statusFailure = failure;
+    let task: Promise<void> | undefined;
+    expect(() => {
+      task = required.retry();
+    }).not.toThrow();
+    await expect(task).rejects.toBe(failure);
+    expect(required.state).toMatchObject({ error: failure, kind: "failed" });
+    expect(item.retry).not.toHaveBeenCalled();
+    delete item.value.statusFailure;
+    item.retry.mockImplementation(() => {
+      item.value.kind = "ready";
+    });
+    const next = required.retry();
+    expect(next).not.toBe(task);
+    await next;
+    expect(required.state.kind).toBe("ready");
     expect(item.retry).toHaveBeenCalledTimes(1);
     required.dispose();
   });
