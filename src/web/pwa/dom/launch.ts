@@ -9,6 +9,7 @@ import {
   type BuildManifest,
   type BuildPointer,
   type BuildPolicy,
+  type InstalledManifest,
   type LaunchFailure,
   type LaunchProgress,
   type LaunchResult,
@@ -16,7 +17,7 @@ import {
   type UpdateOffer,
   type UpdateState,
 } from "../buildContract.ts";
-import { parseBuildManifest, parseBuildPointer } from "../buildRecords.ts";
+import { installedManifest, parseBuildManifest, parseBuildPointer } from "../buildRecords.ts";
 import { verifiedJsonAliasCachePrefix } from "../verifiedJsonBody.ts";
 import { BACKGROUND_INSTALL, FOREGROUND_INSTALL, installBuild } from "./buildInstaller.ts";
 import { type BuildStore, createBuildStore } from "./buildStore.ts";
@@ -96,6 +97,12 @@ export interface LaunchOptions {
   readonly onUpdateState: (state: UpdateState) => void;
   // The router worker's URL, registered with scope "/".
   readonly serviceWorkerUrl: string;
+  // The sound format the page plays, which the game chooses, for example the first format an
+  // audio element's canPlayType accepts. Each build installs only the sound alternatives whose
+  // URL extension is this format, and none of a sound that has no such alternative; an
+  // alternative left out is fetched from the network if requested. undefined installs every
+  // alternative.
+  readonly soundFormat: string | undefined;
 }
 
 export interface Launch {
@@ -116,6 +123,11 @@ export interface Launch {
 // The shortest time between update checks, so resuming the app asks the server at most once a
 // minute.
 export const UPDATE_CHECK_MS = 60_000;
+
+// A failed background update is retried while the page stays visible: first after
+// UPDATE_RETRY_MS, then after twice the previous wait, up to UPDATE_RETRY_MAX_MS.
+export const UPDATE_RETRY_MS = 60_000;
+export const UPDATE_RETRY_MAX_MS = 15 * 60_000;
 
 // How long a completed first install waits for the router to control the page before reloading.
 export const CONTROL_WAIT_MS = 10_000;
@@ -373,8 +385,9 @@ export function browserLaunchContext(policy: BuildPolicy): LaunchContext | undef
 // foreground and reports onProgress, or onFailure with a resuming retry, or onNetworkPlay where
 // the device cannot install; each later launch tries the install again. With an active build it
 // resolves "play" at once, then checks build.json at launch and on resume and stages a newer
-// build in the background. Staging never activates: a staged build becomes active through
-// Update now, requireNewer, or the router's promotion at the next launch navigation.
+// build in the background, retrying a failed staging while the page stays visible. Staging never
+// activates: a staged build becomes active through Update now, requireNewer, or the router's
+// promotion at the next launch navigation.
 export function createLaunch(context: LaunchContext, options: LaunchOptions): Launch {
   const { page, policy, store } = context;
   const install = context.installBuild;
@@ -414,6 +427,7 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
 
   const reload = () => {
     reloading = true;
+    cancelRetry();
     aborts.abort();
     page.location.reload();
   };
@@ -444,10 +458,15 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     }
   };
 
-  // The pinned manifest the pointer names, from the store when an earlier attempt saved it.
-  const readPinnedManifest = async (pointer: BuildPointer): Promise<BuildManifest> => {
+  // The pinned manifest the pointer names, reduced to the files this device installs: from the
+  // store when an earlier attempt saved it for the same sound format.
+  const readPinnedManifest = async (pointer: BuildPointer): Promise<InstalledManifest> => {
     const saved = await store.readManifest(pointer.version);
-    if (saved !== undefined && saved.buildId === pointer.buildId) {
+    if (
+      saved !== undefined &&
+      saved.buildId === pointer.buildId &&
+      saved.soundFormat === options.soundFormat
+    ) {
       return saved;
     }
     const value = await fetchJson(pointer.manifest, {});
@@ -460,7 +479,7 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     if (manifest?.version !== pointer.version || manifest.buildId !== pointer.buildId) {
       throw new LaunchError("verification", `Invalid build manifest for ${pointer.version}`);
     }
-    return manifest;
+    return installedManifest(options.soundFormat, manifest);
   };
 
   const register = () => page.container.register(options.serviceWorkerUrl, ROUTER_REGISTRATION);
@@ -508,6 +527,7 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     fetch: page.fetch,
     now: () => page.timers.now(),
     origin: new URL(page.location.href).origin,
+    policy,
     setTimeout: (handler: () => void, ms: number) => page.timers.setTimeout(handler, ms),
     storage: page.storage.manager,
     store,
@@ -640,6 +660,9 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
 
   // Background updates: discovery, staging and the in-session offer.
   let lastCheck: number | undefined;
+  // The wait before the next retry of a failed update; 0 while no failure is pending.
+  let retryMs = 0;
+  let retryTimer: unknown;
   let staging: Promise<void> | undefined;
   let updateState: UpdateState = { phase: "idle" };
   const offered = new Set<string>();
@@ -753,16 +776,44 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     const attempt: { version?: string } = {};
     try {
       await stageDeployed(0, attempt);
+      retryMs = 0;
+      cancelRetry();
     } catch (error) {
       if (disposed) {
         return;
       }
-      // K3: a failed update is retried at the next check and never shows Loading failed.
+      // K3: a failed update is retried while the page stays visible and at the next check, and
+      // never shows Loading failed.
       console.warn("Background update failed.", error);
       if (attempt.version !== undefined) {
         reportUpdate({ phase: "failed", version: attempt.version });
       }
+      retryMs = retryMs === 0 ? UPDATE_RETRY_MS : Math.min(retryMs * 2, UPDATE_RETRY_MAX_MS);
+      armRetry();
     }
+  };
+
+  const cancelRetry = () => {
+    if (retryTimer !== undefined) {
+      page.timers.clearTimeout(retryTimer);
+      retryTimer = undefined;
+    }
+  };
+
+  // Schedules the pending retry while the page is visible. A retry that cannot start, as when
+  // the device is offline, waits twice as long for the next one.
+  const armRetry = () => {
+    cancelRetry();
+    if (retryMs === 0 || !visible || disposed || reloading) {
+      return;
+    }
+    retryTimer = page.timers.setTimeout(() => {
+      retryTimer = undefined;
+      if (!check(true)) {
+        retryMs = Math.min(retryMs * 2, UPDATE_RETRY_MAX_MS);
+        armRetry();
+      }
+    }, retryMs);
   };
 
   // Starts an update check unless one is under way, the page is offline, or (without force) the
@@ -847,9 +898,12 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     watchVisibility(page.eventTarget, page.visibility, (nextVisible) => {
       visible = nextVisible;
       if (!visible) {
+        cancelRetry();
         return;
       }
-      check(false);
+      if (!check(false)) {
+        armRetry();
+      }
       advanceRequired(true);
     }),
   );
@@ -915,6 +969,7 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     },
     dispose() {
       disposed = true;
+      cancelRetry();
       aborts.abort();
       for (const cleanup of cleanups.splice(0)) {
         cleanup();

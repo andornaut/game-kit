@@ -3,8 +3,14 @@
 // checked against the manifest's exact byte size and full SHA-256, and stored with its digest
 // header. Only missing files are fetched, so a fresh call resumes an interrupted install. The
 // caller writes active or staged only after "complete".
-import { BUILD_HASH_HEADER, type BuildFile, type BuildManifest } from "../buildContract.ts";
+import {
+  BUILD_HASH_HEADER,
+  type BuildFile,
+  type BuildPolicy,
+  type InstalledManifest,
+} from "../buildContract.ts";
 import { verifiedJsonFamilies } from "../buildRecords.ts";
+import { isHashedAssetUrl } from "../cachePolicy.ts";
 import type { VerifiedJsonBody } from "../verifiedJsonBody.ts";
 import type { BuildStore } from "./buildStore.ts";
 import { isJsonContentType, safeJsonSource } from "./verifiedJsonSource.ts";
@@ -30,6 +36,8 @@ export class BuildInstallError extends Error {
 }
 
 export interface BuildInstallContext {
+  // The game's cache policy, whose hashedAssetPrefix names the files the HTTP cache may answer.
+  readonly policy: BuildPolicy;
   readonly store: BuildStore;
   readonly fetch: (url: string, init: RequestInit) => Promise<Response>;
   // navigator.storage, or undefined where the browser has none.
@@ -42,7 +50,8 @@ export interface BuildInstallContext {
 }
 
 export interface BuildInstallOptions {
-  readonly manifest: BuildManifest;
+  // The files to install, as buildRecords' installedManifest selects them; saved as given.
+  readonly manifest: InstalledManifest;
   // Files fetched at once.
   readonly lanes?: number;
   readonly priority?: RequestPriority;
@@ -96,7 +105,7 @@ function positiveInteger(name: string, value: number): number {
 
 // Each verified JSON URL's family. Throws a BuildInstallError when the families do not describe
 // the manifest's own files and digests.
-function verifiedFamilies(manifest: BuildManifest): Map<string, VerifiedJsonBody> {
+function verifiedFamilies(manifest: InstalledManifest): Map<string, VerifiedJsonBody> {
   try {
     return verifiedJsonFamilies(manifest);
   } catch (error) {
@@ -112,7 +121,7 @@ export async function installBuild(
   context: BuildInstallContext,
   options: BuildInstallOptions,
 ): Promise<BuildInstallResult> {
-  const { fetch, now, origin, storage, store } = context;
+  const { fetch, now, origin, policy, storage, store } = context;
   const { clearTimeout: cancel, setTimeout: schedule } = context;
   const { manifest, onBytes, paused, signal } = options;
   const lanes = positiveInteger("lanes", options.lanes ?? FOREGROUND_INSTALL.lanes);
@@ -222,9 +231,15 @@ export async function installBuild(
       let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
       try {
         const family = families.get(file.url);
+        // A hashed build file never changes under its URL, so the HTTP cache, or the router serving
+        // the same URL from a stored build, may answer it, and the digest check still applies.
+        // Every other URL is fetched past both, and verified JSON also, so its source checks see a
+        // network response.
+        const cache: RequestCache =
+          family === undefined && isHashedAssetUrl(policy, file.url) ? "default" : "no-store";
         const response = await Promise.race([
           fetch(file.url, {
-            cache: "no-store",
+            cache,
             credentials: family === undefined ? "same-origin" : "omit",
             priority,
             redirect: "error",

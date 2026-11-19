@@ -19,8 +19,9 @@ import { validateVerifiedJsonBodies } from "../verifiedJsonBody.ts";
 import { classicWorker } from "./classicWorker.ts";
 
 // Hashed files the page loads at runtime rather than links, such as a game's art: the URLs to
-// precache, and each sound's logical URL mapped to its format alternatives' URLs, for the
-// installer to store the alternative the page plays.
+// precache, and each sound's logical URL mapped to its format alternatives' URLs. Each
+// alternative's URL extension names its format, and the page installs only the alternatives in
+// the format it plays (dom/launch's soundFormat).
 export interface HashedFiles {
   readonly sounds: Readonly<Record<string, readonly string[]>>;
   readonly urls: readonly string[];
@@ -65,9 +66,10 @@ function sha256Hex(bytes: Uint8Array): string {
 // manifest and pointer into the build output. The manifest, at buildManifestUrl(version), lists
 // every file the complete build needs offline with its full SHA-256 and byte size: the page, the
 // build output it loads, the public files it links, the web app manifest's icons and the hashed
-// files hashedFiles names, every sound alternative included. The pointer, at BUILD_POINTER_URL,
-// names the current version, its buildId and its manifest URL. The version changes with any
-// listed file's content and with the buildId, sounds or boot files.
+// files hashedFiles names, every sound alternative included; the page installs the alternatives
+// of one format. The pointer, at BUILD_POINTER_URL, names the current version, its buildId and
+// its manifest URL. The version changes with any listed file's content and with the buildId,
+// sounds or boot files.
 //
 // Games must serve BUILD_POINTER_URL (/.game-kit/build.json) with Cache-Control: no-store, so
 // every launch and resume reads the deployed build, and every /.game-kit/manifest-<version>.json

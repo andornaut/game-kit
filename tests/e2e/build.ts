@@ -35,6 +35,9 @@ export interface Deployment {
 }
 
 const LEVELS = 8;
+// Sounds under /assets/s/, each with an alternative per format; the fixture page plays ogg.
+const SOUNDS = 3;
+const SOUND_FORMATS = ["ogg", "m4a"] as const;
 const SHARED_JSON = ["/data/shared-a.json", "/data/shared-b.json"];
 const INDEX_URL = "/data/index.json";
 
@@ -86,7 +89,12 @@ function noise(seed: string, size: number): Buffer {
   return out;
 }
 
-function fixtureFiles(variant: Variant, size: FixtureSize, urls: string[]): Plugin {
+function fixtureFiles(
+  variant: Variant,
+  size: FixtureSize,
+  emitted: { readonly sounds: Record<string, string[]>; readonly urls: string[] },
+): Plugin {
+  const { sounds, urls } = emitted;
   return {
     buildStart() {
       const emit = (url: string, source: Uint8Array | string) => {
@@ -98,6 +106,16 @@ function fixtureFiles(variant: Variant, size: FixtureSize, urls: string[]): Plug
         const bytes = noise(`${index}:${key}`, size.fileBytes + (index % 7) * 97);
         const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 8);
         emit(`/assets/f/${String(index).padStart(5, "0")}-${hash}.bin`, bytes);
+      }
+      for (let index = 0; index < SOUNDS; index += 1) {
+        const logical = `/assets/s/sound-${index}`;
+        sounds[logical] = SOUND_FORMATS.map((format) => {
+          const bytes = noise(`${logical}.${format}`, 2000);
+          const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 8);
+          const url = `${logical}-${hash}.${format}`;
+          this.emitFile({ fileName: url.slice(1), source: bytes, type: "asset" });
+          return url;
+        });
       }
       const levels = Array.from({ length: LEVELS }, (_, level) => `/data/level-${level}.json`);
       levels.forEach((url, level) => {
@@ -129,6 +147,7 @@ export async function buildDeployment(
 ): Promise<Deployment> {
   const directory = join(context.outRoot, variant);
   const urls: string[] = [];
+  const sounds: Record<string, string[]> = {};
   await build({
     build: {
       emptyOutDir: true,
@@ -141,14 +160,14 @@ export async function buildDeployment(
     envDir: false,
     logLevel: "warn",
     plugins: [
-      fixtureFiles(variant, context.size, urls),
+      fixtureFiles(variant, context.size, { sounds, urls }),
       precachePlugin({
         boot: () => [
           INDEX_URL,
           ...urls.filter((url) => url.startsWith("/data/level-")),
           ...SHARED_JSON,
         ],
-        hashedFiles: () => ({ sounds: {}, urls }),
+        hashedFiles: () => ({ sounds, urls }),
         pageHtmlFile: "play/index.html",
         policy: POLICY,
         serviceWorkerSource: join(FIXTURE, "sw.ts"),

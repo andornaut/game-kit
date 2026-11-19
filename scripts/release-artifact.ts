@@ -299,7 +299,7 @@ export function startLaunch(
   const context = browserLaunchContext({cacheNamePrefix:'proof-',hashedAssetPrefix:'/assets/'});
   return context === undefined ? undefined : createLaunch(context, {
     onFailure(failure) { failure.retry(); }, onNetworkPlay, onProgress, onUpdateReady, onUpdateState,
-    serviceWorkerUrl:'/sw.js',
+    serviceWorkerUrl:'/sw.js', soundFormat:'ogg',
   });
 }
 export function mountInstallationFailure(parent: HTMLElement): LaunchOptions['onFailure'] {

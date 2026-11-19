@@ -10,6 +10,7 @@ import {
   type BuildPolicy,
   recordsCacheName,
 } from "../buildContract.ts";
+import { installedManifest } from "../buildRecords.ts";
 import type { VerifiedJsonBody } from "../verifiedJsonBody.ts";
 import { createBuildStore } from "./buildStore.ts";
 import { PIN_PRUNE_MS, runServiceWorker } from "./serviceWorker.ts";
@@ -496,6 +497,19 @@ describe("subresources", () => {
     expect(await (await worker.get("/play/", "doc"))!.text()).toBe("page v1");
   });
 
+  it("answers the installer's default-mode request for a hashed URL from the document's build", async () => {
+    const files = { ...V1, "/assets/app-1a2b.js": "hashed" };
+    const server = new FakeServer({ ...files, "/assets/new-3c4d.js": "new" });
+    const worker = startWorker(server);
+    await worker.saveBuild(manifestOf("v1", files), files);
+    await worker.setRecord(ACTIVE, "v1");
+    await worker.setRecord(pinKey("doc"), "v1");
+    const init: RequestInit = { cache: "default", credentials: "same-origin", redirect: "error" };
+    expect(await (await worker.get("/assets/app-1a2b.js", "doc", init))!.text()).toBe("hashed");
+    expect(await (await worker.get("/assets/new-3c4d.js", "doc", init))!.text()).toBe("new");
+    expect(server.fetched).toEqual(["/assets/new-3c4d.js"]);
+  });
+
   it("goes to the network for a pinned build whose manifest is gone", async () => {
     const server = new FakeServer(V2);
     const worker = startWorker(server);
@@ -504,6 +518,29 @@ describe("subresources", () => {
     await worker.setRecord(pinKey("doc"), "v1");
     expect(await (await worker.get("/app.js", "doc"))!.text()).toBe("app v2");
     expect(server.fetched).toEqual(["/app.js"]);
+  });
+});
+
+describe("sound formats", () => {
+  it("promotes a staged build saved for one format, and sends a left-out alternative to the network", async () => {
+    const files = { ...V2, "/sound/hit.m4a": "hit m4a" };
+    const server = new FakeServer(files);
+    const worker = startWorker(server);
+    await worker.saveBuild(manifestOf("v1", V1), V1);
+    const deployed = {
+      ...manifestOf("v2", files),
+      sounds: { "/sound/hit": ["/sound/hit.ogg", "/sound/hit.m4a"] },
+    };
+    await worker.saveBuild(installedManifest("ogg", deployed), files);
+    await worker.setRecord(ACTIVE, "v1");
+    await worker.setRecord(STAGED, "v2");
+    expect(await (await worker.navigate("/play/", "doc"))!.text()).toBe("page v2");
+    expect(await worker.readRecord(ACTIVE)).toBe("v2");
+    expect(await (await worker.get("/sound/hit.ogg", "doc"))!.text()).toBe("hit");
+    expect(await (await worker.get("/sound/hit.m4a", "doc"))!.text()).toBe("hit m4a");
+    expect(server.fetched).toEqual(["/sound/hit.m4a"]);
+    const cache = await worker.storage.open(buildCacheName(POLICY, "v2"));
+    expect(await cache.match("/sound/hit.m4a")).toBeUndefined();
   });
 });
 

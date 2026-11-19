@@ -139,6 +139,7 @@ function load(
   caches: MemoryCaches,
   server: FakeServer,
   manager?: Pick<StorageManager, "estimate" | "persist">,
+  soundFormat?: string,
 ) {
   const container = Object.assign(new EventTarget(), {
     controller: null as { scriptURL: string } | null,
@@ -176,6 +177,7 @@ function load(
       onUpdateReady: () => undefined,
       onUpdateState: () => undefined,
       serviceWorkerUrl: ROUTER,
+      soundFormat,
     },
   );
   return { failures, launch, networkPlay, store };
@@ -308,5 +310,51 @@ describe("redeploy mid-install", () => {
     const v2 = caches.named.get(buildCacheName(POLICY, "bbbb"))!;
     expect(await (await v2.match("/a.js"))?.text()).toBe("alpha two");
     expect(await (await v2.match("/b.js"))?.text()).toBe("shared bravo");
+  });
+});
+
+describe("sound formats", () => {
+  const SOUNDS = buildOf("ssss", {
+    "/a.js": "alpha",
+    "/play/": "<html>",
+    "/s/hit.m4a": "hit m4a",
+    "/s/hit.ogg": "hit ogg",
+    "/s/hum.m4a": "hum m4a",
+    "/s/hum.ogg": "hum ogg",
+  });
+  const deployed: Build = {
+    ...SOUNDS,
+    manifest: {
+      ...SOUNDS.manifest,
+      sounds: { "/s/hit": ["/s/hit.ogg", "/s/hit.m4a"], "/s/hum": ["/s/hum.ogg", "/s/hum.m4a"] },
+    },
+  };
+
+  it("fetches, stores and checks only the chosen format, durably for the next launch", async () => {
+    const caches = new MemoryCaches();
+    const server = new FakeServer(deployed);
+    const page = load(caches, server, undefined, "ogg");
+    await expect(page.launch.run()).resolves.toBe("play");
+    const chosen = ["/a.js", "/play/", "/s/hit.ogg", "/s/hum.ogg"];
+    expect(server.fileFetches.sort()).toEqual(chosen);
+    expect(storedPaths(caches, deployed).sort()).toEqual(chosen);
+    const saved = await page.store.readManifest("ssss");
+    expect(saved?.soundFormat).toBe("ogg");
+    expect(await page.store.complete(saved!)).toBe(true);
+    expect(await page.store.complete(deployed.manifest)).toBe(false);
+
+    server.fileFetches.length = 0;
+    const next = load(caches, server, undefined, "ogg");
+    await expect(next.launch.run()).resolves.toBe("play");
+    expect(server.fileFetches).toEqual([]);
+  });
+
+  it("installs every alternative without a sound format", async () => {
+    const caches = new MemoryCaches();
+    const server = new FakeServer(deployed);
+    const page = load(caches, server);
+    await expect(page.launch.run()).resolves.toBe("play");
+    expect(server.fileFetches.sort()).toEqual(Object.keys(deployed.bodies).sort());
+    expect(await page.store.complete(deployed.manifest)).toBe(true);
   });
 });

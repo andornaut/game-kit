@@ -157,8 +157,9 @@ function parseBuild(version: string, value: unknown): Build | undefined {
 // Serves each navigation and same-origin GET other than a no-store one from the build its
 // document is pinned to, or the active build for a document with no pin, and pins the document to
 // the build that served it. A navigation with a complete staged build first promotes it to
-// active. Without an active build, and for a URL the build does not list, the request goes to the
-// network. Pins of closed clients are deleted at activate and, at most once per PIN_PRUNE_MS, on
+// active. Without an active build, and for a URL the build does not list, such as a sound
+// alternative the device did not install (buildRecords' installedManifest), the request goes to
+// the network. Pins of closed clients are deleted at activate and, at most once per PIN_PRUNE_MS, on
 // navigation.
 export function runServiceWorker(policy: BuildPolicy): void {
   const worker = self as unknown as WorkerScope;
@@ -447,8 +448,10 @@ export function runServiceWorker(policy: BuildPolicy): void {
   );
   worker.addEventListener("fetch", (event) => {
     const { request } = event;
-    // A no-store request, such as the page installer's download of a newer build's file at a URL
-    // the active build also lists, asks for the network, so the browser answers it.
+    // A no-store request, such as the page installer's download of a newer build's unhashed file
+    // at a URL the active build also lists, asks for the network, so the browser answers it. The
+    // installer fetches hashed files in the default mode, and serving one from the document's
+    // build is correct because a hashed URL always has the same bytes.
     if (
       request.method !== "GET" ||
       request.cache === "no-store" ||

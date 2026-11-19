@@ -14,6 +14,8 @@ const CONTENT_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".m4a": "audio/mp4",
+  ".ogg": "audio/ogg",
 };
 
 export interface RequestRecord {

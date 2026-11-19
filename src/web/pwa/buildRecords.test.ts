@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { type BuildManifest, buildManifestUrl } from "./buildContract.ts";
 import {
+  installedManifest,
   parseBuildManifest,
   parseBuildPointer,
   parseVersionRecord,
+  soundFormatOf,
   verifiedJsonFamilies,
   versionRecordText,
 } from "./buildRecords.ts";
@@ -90,5 +92,64 @@ describe("verifiedJsonFamilies", () => {
         verifiedJsonBodies: [{ byteSize: 2, sha256: sha("b"), urls: ["/b.json", "/c.json"] }],
       }),
     ).toThrow(RangeError);
+  });
+});
+
+describe("installedManifest", () => {
+  const withSounds: BuildManifest = {
+    boot: ["/a.js", "/s/hit-1.m4a", "/s/hum-1.m4a"],
+    buildId: "build-v1",
+    files: [
+      { byteSize: 1, sha256: sha("a"), url: "/a.js" },
+      { byteSize: 3, sha256: sha("c"), url: "/s/hit-1.ogg" },
+      { byteSize: 4, sha256: sha("d"), url: "/s/hit-1.m4a" },
+      { byteSize: 5, sha256: sha("e"), url: "/s/hum-1.m4a" },
+    ],
+    schema: 1,
+    sounds: { "/s/hit": ["/s/hit-1.ogg", "/s/hit-1.m4a"], "/s/hum": ["/s/hum-1.m4a"] },
+    version: "v1",
+  };
+
+  it("names an alternative's format by its URL's extension", () => {
+    expect(soundFormatOf("/assets/hit-1a2b.ogg")).toBe("ogg");
+    expect(soundFormatOf("/a.b/hit")).toBeUndefined();
+  });
+
+  it("keeps only the chosen format's alternatives and every other file, and records the format", () => {
+    expect(installedManifest("ogg", withSounds)).toEqual({
+      boot: ["/a.js", "/s/hit-1.ogg"],
+      buildId: "build-v1",
+      files: [withSounds.files[0], withSounds.files[1]],
+      schema: 1,
+      soundFormat: "ogg",
+      sounds: { "/s/hit": ["/s/hit-1.ogg"] },
+      version: "v1",
+    });
+    expect(installedManifest("m4a", withSounds).files.map((file) => file.url)).toEqual([
+      "/a.js",
+      "/s/hit-1.m4a",
+      "/s/hum-1.m4a",
+    ]);
+  });
+
+  it("keeps every alternative without a format, and ignores a recorded format", () => {
+    const all = installedManifest(undefined, {
+      ...withSounds,
+      soundFormat: "ogg",
+    } as BuildManifest);
+    expect(all).toEqual(withSounds);
+    expect(all).not.toHaveProperty("soundFormat");
+  });
+
+  it("leaves left-out alternatives out of verified JSON families", () => {
+    const family = { byteSize: 2, sha256: sha("b"), urls: ["/b.json", "/s/c.json"] };
+    const json: BuildManifest = {
+      ...valid,
+      files: [...valid.files.slice(0, 2), { byteSize: 2, sha256: sha("b"), url: "/s/c.json" }],
+      sounds: { "/s/c": ["/s/c.json"] },
+      verifiedJsonBodies: [family],
+    };
+    expect(installedManifest("ogg", json).verifiedJsonBodies).toEqual([]);
+    expect(installedManifest("json", json).verifiedJsonBodies).toEqual([family]);
   });
 });

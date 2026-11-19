@@ -224,6 +224,7 @@ function setup(
     fetch: server.fetch,
     now: clock.now,
     origin: ORIGIN,
+    policy,
     setTimeout: clock.setTimeout,
     storage: { estimate, persist },
     store,
@@ -266,6 +267,14 @@ describe("installBuild", () => {
     expect(bytes.at(0)).toEqual([0, 22]);
     expect(bytes.at(-1)).toEqual([22, 22]);
     expect(await store.readState()).toEqual({});
+  });
+
+  it("lets the HTTP cache answer hashed files and fetches every other URL past it", async () => {
+    const bodies = { "/assets/app-1a2b.js": "hashed", "/play/": "page" };
+    const { install, server } = setup(bodies);
+    expect(await install({ manifest: buildOf("v1", bodies) })).toBe("complete");
+    const modes = Object.fromEntries(server.calls.map(({ init, url }) => [url, init.cache]));
+    expect(modes).toEqual({ "/assets/app-1a2b.js": "default", "/play/": "no-store" });
   });
 
   it("fetches at most lanes files at once", async () => {
@@ -449,6 +458,22 @@ describe("verified JSON bodies", () => {
     });
     expect(await install({ manifest: manifestWith() })).toBe("complete");
     expect(server.calls.every((call) => call.init.credentials === "omit")).toBe(true);
+  });
+
+  it("fetches a hashed family member past the HTTP cache", async () => {
+    const hashed = { "/assets/one.json": json, "/assets/two.json": json };
+    const { install, server } = setup(hashed, undefined, {
+      "/assets/one.json": base,
+      "/assets/two.json": base,
+    });
+    const manifest: BuildManifest = {
+      ...buildOf("v1", hashed),
+      verifiedJsonBodies: [
+        { byteSize: json.length, sha256: sha256(json), urls: Object.keys(hashed) },
+      ],
+    };
+    expect(await install({ manifest })).toBe("complete");
+    expect(server.calls.map((call) => call.init.cache)).toEqual(["no-store", "no-store"]);
   });
 
   it.each([

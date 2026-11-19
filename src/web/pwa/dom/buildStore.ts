@@ -16,6 +16,7 @@ import {
   buildManifestUrl,
   type BuildPolicy,
   type BuildState,
+  type InstalledManifest,
   pinRecordPath,
   recordsCacheName,
   STAGED_RECORD_PATH,
@@ -46,8 +47,11 @@ export interface BuildStore {
   deletePin(clientId: string): Promise<void>;
   // Every pin, by client id.
   pinnedVersions(): Promise<ReadonlyMap<string, string>>;
-  saveManifest(manifest: BuildManifest): Promise<void>;
-  readManifest(version: string): Promise<BuildManifest | undefined>;
+  // Saves the manifest of a build this device installs. Callers pass the saved manifest (or
+  // installedManifest's) to missing and complete, so each checks only the files this device
+  // installs.
+  saveManifest(manifest: InstalledManifest): Promise<void>;
+  readManifest(version: string): Promise<InstalledManifest | undefined>;
   // The manifest's files that its build cache lacks, or holds under a different digest header.
   missing(manifest: BuildManifest): Promise<BuildFile[]>;
   complete(manifest: BuildManifest): Promise<boolean>;
@@ -149,15 +153,19 @@ export function createBuildStore(
       .filter((name) => name.startsWith(buildPrefix) && name !== recordsName)
       .map((name) => name.slice(buildPrefix.length));
 
-  const readManifest = async (version: string): Promise<BuildManifest | undefined> => {
+  const readManifest = async (version: string): Promise<InstalledManifest | undefined> => {
     assertVersion(version);
     const response = await (await records()).match(keyOf(buildManifestUrl(version)));
     if (response === undefined) {
       return undefined;
     }
     try {
-      const manifest = parseBuildManifest(await response.json());
-      return manifest.version === version ? manifest : undefined;
+      const manifest: InstalledManifest = parseBuildManifest(await response.json());
+      const { soundFormat } = manifest;
+      return manifest.version === version &&
+        (soundFormat === undefined || typeof soundFormat === "string")
+        ? manifest
+        : undefined;
     } catch {
       return undefined;
     }

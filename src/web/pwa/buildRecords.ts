@@ -1,8 +1,14 @@
 // Runtime reading of the build pointer, manifests and version records (buildContract), shared by
-// the page (dom/buildStore, dom/launch) and the router (dom/serviceWorker). Each parser checks
-// the fields this kit reads and ignores any other, so a pointer, manifest or record that a later
-// kit version wrote stays readable. buildManifest's validators are the strict build-time checks.
-import { type BuildManifest, buildManifestUrl, type BuildPointer } from "./buildContract.ts";
+// the page (dom/buildStore, dom/launch) and the router (dom/serviceWorker), and the choice of the
+// sound alternatives a device installs. Each parser checks the fields this kit reads and ignores
+// any other, so a pointer, manifest or record that a later kit version wrote stays readable.
+// buildManifest's validators are the strict build-time checks.
+import {
+  type BuildManifest,
+  buildManifestUrl,
+  type BuildPointer,
+  type InstalledManifest,
+} from "./buildContract.ts";
 import { validateVerifiedJsonBodies, type VerifiedJsonBody } from "./verifiedJsonBody.ts";
 
 const SHA256_HEX = /^[a-f0-9]{64}$/;
@@ -115,4 +121,61 @@ export function verifiedJsonFamilies(manifest: BuildManifest): Map<string, Verif
     }
   }
   return byUrl;
+}
+
+// A sound alternative's format: the extension of its URL's last segment, such as "ogg" for
+// /assets/hit-1a2b3c4d.ogg, or undefined where the segment has none.
+export function soundFormatOf(url: string): string | undefined {
+  const segment = url.slice(url.lastIndexOf("/") + 1);
+  const dot = segment.lastIndexOf(".");
+  return dot === -1 ? undefined : segment.slice(dot + 1);
+}
+
+// The manifest the page installs and saves for a build on this device, given the sound format the
+// page plays. With soundFormat, each sound keeps only its alternatives in that format, and a sound
+// with none keeps no alternative; files and verified JSON families leave the other alternatives
+// out, and a boot file that is a left-out alternative becomes its sound's kept one. Without
+// soundFormat, every alternative stays. The router serves only the saved manifest's files, so a
+// left-out alternative requested later goes to the network.
+export function installedManifest(
+  soundFormat: string | undefined,
+  manifest: BuildManifest,
+): InstalledManifest {
+  // Each left-out alternative, mapped to its sound's kept alternative, if any.
+  const leftOut = new Map<string, string | undefined>();
+  const sounds: Record<string, readonly string[]> = {};
+  for (const [logical, alternatives] of Object.entries(manifest.sounds)) {
+    const kept =
+      soundFormat === undefined
+        ? alternatives
+        : alternatives.filter((url) => soundFormatOf(url) === soundFormat);
+    for (const url of alternatives) {
+      if (!kept.includes(url)) {
+        leftOut.set(url, kept[0]);
+      }
+    }
+    if (kept.length > 0) {
+      sounds[logical] = kept;
+    }
+  }
+  const boot = manifest.boot.flatMap((url) => {
+    if (!leftOut.has(url)) {
+      return [url];
+    }
+    const kept = leftOut.get(url);
+    return kept === undefined ? [] : [kept];
+  });
+  const families = manifest.verifiedJsonBodies
+    ?.map((family) => ({ ...family, urls: family.urls.filter((url) => !leftOut.has(url)) }))
+    .filter((family) => family.urls.length > 1);
+  return {
+    boot: [...new Set(boot)],
+    buildId: manifest.buildId,
+    files: manifest.files.filter((file) => !leftOut.has(file.url)),
+    schema: manifest.schema,
+    sounds,
+    version: manifest.version,
+    ...(families === undefined ? {} : { verifiedJsonBodies: families }),
+    ...(soundFormat === undefined ? {} : { soundFormat }),
+  };
 }

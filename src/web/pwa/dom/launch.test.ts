@@ -16,6 +16,7 @@ import {
   type UpdateOffer,
   type UpdateState,
 } from "../buildContract.ts";
+import { installedManifest } from "../buildRecords.ts";
 import type { BuildInstallOptions, installBuild } from "./buildInstaller.ts";
 import type { BuildStore } from "./buildStore.ts";
 import {
@@ -33,6 +34,8 @@ import {
   type RequiredUpdateState,
   type SessionLike,
   UPDATE_CHECK_MS,
+  UPDATE_RETRY_MAX_MS,
+  UPDATE_RETRY_MS,
 } from "./launch.ts";
 
 const POLICY = { cacheNamePrefix: "game-", hashedAssetPrefix: "/assets/" };
@@ -182,7 +185,7 @@ class FakeDocument extends EventTarget {
   }
 }
 
-function fixture() {
+function fixture({ soundFormat }: { soundFormat?: string } = {}) {
   const container = new FakeContainer();
   const visibility = new FakeDocument();
   const window = new EventTarget();
@@ -256,6 +259,7 @@ function fixture() {
       onUpdateReady: (offer) => offers.push(offer),
       onUpdateState: (state) => updates.push(state),
       serviceWorkerUrl: ROUTER,
+      soundFormat,
     },
   );
   return {
@@ -302,6 +306,18 @@ const settle = (turns = 20): Promise<void> =>
 const V1 = buildOf("aaaa", { "/a.js": "alpha", "/play/": "<html>" }, ["/a.js"]);
 const V2 = buildOf("bbbb", { "/a.js": "alpha2", "/play/": "<html>" }, ["/a.js"]);
 const V3 = buildOf("cccc", { "/a.js": "alpha3", "/play/": "<html>" }, ["/a.js"]);
+const SOUNDS = (() => {
+  const { manifest, pointer } = buildOf("ssss", {
+    "/a.js": "alpha",
+    "/hit.m4a": "m4a bytes",
+    "/hit.ogg": "ogg bytes",
+    "/play/": "<html>",
+  });
+  return { manifest: { ...manifest, sounds: { "/hit": ["/hit.ogg", "/hit.m4a"] } }, pointer };
+})();
+
+const failedInstall = () =>
+  Promise.reject(Object.assign(new Error("No progress"), { reason: "network" }));
 
 afterEach(() => {
   vi.useRealTimers();
@@ -456,6 +472,31 @@ describe("first install", () => {
     expect(f.failures).toEqual([]);
     expect(f.store.state.active).toBeUndefined();
     expect(f.reload).not.toHaveBeenCalled();
+  });
+
+  it("installs only the sound format the page plays and saves that choice with the manifest", async () => {
+    const f = fixture({ soundFormat: "ogg" });
+    f.deploy(SOUNDS);
+    f.container.claim();
+    await expect(f.launch.run()).resolves.toBe("play");
+    const installed = f.installs[0]!.manifest;
+    expect(installed.files.map((file) => file.url)).toEqual(["/a.js", "/hit.ogg", "/play/"]);
+    expect(installed.soundFormat).toBe("ogg");
+    expect(f.store.manifests.get("ssss")).toEqual(installed);
+  });
+
+  it.each([
+    ["the same sound format", "ogg", false],
+    ["another sound format", "m4a", true],
+    ["every alternative", undefined, true],
+  ])("reuses a saved manifest only when saved for %s", async (_case, saved, fetched) => {
+    const f = fixture({ soundFormat: "ogg" });
+    f.deploy(SOUNDS);
+    f.container.claim();
+    f.store.manifests.set("ssss", installedManifest(saved, SOUNDS.manifest));
+    await expect(f.launch.run()).resolves.toBe("play");
+    expect(f.fetch.mock.calls.some(([url]) => url === SOUNDS.pointer.manifest)).toBe(fetched);
+    expect(f.installs[0]!.manifest.files.map((file) => file.url)).not.toContain("/hit.m4a");
   });
 
   it("rejects a manifest that does not match the pointer", async () => {
@@ -644,6 +685,57 @@ describe("background updates", () => {
     f.visibility.set("visible");
     await settle();
     expect(f.offers.map((o) => o.version)).toEqual(["bbbb"]);
+  });
+
+  it("retries a failed update while visible, from UPDATE_RETRY_MS doubling to UPDATE_RETRY_MAX_MS", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const f = fixture();
+    f.deploy(V2);
+    f.setResults(Array.from({ length: 6 }, () => failedInstall));
+    await playing(f);
+    expect(f.installs).toHaveLength(1);
+    const waits = [UPDATE_RETRY_MS, 120_000, 240_000, 480_000, UPDATE_RETRY_MAX_MS];
+    for (const [index, wait] of [...waits, UPDATE_RETRY_MAX_MS].entries()) {
+      vi.advanceTimersByTime(wait - 1);
+      // Each step waits for the retry before it.
+      // eslint-disable-next-line no-await-in-loop
+      await settle();
+      expect(f.installs).toHaveLength(index + 1);
+      vi.advanceTimersByTime(1);
+      // eslint-disable-next-line no-await-in-loop
+      await settle();
+      expect(f.installs).toHaveLength(index + 2);
+    }
+    expect(f.offers.map((o) => o.version)).toEqual(["bbbb"]);
+    expect(f.updates.filter((u) => u.phase === "failed")).toHaveLength(6);
+    expect(f.failures).toEqual([]);
+    vi.advanceTimersByTime(UPDATE_RETRY_MAX_MS * 2);
+    await settle();
+    expect(f.installs).toHaveLength(7);
+  });
+
+  it("cancels the update retry while hidden and on dispose, and re-arms it when visible", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const f = fixture();
+    f.deploy(V2);
+    f.setResults([failedInstall, failedInstall]);
+    await playing(f);
+    f.visibility.set("hidden");
+    vi.advanceTimersByTime(UPDATE_RETRY_MAX_MS);
+    await settle();
+    expect(f.installs).toHaveLength(1);
+    // The resume falls within UPDATE_CHECK_MS of the last check, so only the retry runs.
+    f.visibility.set("visible");
+    await settle();
+    expect(f.installs).toHaveLength(1);
+    vi.advanceTimersByTime(UPDATE_RETRY_MS);
+    await settle();
+    expect(f.installs).toHaveLength(2);
+    f.launch.dispose();
+    vi.advanceTimersByTime(UPDATE_RETRY_MAX_MS);
+    await settle();
+    expect(f.installs).toHaveLength(2);
+    expect(f.failures).toEqual([]);
   });
 
   it("Update now awaits the save, then activates the staged build and reloads with no download", async () => {

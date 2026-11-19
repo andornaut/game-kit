@@ -124,6 +124,8 @@ if (context === undefined) {
       }
     },
     serviceWorkerUrl: "/sw.js",
+    // A game chooses with canPlayType; the fixture plays ogg, so the runner can predict requests.
+    soundFormat: "ogg",
   });
 
   const boot = async () => {

@@ -290,6 +290,25 @@ async function main(): Promise<number> {
       stopRepeats.length === 0,
       `${atStop.size} stored at stop, ${stopRepeats.length} requested again`,
     );
+    const alternatives = Object.values(a2.manifest.sounds).flat();
+    const chosenSounds = alternatives.filter((path) => path.endsWith(".ogg"));
+    const leftOut = alternatives.filter((path) => !chosenSounds.includes(path));
+    const installedPaths = await storedPaths(page);
+    const leftOutRequests = server.log.filter((r) => leftOut.includes(r.path));
+    check(
+      "the install fetches and stores only the sound format the page plays",
+      chosenSounds.length > 0 &&
+        leftOut.length > 0 &&
+        chosenSounds.every(
+          (path) => installedPaths.has(path) && server.log.some((r) => r.path === path),
+        ) &&
+        leftOut.every((path) => !installedPaths.has(path)) &&
+        leftOutRequests.length === 0,
+      `${chosenSounds.filter((path) => installedPaths.has(path)).length} of ` +
+        `${chosenSounds.length} ogg stored, ` +
+        `${leftOut.filter((path) => installedPaths.has(path)).length} m4a stored, ` +
+        `${leftOutRequests.length} m4a requested`,
+    );
     const installedRecords = await records(page);
     const deployRepeats = repeatedAfter(deployMark, atDeploy);
     const a2Only = a2.manifest.files.filter(

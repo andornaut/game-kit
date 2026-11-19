@@ -34,11 +34,21 @@ export interface BuildManifest {
   readonly buildId: string;
   // Every file the complete build needs offline, sound alternatives included.
   readonly files: readonly BuildFile[];
-  // Each sound's logical URL mapped to its format alternatives' URLs, which are also in files.
+  // Each sound's logical URL mapped to its format alternatives' URLs, which are also in files. An
+  // alternative's format is its URL's extension, such as "ogg" for /assets/hit-1a2b3c4d.ogg.
   readonly sounds: Readonly<Record<string, readonly string[]>>;
   // Files the game reads while booting, after install, counted into the one progress total.
   readonly boot: readonly string[];
   readonly verifiedJsonBodies?: readonly VerifiedJsonBody[];
+}
+
+// The manifest the page saves for a build it installs on this device (buildRecords'
+// installedManifest): the deployed manifest reduced to the sound alternatives in soundFormat,
+// which it records. Without soundFormat it keeps every alternative. The installer, the store's
+// completeness check, launch and the router all read this saved manifest, so they agree on which
+// files the build needs here.
+export interface InstalledManifest extends BuildManifest {
+  readonly soundFormat?: string;
 }
 
 // The caching rules shared by the router and the page. cacheNamePrefix scopes every cache and
@@ -59,7 +69,7 @@ export function recordsCacheName(policy: BuildPolicy): string {
 
 // Record entries in recordsCacheName, keyed by same-origin URL. Each body is {"version": string};
 // an absent record is a missing entry, never a null. Manifests are stored in the same cache under
-// buildManifestUrl(version), with the BuildManifest JSON as the body.
+// buildManifestUrl(version), with the InstalledManifest JSON as the body.
 export const ACTIVE_RECORD_PATH = "/.game-kit/records/active";
 export const STAGED_RECORD_PATH = "/.game-kit/records/staged";
 export function pinRecordPath(clientId: string): string {
