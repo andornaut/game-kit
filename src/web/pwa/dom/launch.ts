@@ -12,6 +12,7 @@ import {
   type LaunchFailure,
   type LaunchProgress,
   type LaunchResult,
+  type NetworkPlayNotice,
   type UpdateOffer,
   type UpdateState,
 } from "../buildContract.ts";
@@ -85,6 +86,9 @@ export type RequiredUpdateState = "unavailable" | "updating";
 
 export interface LaunchOptions {
   readonly onFailure: (failure: LaunchFailure) => void;
+  // A first install this device cannot complete: called once before run() resolves "play", and
+  // the game plays from the network. The game shows its own notice.
+  readonly onNetworkPlay: (notice: NetworkPlayNotice) => void;
   readonly onProgress: (progress: LaunchProgress) => void;
   // Reported only after requireNewer().
   readonly onRequireNewer?: (state: RequiredUpdateState) => void;
@@ -96,8 +100,9 @@ export interface LaunchOptions {
 
 export interface Launch {
   // Once at document boot, before game construction or save access. "reloading" means the
-  // caller must not start the game. A first install that fails stays pending until onFailure's
-  // retry succeeds.
+  // caller must not start the game. A first install that fails on the network or verification
+  // stays pending until onFailure's retry succeeds; one that fails as unsupported or on quota
+  // resolves "play" after onNetworkPlay.
   run(): Promise<LaunchResult>;
   // The boot loader's settled reads, in any unit, counted into the same progress value.
   bootProgress(done: number, total: number): void;
@@ -126,17 +131,19 @@ const RECORD_SHARE = 0.01;
 export const LAUNCH_RELOAD_KEY = "game-kit:launch-reload";
 export const LAUNCH_PROGRESS_KEY = "game-kit:launch-progress";
 
-class LaunchError extends Error {
-  readonly reason: LaunchFailure["reason"];
+type FirstInstallFailure = LaunchFailure["reason"] | NetworkPlayNotice["reason"];
 
-  constructor(reason: LaunchFailure["reason"], message: string) {
+class LaunchError extends Error {
+  readonly reason: FirstInstallFailure;
+
+  constructor(reason: FirstInstallFailure, message: string) {
     super(message);
     this.name = "LaunchError";
     this.reason = reason;
   }
 }
 
-function failureReason(error: unknown): LaunchFailure["reason"] {
+function failureReason(error: unknown): FirstInstallFailure {
   const reason = (error as { reason?: unknown } | null)?.reason;
   return reason === "network" ||
     reason === "quota" ||
@@ -363,7 +370,8 @@ export function browserLaunchContext(policy: BuildPolicy): LaunchContext | undef
 }
 
 // Call run() once at document boot. With no active build it installs the deployed build in the
-// foreground and reports onProgress, or onFailure with a resuming retry. With an active build it
+// foreground and reports onProgress, or onFailure with a resuming retry, or onNetworkPlay where
+// the device cannot install; each later launch tries the install again. With an active build it
 // resolves "play" at once, then checks build.json at launch and on resume and stages a newer
 // build in the background. Staging never activates: a staged build becomes active through
 // Update now, requireNewer, or the router's promotion at the next launch navigation.
@@ -569,7 +577,8 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     return "reloading";
   };
 
-  // Retries a failed first install until it succeeds; each retry resumes from stored entries.
+  // Retries a failed first install until it succeeds; each retry resumes from stored entries. An
+  // unsupported or quota failure plays from the network instead, with no active build.
   const installUntilDone = (): Promise<LaunchResult> =>
     new Promise((resolve) => {
       const attempt = () => {
@@ -577,10 +586,21 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
           if (disposed) {
             return;
           }
+          const reason = failureReason(error);
+          if (reason === "unsupported" || reason === "quota") {
+            console.warn("First install failed; playing from the network.", error);
+            try {
+              options.onNetworkPlay({ reason });
+            } catch (callbackError) {
+              console.error("Network play callback failed.", callbackError);
+            }
+            resolve("play");
+            return;
+          }
           console.warn("First install failed.", error);
           let retried = false;
           const failure: LaunchFailure = {
-            reason: failureReason(error),
+            reason,
             retry: () => {
               if (!retried && !disposed) {
                 retried = true;
@@ -854,6 +874,8 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
         recorded: true,
         total: carry.receivedBytes,
       };
+      // The bar keeps its value between the reload and the boot loader's first read.
+      report("booting", 0);
     } else {
       progress = { ...progress, recorded: true };
       writeSession(session, LAUNCH_PROGRESS_KEY, undefined);

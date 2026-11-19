@@ -21,6 +21,8 @@ export interface E2eState {
   bootFiles: number;
   progress?: { phase: string; value: number; receivedBytes: number; totalBytes: number };
   failures: string[];
+  // Each onNetworkPlay reason.
+  networkPlay: string[];
   updateReady: string[];
   // Each distinct update phase in order, as "phase" or "phase:version".
   updateStates: string[];
@@ -52,6 +54,7 @@ const state: E2eState = {
   bootFiles: 0,
   errors: [],
   failures: [],
+  networkPlay: [],
   paused: false,
   phase: "launching",
   ticks: 0,
@@ -101,6 +104,9 @@ if (context === undefined) {
   const launch = createLaunch(context, {
     onFailure: (failure) => {
       state.failures.push(failure.reason);
+    },
+    onNetworkPlay: (notice) => {
+      state.networkPlay.push(notice.reason);
     },
     onProgress: ({ phase, receivedBytes, totalBytes, value }) => {
       state.progress = { phase, receivedBytes, totalBytes, value };

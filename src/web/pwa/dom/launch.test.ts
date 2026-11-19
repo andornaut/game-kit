@@ -12,6 +12,7 @@ import {
   type BuildState,
   type LaunchFailure,
   type LaunchProgress,
+  type NetworkPlayNotice,
   type UpdateOffer,
   type UpdateState,
 } from "../buildContract.ts";
@@ -241,6 +242,7 @@ function fixture() {
   });
   const progress: LaunchProgress[] = [];
   const failures: LaunchFailure[] = [];
+  const networkPlay: NetworkPlayNotice[] = [];
   const offers: UpdateOffer[] = [];
   const updates: UpdateState[] = [];
   const required: RequiredUpdateState[] = [];
@@ -248,6 +250,7 @@ function fixture() {
     { installBuild: install, page, policy: POLICY, store },
     {
       onFailure: (failure) => failures.push(failure),
+      onNetworkPlay: (notice) => networkPlay.push(notice),
       onProgress: (value) => progress.push(value),
       onRequireNewer: (state) => required.push(state),
       onUpdateReady: (offer) => offers.push(offer),
@@ -268,6 +271,7 @@ function fixture() {
     installBuild: install,
     installs,
     launch,
+    networkPlay,
     offers,
     progress,
     reload,
@@ -398,13 +402,15 @@ describe("first install", () => {
     const f = fixture();
     f.deploy(V1);
     f.container.claim();
-    f.setResults([() => Promise.reject(Object.assign(new Error("full"), { reason: "quota" }))]);
+    f.setResults([
+      () => Promise.reject(Object.assign(new Error("offline"), { reason: "network" })),
+    ]);
     let result: string | undefined;
     void f.launch.run().then((value) => {
       result = value;
     });
     await settle();
-    expect(f.failures.map((failure) => failure.reason)).toEqual(["quota"]);
+    expect(f.failures.map((failure) => failure.reason)).toEqual(["network"]);
     expect(result).toBeUndefined();
     expect(f.store.state.active).toBeUndefined();
     f.failures[0]!.retry();
@@ -419,16 +425,37 @@ describe("first install", () => {
     void f.launch.run();
     await settle();
     expect(f.failures.map((failure) => failure.reason)).toEqual(["network"]);
+    expect(f.networkPlay).toEqual([]);
     expect(f.installBuild).not.toHaveBeenCalled();
   });
 
-  it("fails with unsupported when the router cannot register", async () => {
+  it("plays from the network with an unsupported notice when the router cannot register", async () => {
     const f = fixture();
     f.deploy(V1);
     f.container.register.mockRejectedValue(new Error("denied"));
-    void f.launch.run();
+    let noticesAtPlay: NetworkPlayNotice[] | undefined;
+    await f.launch.run().then(() => {
+      noticesAtPlay = [...f.networkPlay];
+    });
+    expect(noticesAtPlay).toEqual([{ reason: "unsupported" }]);
     await settle();
-    expect(f.failures.map((failure) => failure.reason)).toEqual(["unsupported"]);
+    expect(f.networkPlay).toEqual([{ reason: "unsupported" }]);
+    expect(f.failures).toEqual([]);
+    expect(f.installBuild).not.toHaveBeenCalled();
+    expect(f.store.state.active).toBeUndefined();
+  });
+
+  it("plays from the network with a quota notice when storage is full", async () => {
+    const f = fixture();
+    f.deploy(V1);
+    f.container.claim();
+    f.setResults([() => Promise.reject(Object.assign(new Error("full"), { reason: "quota" }))]);
+    await expect(f.launch.run()).resolves.toBe("play");
+    await settle();
+    expect(f.networkPlay).toEqual([{ reason: "quota" }]);
+    expect(f.failures).toEqual([]);
+    expect(f.store.state.active).toBeUndefined();
+    expect(f.reload).not.toHaveBeenCalled();
   });
 
   it("rejects a manifest that does not match the pointer", async () => {
@@ -438,6 +465,7 @@ describe("first install", () => {
     void f.launch.run();
     await settle();
     expect(f.failures.map((failure) => failure.reason)).toEqual(["verification"]);
+    expect(f.networkPlay).toEqual([]);
   });
 });
 
@@ -525,6 +553,9 @@ describe("launch with an active build", () => {
     );
     f.store.state = { active: "aaaa" };
     await f.launch.run();
+    expect(f.progress).toHaveLength(1);
+    expect(f.progress[0]).toMatchObject({ phase: "booting", receivedBytes: 90, totalBytes: 100 });
+    expect(f.progress[0]!.value).toBeCloseTo(0.99 * 0.9 + 0.01);
     f.launch.bootProgress(1, 2);
     expect(f.progress.at(-1)).toMatchObject({
       phase: "booting",

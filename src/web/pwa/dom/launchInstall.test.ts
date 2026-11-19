@@ -11,6 +11,7 @@ import {
   buildManifestUrl,
   type BuildPointer,
   type LaunchFailure,
+  type NetworkPlayNotice,
   recordsCacheName,
 } from "../buildContract.ts";
 import { installBuild } from "./buildInstaller.ts";
@@ -165,17 +166,19 @@ function load(
     POLICY,
   );
   const failures: LaunchFailure[] = [];
+  const networkPlay: NetworkPlayNotice[] = [];
   const launch = createLaunch(
     { installBuild, page, policy: POLICY, store },
     {
       onFailure: (failure) => failures.push(failure),
+      onNetworkPlay: (notice) => networkPlay.push(notice),
       onProgress: () => undefined,
       onUpdateReady: () => undefined,
       onUpdateState: () => undefined,
       serviceWorkerUrl: ROUTER,
     },
   );
-  return { failures, launch, store };
+  return { failures, launch, networkPlay, store };
 }
 
 // Lets queued promise callbacks and cache calls run, one macrotask turn at a time.
@@ -196,44 +199,41 @@ const roomFor = (free: number): Pick<StorageManager, "estimate" | "persist"> => 
 });
 
 describe("quota", () => {
-  it("fails with quota before any file fetch when the estimate leaves too little room", async () => {
+  it("plays from the network before any file fetch when the estimate leaves too little room", async () => {
     const caches = new MemoryCaches();
     const server = new FakeServer(V1);
     const page = load(caches, server, roomFor(10));
-    void page.launch.run();
-    await settle();
-    expect(page.failures.map((failure) => failure.reason)).toEqual(["quota"]);
+    await expect(page.launch.run()).resolves.toBe("play");
+    expect(page.networkPlay).toEqual([{ reason: "quota" }]);
+    expect(page.failures).toEqual([]);
     expect(server.fileFetches).toEqual([]);
     expect(await page.store.readState()).toEqual({});
   });
 
-  it("fails with quota when a put is refused, and the retry fetches only what is missing", async () => {
+  it("plays from the network when a put is refused, and the next launch fetches only what is missing", async () => {
     const caches = new MemoryCaches();
     const server = new FakeServer(V1);
     const cache = await caches.open(buildCacheName(POLICY, "aaaa"));
     cache.failPut = (path) =>
       path === "/c.js" ? new DOMException("Storage is full", "QuotaExceededError") : undefined;
     const page = load(caches, server, roomFor(1_000_000));
-    let result: string | undefined;
-    void page.launch.run().then((value) => {
-      result = value;
-    });
-    await settle();
-    expect(page.failures.map((failure) => failure.reason)).toEqual(["quota"]);
+    await expect(page.launch.run()).resolves.toBe("play");
+    expect(page.networkPlay).toEqual([{ reason: "quota" }]);
+    expect(page.failures).toEqual([]);
     expect(await page.store.readState()).toEqual({});
     const stored = storedPaths(caches, V1);
     expect(stored).not.toContain("/c.js");
     cache.failPut = undefined;
     server.fileFetches.length = 0;
-    page.failures[0]!.retry();
-    await settle();
-    expect(result).toBe("play");
+    const next = load(caches, server, roomFor(1_000_000));
+    await expect(next.launch.run()).resolves.toBe("play");
+    expect(next.networkPlay).toEqual([]);
     expect(server.fileFetches.sort()).toEqual(
       Object.keys(V1.bodies)
         .filter((url) => !stored.includes(url))
         .sort(),
     );
-    expect(await page.store.readState()).toEqual({ active: "aaaa" });
+    expect(await next.store.readState()).toEqual({ active: "aaaa" });
   });
 });
 

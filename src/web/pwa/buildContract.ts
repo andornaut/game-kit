@@ -85,8 +85,15 @@ export interface LaunchProgress {
 
 // Shown only for the first install: Loading failed with Retry.
 export interface LaunchFailure {
-  readonly reason: "network" | "quota" | "verification" | "unsupported";
+  readonly reason: "network" | "verification";
   readonly retry: () => void;
+}
+
+// A first install this device cannot complete, so the game plays from the network. unsupported:
+// the router service worker cannot register. quota: storage is full. The game shows its own
+// notice; each later launch tries the install again, reusing stored files.
+export interface NetworkPlayNotice {
+  readonly reason: "quota" | "unsupported";
 }
 
 // Background updates never show Loading failed or pause play (K3).

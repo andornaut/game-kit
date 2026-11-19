@@ -257,7 +257,7 @@ export function factoryActionPorts(bind: HoldActionBinding): [
 ] { return [{bindHoldAction:bind},{bindHoldAction:bind}]; }
 import type { RgbaImage } from '@andornaut/game-kit/runtime/art/rgbaImage';
 import type {
-  BuildManifest, LaunchProgress, UpdateOffer, UpdateState,
+  BuildManifest, LaunchProgress, NetworkPlayNotice, UpdateOffer, UpdateState,
 } from '@andornaut/game-kit/runtime/web/pwa/buildContract';
 import { runServiceWorker } from '@andornaut/game-kit/runtime/web/pwa/dom/serviceWorker';
 import type { PrecachePluginOptions } from '@andornaut/game-kit/build/precachePlugin';
@@ -294,11 +294,11 @@ import {
 } from '@andornaut/game-kit/runtime/web/pwa/dom/launch';
 export function startLaunch(
   onProgress: (progress: LaunchProgress) => void, onUpdateState: (state: UpdateState) => void,
-  onUpdateReady: (offer: UpdateOffer) => void,
+  onUpdateReady: (offer: UpdateOffer) => void, onNetworkPlay: (notice: NetworkPlayNotice) => void,
 ): Launch | undefined {
   const context = browserLaunchContext({cacheNamePrefix:'proof-',hashedAssetPrefix:'/assets/'});
   return context === undefined ? undefined : createLaunch(context, {
-    onFailure(failure) { failure.retry(); }, onProgress, onUpdateReady, onUpdateState,
+    onFailure(failure) { failure.retry(); }, onNetworkPlay, onProgress, onUpdateReady, onUpdateState,
     serviceWorkerUrl:'/sw.js',
   });
 }

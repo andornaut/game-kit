@@ -265,8 +265,11 @@ async function main(): Promise<number> {
     );
     ensure(
       "first install completes with no Loading failed",
-      installed.phase === "playing" && installed.failures.length === 0,
-      `phase ${installed.phase}, failures [${installed.failures.join(", ")}], ${seconds(installMs)}`,
+      installed.phase === "playing" &&
+        installed.failures.length === 0 &&
+        installed.networkPlay.length === 0,
+      `phase ${installed.phase}, failures [${installed.failures.join(", ")}], ` +
+        `network play [${installed.networkPlay.join(", ")}], ${seconds(installMs)}`,
     );
     if (LONG) {
       check(
