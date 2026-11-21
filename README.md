@@ -93,7 +93,7 @@ The plugin also writes the build's manifest at `/.game-kit/manifest-<version>.js
 
 Strict mode keeps the dialog's ancestor paths live and makes their other branches inert. It does not move, hide, style or dim the underlying UI. Only manager-owned inert marks are restored; nested close and focus restoration retain the existing stack. Owned-root capture guards block outside pointer and activation events, while a child-list observer updates inert branches for inserted controls. Keyboard focus and mapped actions stay within the top dialog, including close keys when no close callback exists.
 
-Handled action keys stop before later listeners on the same root. Mapped keys redirected to neutral document targets after focus loss are contained without activating or closing a dialog. Unmapped editing keys and legacy-mode handling remain unchanged.
+Handled action keys stop before later listeners on the same root. After focus falls to a neutral document target, Tab and the mapped arrow keys recover focus inside the valid top strict dialog. Forward and reverse navigation start at the first and last eligible controls, respectively. Neutral activation and close keys remain contained. Unmapped editing keys and legacy-mode handling remain unchanged.
 
 Configure and create the manager before delegated action listeners on its root. It cannot suppress an earlier listener on that root or an ancestor capture listener. Keep caller world/Phaser input scopes and cross-modal gesture guards. Dimming, visible layout, allowed navigation and actual backdrop selection remain caller-owned. Invalid strict configurations fail before stack, focus or inert changes.
 
