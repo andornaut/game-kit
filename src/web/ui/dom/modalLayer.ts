@@ -356,20 +356,39 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
     }
     return true;
   };
-  // A disabled/removed control can leave focus on body without a focusin event. Contain only
-  // known keys from neutral document targets; do not activate or dismiss through that fallback.
-  const onNeutralKey = (event: KeyboardEvent) => {
+  const refuse = (event: Event) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  // Blur can leave focus on body without a focusin event. Contain known keys from neutral
+  // document targets and recover navigation on keydown.
+  const onNeutralKey = (event: KeyboardEvent): boolean => {
+    const modal = top();
+    const { body, documentElement } = document;
+    const action = focusKeyAction(event.key, event.shiftKey, false);
     if (
-      !disposed &&
-      top()?.strict === true &&
-      (event.target === document ||
-        event.target === document.body ||
-        event.target === document.documentElement) &&
-      focusKeyAction(event.key, event.shiftKey, false) !== undefined
+      disposed ||
+      modal?.strict !== true ||
+      (event.target !== document && event.target !== body && event.target !== documentElement) ||
+      action === undefined
     ) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
+      return false;
     }
+    refuse(event);
+    const active = document.activeElement;
+    if (
+      event.type === "keydown" &&
+      (action === "next" || action === "previous") &&
+      (active === null || active === body || active === documentElement) &&
+      !active?.shadowRoot?.activeElement &&
+      event.composedPath()[0] === event.target
+    ) {
+      const state = strictState(modal);
+      if (state.dialog && state.backdrop) {
+        act(modal, action, event.repeat);
+      }
+    }
+    return true;
   };
   const onKeyDown = (event: KeyboardEvent) => {
     const modal = top();
@@ -401,10 +420,6 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
       focusOpen(modal);
     }
   };
-  const refuse = (event: Event) => {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-  };
   const keyOwner = new WeakMap<Event, OpenModal>();
   // Refuse outside targets before descendant/delegated handlers, retaining caller handling for
   // admitted events. Earlier root/ancestor capture handlers and world press gates remain caller-owned.
@@ -419,7 +434,10 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
     const keyboard =
       event.type === "keydown" || event.type === "keypress" || event.type === "keyup";
     if (!inside && (keyboard || !state.backdrop || event.target !== modal.options.backdrop)) {
-      refuse(event);
+      // A body or html root captures neutral keys before they can bubble to document.
+      if (!keyboard || !onNeutralKey(event as KeyboardEvent)) {
+        refuse(event);
+      }
     } else if (keyboard) {
       keyOwner.set(event, modal);
     }

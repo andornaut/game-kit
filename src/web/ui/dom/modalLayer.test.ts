@@ -251,6 +251,64 @@ describe("createModalLayer dialog isolation", () => {
     }
   });
 
+  it("recovers strict navigation after backdrop blur without activating or dismissing", () => {
+    const backdrop = document.createElement("div");
+    parts.root.append(backdrop);
+    const activate = vi.fn();
+    const dismiss = vi.fn();
+    parts.dialog.addEventListener("click", activate);
+    for (const root of [parts.root, document.body]) {
+      layer.dispose();
+      layer = createModalLayer(root);
+      layer.open({ backdrop, close: dismiss, isolation: "dialog" }, parts.dialog);
+      const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+      expect(backdrop.dispatchEvent(press)).toBe(true);
+
+      for (const [target, name, shiftKey, expected] of [
+        [document.body, "Tab", false, parts.first],
+        [document.body, "Tab", true, parts.last],
+        [document.documentElement, "ArrowDown", false, parts.first],
+        [document, "ArrowLeft", false, parts.last],
+      ] as const) {
+        parts.dialog.focus();
+        // Happy DOM does not perform the backdrop press's native focus change.
+        parts.dialog.blur();
+        expect(document.activeElement).toBe(document.body);
+        expect(key("Enter").defaultPrevented).toBe(true);
+        expect(key("Escape").defaultPrevented).toBe(true);
+        for (const type of ["keypress", "keyup"]) {
+          expect(
+            target.dispatchEvent(
+              new KeyboardEvent(type, { bubbles: true, cancelable: true, key: name }),
+            ),
+          ).toBe(false);
+          expect(document.activeElement).toBe(document.body);
+        }
+        expect(
+          target.dispatchEvent(
+            new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: name, shiftKey }),
+          ),
+        ).toBe(false);
+        expect(document.activeElement).toBe(expected);
+      }
+
+      const tabOnBody = () =>
+        document.body.dispatchEvent(
+          new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Tab" }),
+        );
+      expect(tabOnBody()).toBe(false);
+      expect(document.activeElement).toBe(parts.last);
+      parts.last.blur();
+      backdrop.hidden = true;
+      expect(tabOnBody()).toBe(false);
+      expect(document.activeElement).toBe(document.body);
+      backdrop.hidden = false;
+      expect(parts.dialog.getAttribute("aria-modal")).toBe("true");
+    }
+    expect(activate).not.toHaveBeenCalled();
+    expect(dismiss).not.toHaveBeenCalled();
+  });
+
   it("snapshots strict options and restores nested inert ownership and exact focus", () => {
     const { backdrop, parent } = sharedScene();
     parent.inert = true;
