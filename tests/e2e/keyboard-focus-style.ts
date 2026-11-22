@@ -308,18 +308,21 @@ try {
       const { installCrashScreen } = (await import(
         path
       )) as typeof import("../../src/web/crash/dom/crashScreen.ts");
-      installCrashScreen(window, {
-        buildLabel: "Focus fixture",
-        colours: {
-          background: "#3e352b",
-          buttonFace: "#edb763",
-          buttonLip: "#ad7c3c",
-          ink: "#211b14",
-          text: "#f1dba7",
+      installCrashScreen(
+        {
+          buildLabel: "Focus fixture",
+          colours: {
+            background: "#3e352b",
+            buttonFace: "#edb763",
+            buttonLip: "#ad7c3c",
+            ink: "#211b14",
+            text: "#f1dba7",
+          },
+          dev: true,
+          words: { body: "An error interrupted play.", reload: "Reload", title: "Play interrupted" },
         },
-        dev: true,
-        words: { body: "An error interrupted play.", reload: "Reload", title: "Play interrupted" },
-      });
+        window,
+      );
       window.dispatchEvent(new ErrorEvent("error", { error: new Error("Fixture crash") }));
     });
     const reload = page.getByRole("button", { name: "Reload" });

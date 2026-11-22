@@ -9,6 +9,12 @@ source. Consumer receipts identify the checks that actually ran. See the release
 combining Archie and Chibi's receipt with the separately verified Ada snapshot. Docs-only CI runs
 lint and the attribution check.
 
+Place injected dependencies and configuration before the subject. Use named fields when a
+caller supplies several distinct ports or measurements. Keep short positional signatures for
+familiar operations with unambiguous roles. A factory's read hook can receive the object it
+reads so callers can use it during construction. Keep lifecycle and persistence details
+behind the public operation that owns them.
+
 Reference: [Standalone verification](../../README.md#standalone-verification), [Release artifacts and consumer proof](../../README.md#release-artifacts-and-consumer-proof).
 
 ## Work items

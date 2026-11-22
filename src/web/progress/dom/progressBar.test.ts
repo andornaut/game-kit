@@ -7,6 +7,7 @@ import { indeterminateSegment, type ProgressBarStyle } from "../../../progress.t
 import { createProgressState } from "../../../progressState.ts";
 import {
   createDomProgressBar,
+  type DomProgressBarOptions,
   PROGRESS_BAR_BAND_CLASS,
   PROGRESS_BAR_CLASS,
   PROGRESS_BAR_PROPERTIES,
@@ -46,12 +47,12 @@ class Element {
 
 const style = { border: 1, fills: [0xffff00, 0xffaa00], frame: 0, track: 0x333333 };
 const frame = { height: 4, width: 102, x: 10, y: 20 };
-const mount = (
-  timing?: Parameters<typeof createDomProgressBar>[3],
-  barStyle: ProgressBarStyle = style,
-) => {
+const mount = (timing?: DomProgressBarOptions["timing"], barStyle: ProgressBarStyle = style) => {
   const parent = new Element();
-  const bar = createDomProgressBar(parent as unknown as HTMLElement, barStyle, frame, timing);
+  const bar = createDomProgressBar(
+    { frame, style: barStyle, timing },
+    parent as unknown as HTMLElement,
+  );
   const element = parent.children[0]!;
   const band = element.children[1]!;
   const track = element.children[0]!;

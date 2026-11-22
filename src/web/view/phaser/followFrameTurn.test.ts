@@ -4,7 +4,12 @@ import { type Game, type Input, Scale } from "phaser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { FrameTurn } from "../../../view/pagePoint.ts";
-import { FIT_CHECK_MS, followFrameTurn, PAGE_HEIGHT_PROPERTY } from "./followFrameTurn.ts";
+import {
+  FIT_CHECK_MS,
+  followFrameTurn,
+  type FollowFrameTurnContext,
+  PAGE_HEIGHT_PROPERTY,
+} from "./followFrameTurn.ts";
 
 vi.mock("phaser", async () => {
   const nodeModule = await import("node:module");
@@ -17,7 +22,7 @@ vi.mock("phaser", async () => {
 
 function setup(
   initialTurn: FrameTurn = 0,
-  options?: Parameters<typeof followFrameTurn>[4],
+  options?: Pick<FollowFrameTurnContext, "deviceResolution">,
   devicePixelRatio = 1,
 ) {
   vi.useFakeTimers();
@@ -120,11 +125,13 @@ function setup(
     turn: () => initialTurn,
   };
   const dispose = followFrameTurn(
-    watch,
-    { height: 50, width: 100 },
-    { offsetHeight: 100, offsetWidth: 100 } as HTMLElement,
+    {
+      gameSize: { height: 50, width: 100 },
+      parent: { offsetHeight: 100, offsetWidth: 100 } as HTMLElement,
+      watch,
+      ...options,
+    },
     game,
-    options,
   );
   return {
     disconnected,

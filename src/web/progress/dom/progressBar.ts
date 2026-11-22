@@ -35,6 +35,12 @@ export interface DomProgressTiming extends ProgressMotion {
   readonly fullMs: number;
 }
 
+export interface DomProgressBarOptions {
+  readonly style: ProgressBarStyle;
+  readonly frame: Rect;
+  readonly timing?: DomProgressTiming | undefined;
+}
+
 // Opaque colours stay #rrggbb; translucent ones are rgba().
 const cssColour = (colour: number, alpha = 1) =>
   alpha === 1
@@ -73,16 +79,15 @@ export function progressBarPixelProperties(
 // before the game's Phaser module is loaded. Throws as checkProgressBarStyle and
 // checkProgressMotion do, and on a negative or nonfinite fullMs or fadeMs.
 export function createDomProgressBar(
+  options: DomProgressBarOptions,
   parent: HTMLElement,
-  style: ProgressBarStyle,
-  frame: Rect,
-  timing?: DomProgressTiming,
 ): {
   element: HTMLDivElement;
   remove(): void;
   report(snapshot: ProgressSnapshot): void;
   update(value: ProgressValue): void;
 } {
+  const { frame, style, timing } = options;
   checkProgressBarStyle(style);
   const fadeMs = timing?.fadeMs ?? 0;
   if (timing !== undefined) {

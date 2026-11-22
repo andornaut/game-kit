@@ -25,13 +25,16 @@ export interface TimerHost {
   setTimeout(handler: () => void, ms: number): unknown;
 }
 
-export interface BackGuardOptions {
+export interface BackGuardContext {
   // Called on each back the guard keeps on the game, for the game to decide what back means.
   readonly onBack: () => void;
   // The key the guard entry's history state sets true, which tells the entry from any other
   // state, a page reloaded on it included. Unique to the game, as its history is shared with
   // other pages.
   readonly stateKey: string;
+  readonly timer: TimerHost;
+  readonly createCloseWatcher: CloseWatcherFactory | undefined;
+  readonly history: HistoryLike;
 }
 
 // The browser's CloseWatcher, where it has one (Chrome 120 and later, Firefox 149 and later).
@@ -60,11 +63,8 @@ function eventKey(event: Event): unknown {
 //   missing; back before that input is the browser's own.
 // This cannot stop the system closing the app or a browser showing its own leave prompt.
 export function guardBackNavigation(
-  { onBack, stateKey }: BackGuardOptions,
+  { createCloseWatcher, history, onBack, stateKey, timer }: BackGuardContext,
   eventTarget: EventTarget,
-  host: TimerHost,
-  createCloseWatcher: CloseWatcherFactory | undefined,
-  history: HistoryLike,
 ): void {
   // Whether an Escape keydown is being handled: the close it causes is the keyboard's, not back.
   let escaping = false;
@@ -94,7 +94,7 @@ export function guardBackNavigation(
     // Escape is no user activation, so it pushes no guard.
     if (event.type === "keydown" && eventKey(event) === ESCAPE_KEY) {
       escaping = true;
-      host.setTimeout(() => {
+      timer.setTimeout(() => {
         escaping = false;
       }, 0);
     } else {

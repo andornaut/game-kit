@@ -49,9 +49,9 @@ export interface ButtonOptions {
   readonly appearance?: ButtonAppearance;
   readonly rule: HoldRule;
   // Read the current semantic action at dispatch. Change identity when repurposing the button.
-  readonly getAction: () => ButtonAction | null;
-  // Refresh after state changes to update the DOM, including when re-enabling a disabled button.
-  readonly getState?: () => ButtonState;
+  readonly getAction: (element: HTMLButtonElement) => ButtonAction | null;
+  // The initial read receives the detached button. Refresh after later state changes.
+  readonly getState?: (element: HTMLButtonElement) => ButtonState;
   readonly reason?: HTMLElement;
   readonly onUnavailable?: (reason: string) => void;
   // Only a pointer-owned action or a native pointer click may give this feedback.
@@ -142,7 +142,11 @@ export function createButton(document: Document, options: ButtonOptions): Button
     }
   };
   const refresh = (): ControlPresentation & { readonly pointerRefusal: boolean } => {
-    const { availability = { kind: "available" }, selected, toggled } = options.getState?.() ?? {};
+    const {
+      availability = { kind: "available" },
+      selected,
+      toggled,
+    } = options.getState?.(element) ?? {};
     const disabled = availability.kind === "disabled";
     const pointerRefusal = availability.kind === "pointer-refusal";
     const state: ControlPresentation =
@@ -191,7 +195,7 @@ export function createButton(document: Document, options: ButtonOptions): Button
     if (!admitted()) {
       return null;
     }
-    const action = options.getAction();
+    const action = options.getAction(element);
     return disposed ? null : { ...state, action };
   };
   const sameAction = (expected: unknown) => {

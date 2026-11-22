@@ -22,6 +22,13 @@ function visibleArea(): Rect {
     : { height: window.innerHeight, width: window.innerWidth, x: 0, y: 0 };
 }
 
+export interface FollowFrameTurnContext {
+  readonly watch: Pick<FrameTurnWatch, "onChange" | "recheck" | "turn">;
+  readonly gameSize: Pick<Rect, "height" | "width">;
+  readonly parent: HTMLElement;
+  readonly deviceResolution?: { readonly max: number };
+}
+
 // Has Phaser fit, place and read pointers on game's canvas in parent, whose page frame watch
 // turns (dom/watchFrameTurn.ts), and keeps the fit right as the page changes. Phaser measures the
 // parent and the canvas, and maps pointers, by their bounding rects on the page, which a turn
@@ -51,13 +58,9 @@ function visibleArea(): Rect {
 // mode, so a devicePixelRatio change (browser zoom, a move to another screen) refits through a
 // matchMedia resolution listener, re-armed at each change.
 export function followFrameTurn(
-  watch: Pick<FrameTurnWatch, "onChange" | "recheck" | "turn">,
-  gameSize: Pick<Rect, "height" | "width">,
-  parent: HTMLElement,
+  { deviceResolution, gameSize, parent, watch }: FollowFrameTurnContext,
   game: Game,
-  options: { readonly deviceResolution?: { readonly max: number } } = {},
 ): () => void {
-  const { deviceResolution } = options;
   let disposed = false;
   const scale = game.scale;
   const originalBounds = scale.getParentBounds;

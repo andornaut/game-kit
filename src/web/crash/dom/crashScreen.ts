@@ -175,7 +175,7 @@ function showCrashScreen(page: CrashPage, options: CrashScreenOptions, report: C
 // screen on the first crash (crashGate). Call it before any other game module loads, so an error
 // thrown while one loads shows the screen rather than a blank page. Phaser 4 does not catch errors in its game step:
 // they reach window's error event and stop its requestAnimationFrame loop.
-export function installCrashScreen(page: CrashPage, options: CrashScreenOptions): CrashScreen {
+export function installCrashScreen(options: CrashScreenOptions, page: CrashPage): CrashScreen {
   // From install, so the keys pressed before a crash decide whether Reload shows its ring.
   trackInputModality(page.document);
   const accept = crashGate();

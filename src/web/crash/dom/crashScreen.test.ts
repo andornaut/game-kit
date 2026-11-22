@@ -82,7 +82,7 @@ function fakePage(navigator: object = {}) {
 // Crashes the page and presses Reload.
 function pressReload(navigator: object) {
   const fake = fakePage(navigator);
-  installCrashScreen(fake.page, OPTIONS);
+  installCrashScreen(OPTIONS, fake.page);
   fake.error(privateError());
   const button = descendants(fake.body).find((element) => element.className === "crash-button");
   button?.dispatchEvent(new Event("click"));
@@ -99,7 +99,7 @@ describe("installCrashScreen", () => {
   it("opens one accessible crash dialog, hides private details and keeps reload", () => {
     const { body, controls, error, game, page, reload } = fakePage();
     const stop = vi.fn();
-    installCrashScreen(page, OPTIONS).stopGameOnCrash(stop);
+    installCrashScreen(OPTIONS, page).stopGameOnCrash(stop);
     const thrown = privateError();
     error(thrown);
     error(new Error("another private error"));
@@ -137,7 +137,7 @@ describe("installCrashScreen", () => {
 
   it("shows the focus ring on Reload after keyboard input", () => {
     const { body, document, error, page } = fakePage();
-    installCrashScreen(page, OPTIONS);
+    installCrashScreen(OPTIONS, page);
     document.dispatchEvent(new Event("keydown"));
     error(privateError());
     const button = descendants(body).find((element) => element.className === "crash-button");
@@ -156,7 +156,7 @@ describe("installCrashScreen", () => {
 
   it("shows the build label, message and stack in dev builds", () => {
     const { body, error, page } = fakePage();
-    installCrashScreen(page, { ...OPTIONS, dev: true });
+    installCrashScreen({ ...OPTIONS, dev: true }, page);
     const thrown = privateError();
     error(thrown);
     const stack = descendants(body).find((element) => element.className === "crash-stack");
@@ -184,7 +184,7 @@ describe("installCrashScreen", () => {
     ],
   ])("opens the screen for %s only when it is a crash", (_, dispatch, children) => {
     const { body, page, window } = fakePage();
-    installCrashScreen(page, OPTIONS);
+    installCrashScreen(OPTIONS, page);
     dispatch(window);
     expect(body.children).toHaveLength(children);
   });
@@ -192,7 +192,7 @@ describe("installCrashScreen", () => {
   it("shows the screen when stopping the game throws", () => {
     const { body, error, page } = fakePage();
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    installCrashScreen(page, OPTIONS).stopGameOnCrash(() => {
+    installCrashScreen(OPTIONS, page).stopGameOnCrash(() => {
       throw new Error("stop failed");
     });
     error(privateError());
@@ -210,7 +210,7 @@ it("exposes only Reload and dev Copy native closures once per crash", async () =
     actions.push(action);
     return vi.fn();
   });
-  installCrashScreen(fake.page, { ...OPTIONS, bindHoldAction: bind, dev: true });
+  installCrashScreen({ ...OPTIONS, bindHoldAction: bind, dev: true }, fake.page);
   fake.error(privateError());
   fake.error(privateError());
   expect(bind).toHaveBeenCalledTimes(2);
@@ -248,7 +248,7 @@ it("cleans completed bindings after a later binding throws and retains native cr
       throw new Error("binding failed");
     });
   try {
-    installCrashScreen(fake.page, { ...OPTIONS, bindHoldAction: bind, dev: true });
+    installCrashScreen({ ...OPTIONS, bindHoldAction: bind, dev: true }, fake.page);
     fake.error(privateError());
     fake.error(privateError());
     expect(bind).toHaveBeenCalledTimes(2);

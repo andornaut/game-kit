@@ -14,6 +14,42 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+it("passes the actual button to initial state reads and admitted actions", () => {
+  const activate = vi.fn();
+  const getAction = vi.fn((element: HTMLButtonElement) => ({
+    activate: () => activate(element),
+  }));
+  const getState = vi.fn((element: HTMLButtonElement): ButtonState => ({
+    selected: element?.isConnected === false,
+  }));
+  const view = createButton(document, {
+    content: { kind: "text", label: "Open" },
+    getAction,
+    getState,
+    rule,
+  });
+  const { element } = view;
+  expect(getState).toHaveBeenCalledOnce();
+  expect(getState.mock.calls[0]?.[0]).toBe(element);
+  expect(element.hasAttribute("data-ui-selected")).toBe(true);
+  expect(view.holdAction()).toBeNull();
+  expect(getAction).not.toHaveBeenCalled();
+
+  const root = document.createElement("div");
+  root.inert = true;
+  root.append(element);
+  document.body.append(root);
+  element.click();
+  expect(getAction).not.toHaveBeenCalled();
+
+  root.inert = false;
+  element.click();
+  view.holdAction()!.activate();
+  expect(getAction.mock.calls.map(([target]) => target === element)).toEqual([true, true, true]);
+  expect(activate).toHaveBeenCalledTimes(2);
+  view.dispose();
+});
+
 it("keeps the native element, face and focus when changing named content and presentation", () => {
   let state: ButtonState = { selected: true, toggled: false };
   const view = createButton(document, {
