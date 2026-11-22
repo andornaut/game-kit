@@ -57,7 +57,7 @@ Every legacy API path remains available unchanged as a deprecated compatibility 
 
 Update now revalidates the offered build after saving. If the offer was superseded, the returned promise rejects and the current active and staged builds are preserved. A failed startup storage read now reaches the existing Loading failed callback, whose Retry repeats the read before deciding whether to install. See the [install and update design](docs/install-and-update.md).
 
-## Button state styling
+## Button state styling in 0.60.2
 
 Standard controls, loading-safe Retry and crash buttons use face, text or icon changes on keyboard focus, including in forced colours. Persistent borders, hit targets and native activation stay in place. An engine without the required CSS support can use its native focus indicator.
 
