@@ -11,3 +11,4 @@ Reference: [API namespaces and migration](../../README.md#api-namespaces-and-mig
 | ID      | Title                                        | Link                             |
 | ------- | -------------------------------------------- | -------------------------------- |
 | gk-0015 | Emit a self-contained classic service worker | [gk-0015.md](../work/gk-0015.md) |
+| gk-0027 | Cap GameKit containers at 4 GiB              | [gk-0027.md](../work/gk-0027.md) |
