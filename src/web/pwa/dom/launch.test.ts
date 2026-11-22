@@ -596,8 +596,21 @@ describe("launch with an active build", () => {
     const f = fixture();
     f.deploy(V1);
     f.store.state = { active: "aaaa" };
+    const reclaim = f.store.reclaim.bind(f.store);
+    let finishReclaim!: () => void;
+    vi.spyOn(f.store, "reclaim").mockImplementationOnce(async (versions) => {
+      await new Promise<void>((resolve) => {
+        finishReclaim = resolve;
+      });
+      return reclaim(versions);
+    });
     const result = f.launch.run();
     await expect(result).resolves.toBe("play");
+    f.setOnline(false);
+    f.setOnline(true);
+    await settle();
+    expect(f.fetch).not.toHaveBeenCalled();
+    finishReclaim();
     await settle();
     expect(f.store.calls[0]).toBe("reclaim aaaa");
     expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([BUILD_POINTER_URL]);
@@ -696,6 +709,124 @@ describe("background updates", () => {
     expect(pointerFetches()).toHaveLength(2);
   });
 
+  it.each(["resume", "reconnect"] as const)(
+    "coalesces repeated %s events into one check at the cooldown boundary",
+    async (event) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const f = fixture();
+      f.deploy(V1);
+      await playing(f);
+      f.deploy(V2);
+      const pointerFetches = () => f.fetch.mock.calls.filter(([url]) => url === BUILD_POINTER_URL);
+      const wake = () => {
+        if (event === "resume") {
+          f.visibility.set("hidden");
+          f.visibility.set("visible");
+        } else {
+          f.setOnline(false);
+          f.setOnline(true);
+        }
+      };
+      f.advance(10_000);
+      vi.advanceTimersByTime(10_000);
+      wake();
+      wake();
+      f.advance(49_999);
+      vi.advanceTimersByTime(49_999);
+      await settle();
+      expect(pointerFetches()).toHaveLength(1);
+      expect(f.offers).toEqual([]);
+      f.advance(1);
+      vi.advanceTimersByTime(1);
+      await settle();
+      expect(pointerFetches()).toHaveLength(2);
+      expect(f.offers.map((offer) => offer.version)).toEqual(["bbbb"]);
+      expect(f.store.state).toEqual({ active: "aaaa", staged: "bbbb" });
+      f.advance(2 * UPDATE_CHECK_MS);
+      vi.advanceTimersByTime(2 * UPDATE_CHECK_MS);
+      await settle();
+      expect(pointerFetches()).toHaveLength(2);
+    },
+  );
+
+  it("discovers on reconnect after an ordinary installed boot offline", async () => {
+    const f = fixture();
+    f.deploy(V2);
+    f.setOnline(false);
+    await playing(f);
+    expect(f.fetch).not.toHaveBeenCalled();
+    f.setOnline(true);
+    await settle();
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([
+      BUILD_POINTER_URL,
+      V2.pointer.manifest,
+    ]);
+    expect(f.required).toEqual([]);
+    expect(f.offers.map((offer) => offer.version)).toEqual(["bbbb"]);
+    expect(f.store.state).toEqual({ active: "aaaa", staged: "bbbb" });
+  });
+
+  it.each(["hidden", "offline"] as const)(
+    "recovers a deferred check after going %s",
+    async (cause) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const f = fixture();
+      f.deploy(V1);
+      await playing(f);
+      f.deploy(V2);
+      f.visibility.set("hidden");
+      f.visibility.set("visible");
+      expect(vi.getTimerCount()).toBe(1);
+      if (cause === "hidden") {
+        f.visibility.set("hidden");
+        f.setOnline(false);
+        f.setOnline(true);
+      } else {
+        f.setOnline(false);
+      }
+      expect(vi.getTimerCount()).toBe(0);
+      f.advance(UPDATE_CHECK_MS);
+      vi.advanceTimersByTime(UPDATE_CHECK_MS);
+      await settle();
+      expect(f.fetch).toHaveBeenCalledTimes(1);
+      if (cause === "hidden") {
+        f.visibility.set("visible");
+      } else {
+        f.setOnline(true);
+      }
+      await settle();
+      expect(f.offers.map((offer) => offer.version)).toEqual(["bbbb"]);
+      expect(f.fetch.mock.calls.filter(([url]) => url === BUILD_POINTER_URL)).toHaveLength(2);
+    },
+  );
+
+  it("does not queue another check while staging is in flight", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const f = fixture();
+    f.deploy(V2);
+    let finish!: (result: "complete") => void;
+    f.setResults([
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    ]);
+    await playing(f);
+    f.advance(UPDATE_CHECK_MS);
+    vi.advanceTimersByTime(UPDATE_CHECK_MS);
+    f.visibility.set("hidden");
+    f.visibility.set("visible");
+    f.setOnline(false);
+    f.setOnline(true);
+    expect(vi.getTimerCount()).toBe(0);
+    finish("complete");
+    await settle();
+    vi.advanceTimersByTime(UPDATE_CHECK_MS);
+    await settle();
+    expect(f.fetch.mock.calls.filter(([url]) => url === BUILD_POINTER_URL)).toHaveLength(1);
+    expect(f.offers).toHaveLength(1);
+  });
+
   it("pauses staging while hidden", async () => {
     const f = fixture();
     f.deploy(V2);
@@ -732,6 +863,9 @@ describe("background updates", () => {
     f.setResults(Array.from({ length: 6 }, () => failedInstall));
     await playing(f);
     expect(f.installs).toHaveLength(1);
+    f.setOnline(false);
+    f.setOnline(true);
+    expect(vi.getTimerCount()).toBe(1);
     const waits = [UPDATE_RETRY_MS, 120_000, 240_000, 480_000, UPDATE_RETRY_MAX_MS];
     for (const [index, wait] of [...waits, UPDATE_RETRY_MAX_MS].entries()) {
       vi.advanceTimersByTime(wait - 1);
@@ -777,10 +911,13 @@ describe("background updates", () => {
   });
 
   it("Update now awaits the save, then activates the staged build and reloads with no download", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const f = fixture();
     f.deploy(V2);
     await playing(f);
     const fetches = f.fetch.mock.calls.length;
+    f.setOnline(false);
+    f.setOnline(true);
     let saved!: () => void;
     const save = vi.fn(
       () =>
@@ -798,6 +935,7 @@ describe("background updates", () => {
     expect(f.store.calls.slice(-2)).toEqual(["setActive bbbb", "setStaged undefined"]);
     expect(f.store.state).toEqual({ active: "bbbb" });
     expect(f.reload).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
     expect(f.fetch.mock.calls.length).toBe(fetches);
   });
 
@@ -815,9 +953,12 @@ describe("background updates", () => {
 
 describe("requireNewer", () => {
   it("activates a complete staged build and reloads without an offer", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const f = fixture();
     f.deploy(V1);
     await playing(f);
+    f.visibility.set("hidden");
+    f.visibility.set("visible");
     f.store.state.staged = "bbbb";
     f.store.manifests.set("bbbb", V2.manifest);
     f.store.completeVersions.add("bbbb");
@@ -827,6 +968,8 @@ describe("requireNewer", () => {
     expect(f.store.state).toEqual({ active: "bbbb" });
     expect(f.reload).toHaveBeenCalledTimes(1);
     expect(f.offers).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(f.fetch).toHaveBeenCalledTimes(1);
   });
 
   it("stages a newer build and switches to it, never offering it", async () => {
@@ -855,6 +998,7 @@ describe("requireNewer", () => {
     f.setOnline(true);
     await settle();
     expect(f.required).toEqual(["unavailable", "updating"]);
+    expect(f.installs.at(-1)).toMatchObject({ lanes: 6, manifest: V2.manifest });
     expect(f.store.state.active).toBe("bbbb");
     expect(f.reload).toHaveBeenCalledTimes(1);
   });
@@ -869,6 +1013,24 @@ describe("requireNewer", () => {
     expect(f.required).toEqual(["updating"]);
     expect(f.reload).toHaveBeenCalledTimes(1);
   });
+});
+
+it("dispose cancels a deferred discovery check", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const f = fixture();
+  f.deploy(V1);
+  await playing(f);
+  f.visibility.set("hidden");
+  f.visibility.set("visible");
+  expect(vi.getTimerCount()).toBe(1);
+  f.launch.dispose();
+  expect(vi.getTimerCount()).toBe(0);
+  f.setOnline(false);
+  f.setOnline(true);
+  f.advance(UPDATE_CHECK_MS);
+  vi.advanceTimersByTime(UPDATE_CHECK_MS);
+  await settle();
+  expect(f.fetch).toHaveBeenCalledTimes(1);
 });
 
 it("dispose stops checks and listeners", async () => {

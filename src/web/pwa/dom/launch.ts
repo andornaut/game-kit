@@ -433,6 +433,7 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
 
   const reload = () => {
     reloading = true;
+    cancelDiscovery();
     cancelRetry();
     aborts.abort();
     page.location.reload();
@@ -699,11 +700,14 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     }
     // CLEANUP (added 2026-11-18): remove once all three games deploy the router.
     await deleteLegacy(page.storage, policy).catch(() => undefined);
+    discoveryReady = true;
     check(false);
   };
 
   // Background updates: discovery, staging and the in-session offer.
   let lastCheck: number | undefined;
+  let discoveryReady = false;
+  let discoveryTimer: unknown;
   // The wait before the next retry of a failed update; 0 while no failure is pending.
   let retryMs = 0;
   let retryTimer: unknown;
@@ -844,6 +848,13 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     }
   };
 
+  const cancelDiscovery = () => {
+    if (discoveryTimer !== undefined) {
+      page.timers.clearTimeout(discoveryTimer);
+      discoveryTimer = undefined;
+    }
+  };
+
   // Schedules the pending retry while the page is visible. A retry that cannot start, as when
   // the device is offline, waits twice as long for the next one.
   const armRetry = () => {
@@ -876,12 +887,42 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     ) {
       return false;
     }
+    cancelDiscovery();
     lastCheck = now;
     staging = stage().finally(() => {
       staging = undefined;
       advanceRequired(false);
     });
     return true;
+  };
+
+  // Resume and reconnect share one ordinary wake. Pending failed attempts keep their own backoff.
+  const canDiscover = () =>
+    discoveryReady &&
+    visible &&
+    page.online() &&
+    !required &&
+    !disposed &&
+    !reloading &&
+    retryMs === 0 &&
+    staging === undefined;
+
+  const discoverOnWake = () => {
+    if (!canDiscover()) {
+      return;
+    }
+    const remaining =
+      lastCheck === undefined ? 0 : UPDATE_CHECK_MS - (page.timers.now() - lastCheck);
+    if (remaining <= 0) {
+      check(false);
+    } else if (discoveryTimer === undefined) {
+      discoveryTimer = page.timers.setTimeout(() => {
+        discoveryTimer = undefined;
+        if (canDiscover()) {
+          check(false);
+        }
+      }, remaining);
+    }
   };
 
   // Required updates (requireNewer).
@@ -942,18 +983,31 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     watchVisibility(page.eventTarget, page.visibility, (nextVisible) => {
       visible = nextVisible;
       if (!visible) {
+        cancelDiscovery();
         cancelRetry();
         return;
       }
-      if (!check(false)) {
-        armRetry();
+      if (required || retryMs !== 0) {
+        if (!check(false)) {
+          armRetry();
+        }
+      } else {
+        discoverOnWake();
       }
       advanceRequired(true);
     }),
   );
-  const online = () => advanceRequired(true);
+  const online = () => {
+    if (required) {
+      advanceRequired(true);
+    } else {
+      discoverOnWake();
+    }
+  };
   page.eventTarget.addEventListener("online", online);
+  page.eventTarget.addEventListener("offline", cancelDiscovery);
   cleanups.push(() => page.eventTarget.removeEventListener("online", online));
+  cleanups.push(() => page.eventTarget.removeEventListener("offline", cancelDiscovery));
 
   const launch = async (): Promise<LaunchResult> => {
     const state = await store.readState();
@@ -1013,6 +1067,7 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     },
     dispose() {
       disposed = true;
+      cancelDiscovery();
       cancelRetry();
       aborts.abort();
       for (const cleanup of cleanups.splice(0)) {
@@ -1022,6 +1077,7 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     requireNewer() {
       if (!required) {
         required = true;
+        cancelDiscovery();
         advanceRequired(true);
       }
     },
