@@ -469,7 +469,7 @@ export function mountLoadingFailure(
   retry.addEventListener("click", onClick);
   render();
   parent.append(element);
-  const stopFocus = paintRetryFocus(retry);
+  const focus = paintRetryFocus(retry);
   const view: LoadingFailureView = {
     dispose() {
       disposed = true;
@@ -482,7 +482,7 @@ export function mountLoadingFailure(
       document.removeEventListener("focusin", onFocus);
       document.defaultView?.removeEventListener("blur", clearKeys);
       retry.removeEventListener("click", onClick);
-      stopFocus();
+      focus.dispose();
       element.remove();
       const stop = stopHold;
       stopHold = undefined;
@@ -519,7 +519,9 @@ export function mountLoadingFailure(
           if (snapshot === undefined) {
             throw new RangeError("A configured presentation requires a complete replacement");
           }
+          focus.clear();
           applyPresentation(snapshot);
+          focus.refresh();
         },
       };
 }

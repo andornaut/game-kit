@@ -28,17 +28,32 @@
   pointer-events: auto;
 }
 
-.ui-control-button:focus-visible,
-.ui-standard-button:focus-visible {
-  outline: max(3px, calc(var(--ui-unit, 1) * 3px)) double currentColor;
-  outline-offset: max(1px, calc(var(--ui-unit, 1) * 1px));
+button:is(.ui-control-button, .ui-standard-button):focus-visible {
+  outline: none;
+}
+
+/* Paint the artwork face even when a separate native hit area surrounds it. */
+button:is(.ui-control-button, .ui-button-face):focus-visible,
+button.ui-standard-button:focus-visible > .ui-button-face {
+  background-color: var(--ui-button-focus-fill, Highlight);
+  color: var(--ui-button-focus-text, HighlightText);
+}
+
+/* An opaque icon can cover the focus fill. Let the cue show through its artwork. */
+button.ui-standard-button:focus-visible > [aria-hidden="true"],
+button.ui-standard-button:focus-visible > .ui-button-face > [aria-hidden="true"] {
+  opacity: 0.65;
 }
 
 @media (forced-colors: active) {
-  .ui-control-button:focus-visible,
-  .ui-standard-button:focus-visible {
-    outline: 2px solid Highlight;
-    outline-offset: 2px;
+  /* Keep Chromium's text backplate out of the paired system colours on the focused face. */
+  button:is(.ui-control-button, .ui-button-face):focus-visible,
+  button.ui-standard-button:focus-visible > .ui-button-face {
+    forced-color-adjust: none;
+    background-color: Highlight;
+    border-color: ButtonBorder;
+    box-shadow: none;
+    color: HighlightText;
   }
 }
 

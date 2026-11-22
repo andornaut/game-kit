@@ -100,6 +100,7 @@ export function createButton(document: Document, options: ButtonOptions): Button
     face.className = appearance?.face?.className ?? "";
     element.append(face);
   }
+  face.classList.add("ui-button-face");
   const slot = document.createElement("span");
   slot.className = appearance?.contentClassName ?? "";
   face.append(slot);

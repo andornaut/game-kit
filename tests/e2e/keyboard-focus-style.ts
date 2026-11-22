@@ -17,14 +17,16 @@ const markup = `<!doctype html>
 const theme = `
   body { background: #3e352b; color: #f1dba7; padding: 16px; }
   #root { --ui-unit: 1.5; --ui-button-gap: 12px; --ui-button-height: 32; --ui-button-min-width: 72;
-    --ui-button-padding-x: 8; --ui-button-padding-y: 4; }
+    --ui-button-padding-x: 8; --ui-button-padding-y: 4;
+    --ui-button-focus-fill: #f1dba7; --ui-button-focus-text: #3e352b; }
   #root > div:first-child { display: flex; gap: var(--ui-button-gap); }
   .ui-control-button { color: #f1dba7; background: #54442c; border: 3px solid #211b14;
     box-shadow: inset 0 -4px #35291a; }
   .ui-control-button:active { box-shadow: inset 0 4px #35291a; }
-  .ui-control-button[aria-pressed=true] { background: #46645b; }
+  .ui-control-button[aria-pressed=true] { background: #46645b; --ui-button-focus-fill: #a6c9b9; }
   .ui-control-button:disabled { opacity: .55; }
   .fixture-face-button { background: transparent; border: 0; padding: 0; }
+  #selected svg { display: block; }
 `;
 const csp = "default-src 'self'; style-src 'self'; style-src-attr 'none'";
 const hostCss = `button { width: 1px !important; font-size: 1px !important;
@@ -34,19 +36,25 @@ function control(locator: Locator) {
   return locator.evaluate((element) => {
     const { height, width, x, y } = element.getBoundingClientRect();
     const css = getComputedStyle(element);
+    const face = element.querySelector(":scope > .ui-button-face");
+    const icon = (face ?? element).querySelector(':scope > [aria-hidden="true"]');
     return {
       active: element.matches(":active"),
       all: (element as HTMLElement).style.getPropertyPriority("all"),
       background: css.backgroundColor,
       border: css.border,
       colour: css.color,
+      faceFill: face ? getComputedStyle(face).backgroundColor : css.backgroundColor,
       focus: element.matches(":focus"),
       focusVisible: element.matches(":focus-visible"),
       font: css.fontSize,
+      forcedAdjustment: (face ? getComputedStyle(face) : css).forcedColorAdjust,
       geometry: [x, y, width, height],
+      iconOpacity: icon ? getComputedStyle(icon).opacity : null,
       opacity: css.opacity,
       outline: { colour: css.outlineColor, style: css.outlineStyle, width: css.outlineWidth },
       pointerEvents: css.pointerEvents,
+      selected: element.getAttribute("aria-pressed") === "true",
       shadow: css.boxShadow,
     };
   });
@@ -63,15 +71,15 @@ const nextPaint = (page: Page) =>
         });
       }),
   );
-const systemHighlight = (page: Page) =>
-  page.evaluate(() => {
+const systemColour = (page: Page, name: string) =>
+  page.evaluate((name) => {
     const sample = document.createElement("span");
-    sample.style.color = "Highlight";
+    sample.style.color = name;
     document.body.append(sample);
     const colour = getComputedStyle(sample).color;
     sample.remove();
     return colour;
-  });
+  }, name);
 
 assert(existsSync("/.dockerenv"), "Run in the stock Playwright container.");
 const server = await createServer({
@@ -164,8 +172,17 @@ try {
         rule,
       });
       let activations = 0;
-      const icon = document.createElement("span");
-      icon.textContent = "Selected";
+      const svg = "http://www.w3.org/2000/svg";
+      const icon = document.createElementNS(svg, "svg");
+      icon.setAttribute("width", "72");
+      icon.setAttribute("height", "32");
+      const faceArt = document.createElementNS(svg, "path");
+      faceArt.setAttribute("fill", "#18374d");
+      faceArt.setAttribute("d", "M0 0h72v32H0z");
+      const mark = document.createElementNS(svg, "path");
+      mark.setAttribute("fill", "#f1dba7");
+      mark.setAttribute("d", "M28 15h16v3H28z M34 9h4v15h-4z");
+      icon.append(faceArt, mark);
       add(actions, "selected", {
         content: { icon, kind: "icon", name: "Selected" },
         getAction: () => ({
@@ -199,6 +216,7 @@ try {
     });
     const opener = page.locator("#opener");
     const cancel = page.locator("#cancel");
+    const iconButton = page.getByRole("button", { name: "Selected" });
     const ordinary = await control(opener);
     const selected = await control(page.locator("#selected"));
     const disabled = await control(page.locator("#disabled"));
@@ -210,6 +228,14 @@ try {
 
     await page.keyboard.press("Tab");
     assert.equal(await page.locator(":focus").getAttribute("id"), "selected");
+    const selectedFocused = await control(iconButton);
+    await save(page, "shared-selected-icon-focus");
+    await page.emulateMedia({ forcedColors: "active" });
+    const forcedIcon = await control(iconButton);
+    const highlight = await systemColour(page, "Highlight");
+    const highlightText = await systemColour(page, "HighlightText");
+    await save(page, "shared-selected-icon-forced-colours");
+    await page.emulateMedia({ forcedColors: "none" });
     await page.keyboard.press("Tab");
     assert.equal(
       await page.locator("#disabled").evaluate((element) => element.matches(":focus")),
@@ -225,11 +251,9 @@ try {
     await save(page, "shared-keyboard-return");
     await page.emulateMedia({ forcedColors: "active" });
     const forcedShared = await control(opener);
-    const highlight = await systemHighlight(page);
     await save(page, "shared-forced-colours");
     await page.emulateMedia({ forcedColors: "none" });
 
-    const iconButton = page.getByRole("button", { name: "Selected" });
     const point = (await iconButton.boundingBox())!;
     const x = point.x + point.width / 2;
     const y = point.y + point.height / 2;
@@ -271,6 +295,7 @@ try {
     await save(page, "crash-keyboard-button");
     await page.keyboard.press("Shift+Tab");
     const crashSummary = await control(summary);
+    const crashIdle = await control(reload);
     await save(page, "crash-keyboard-summary");
     await page.keyboard.press("Space");
     assert.equal(await page.locator(".crash-details").getAttribute("open"), "");
@@ -282,6 +307,7 @@ try {
     await page.emulateMedia({ forcedColors: "active" });
     await page.keyboard.press("Tab");
     const forcedCrashButton = await control(reload);
+    await save(page, "crash-button-forced-colours");
     await page.keyboard.press("Shift+Tab");
     const forcedSummary = await control(summary);
     await save(page, "crash-forced-colours");
@@ -299,57 +325,52 @@ try {
           CSS.supports = (condition) =>
             condition === "selector(:focus-visible)" ? false : supports(condition);
         }
-        const view = mountLoadingFailure(
-          {
-            onRetry: () => {
-              parent.dataset.retried = "yes";
-            },
-            ...(unsupported
-              ? {}
-              : {
-                  presentation: {
-                    action: {
-                      borderWidthPx: 3,
-                      heightPx: 48,
-                      highlightHeightPx: 1,
-                      paddingBottomPx: 4,
-                      paddingXPx: 12,
-                      shadeHeightPx: 4,
-                      widthPx: 128,
-                    },
-                    palette: {
-                      action: "#54442c",
-                      actionText: "#f1dba7",
-                      border: "#211b14",
-                      highlight: "#75603c",
-                      lip: "#35291a",
-                      panel: "#3e352b",
-                      shade: "#35291a",
-                      shadow: "#211b14",
-                      text: "#f1dba7",
-                    },
-                    panel: {
-                      bodyActionGapPx: 20,
-                      borderWidthPx: 2,
-                      lipHeightPx: 4,
-                      maxWidthPx: 328,
-                      paddingBottomPx: 16,
-                      paddingTopPx: 24,
-                      paddingXPx: 16,
-                      safeInsetPx: 12,
-                      shadowOffsetPx: 4,
-                      titleBodyGapPx: 12,
-                    },
-                    text: {
-                      action: { lineHeight: 1.25, sizePx: 16, weight: 700 },
-                      body: { lineHeight: 1.4, sizePx: 16, weight: 400 },
-                      title: { lineHeight: 1.25, sizePx: 20, weight: 700 },
-                    },
-                  },
-                }),
+        const onRetry = () => {
+          parent.dataset.retried = "yes";
+        };
+        const presentation = {
+          action: {
+            borderWidthPx: 3,
+            heightPx: 48,
+            highlightHeightPx: 1,
+            paddingBottomPx: 4,
+            paddingXPx: 12,
+            shadeHeightPx: 4,
+            widthPx: 128,
           },
-          parent,
-        );
+          palette: {
+            action: "#54442c",
+            actionText: "#f1dba7",
+            border: "#211b14",
+            highlight: "#75603c",
+            lip: "#35291a",
+            panel: "#3e352b",
+            shade: "#35291a",
+            shadow: "#211b14",
+            text: "#f1dba7",
+          },
+          panel: {
+            bodyActionGapPx: 20,
+            borderWidthPx: 2,
+            lipHeightPx: 4,
+            maxWidthPx: 328,
+            paddingBottomPx: 16,
+            paddingTopPx: 24,
+            paddingXPx: 16,
+            safeInsetPx: 12,
+            shadowOffsetPx: 4,
+            titleBodyGapPx: 12,
+          },
+          text: {
+            action: { lineHeight: 1.25, sizePx: 16, weight: 700 },
+            body: { lineHeight: 1.4, sizePx: 16, weight: 400 },
+            title: { lineHeight: 1.25, sizePx: 20, weight: 700 },
+          },
+        };
+        const themed = unsupported
+          ? undefined
+          : mountLoadingFailure({ onRetry, presentation }, parent);
+        const view = themed ?? mountLoadingFailure({ onRetry }, parent);
         CSS.supports = supports;
         view.update({ attempt: 1, error: new Error("Fixture failure"), kind: "failed" });
         const modalPath = "/src/web/ui/dom/modalLayer.ts";
@@ -358,7 +379,13 @@ try {
         )) as typeof import("../../src/web/ui/dom/modalLayer.ts");
         const modal = createModalLayer(parent);
         const retry = view.element.querySelector("button")!;
-        const reset = retry.style.cssText;
+        let reset = retry.style.cssText;
+        parent.addEventListener("fixture-palette", () => {
+          themed?.setPresentation({
+            ...presentation,
+            palette: { ...presentation.palette, action: "#46645b", actionText: "#e9f4ed" },
+          });
+        });
         parent.addEventListener("fixture-open", () => {
           const dialog = document.createElement("section");
           parent.append(dialog);
@@ -372,6 +399,7 @@ try {
             },
             dialog,
           );
+          reset = retry.style.cssText;
         });
         parent.addEventListener("fixture-dispose", () => {
           view.dispose();
@@ -406,15 +434,22 @@ try {
     await pressRetry();
     const retryStablePointer = await control(retry);
     assert(retryStablePointer.focus);
+    assert.equal(retryStablePointer.outline.style, "none");
     assert.equal(
-      retryStablePointer.outline.style,
-      retryStablePointer.focusVisible ? "double" : "none",
+      retryStablePointer.background,
+      retryStablePointer.focusVisible ? fallback.background : retryPointer.background,
     );
+    await page.locator("main").dispatchEvent("fixture-palette");
     await page.locator("main").dispatchEvent("fixture-open");
+    const retryUpdated = await control(page.locator(".loading-failure button"));
+    assert.equal(retryUpdated.background, "rgb(70, 100, 91)");
+    assert.equal(retryUpdated.colour, "rgb(233, 244, 237)");
     await page.keyboard.press("Escape");
     await nextPaint(page);
     const retryReturn = await control(retry);
-    assert(retryReturn.focus && retryReturn.focusVisible && retryReturn.outline.style === "double");
+    assert(retryReturn.focus && retryReturn.focusVisible);
+    assert.equal(retryReturn.background, retryUpdated.colour);
+    assert.equal(retryReturn.colour, retryUpdated.background);
     await page.emulateMedia({ forcedColors: "active" });
     await nextPaint(page);
     const forcedFallback = await control(retry);
@@ -427,7 +462,7 @@ try {
     await page.keyboard.press("ArrowRight");
     await retry.focus();
     await nextPaint(page);
-    assert.equal((await control(retry)).outline.style, "solid");
+    assert.equal((await control(retry)).background, highlight);
     await page.locator("main").dispatchEvent("fixture-dispose");
     await nextPaint(page);
     assert.equal(
@@ -449,6 +484,8 @@ try {
         browser: browser.version(),
         ordinary,
         selected,
+        selectedFocused,
+        forcedIcon,
         disabled,
         pointerCancel,
         pointerReturn,
@@ -475,24 +512,31 @@ try {
       assert.equal(entry.pointerEvents, "auto");
       assert.notEqual(entry.font, "1px");
       assert.notEqual(entry.geometry[2], 1);
-      assert.notEqual(entry.outline.style, "none");
+      assert.equal(entry.outline.style, "none");
     }
-    assert.equal(fallback.outline.style, "double");
-    assert.equal(fallback.outline.colour, "rgb(241, 219, 167)");
+    assert.equal(fallback.background, retryPointer.colour);
+    assert.equal(fallback.colour, retryPointer.background);
     assert.deepEqual(fallback.geometry, retryPointer.geometry);
     assert.equal(fallback.border, retryPointer.border);
-    assert.deepEqual(forcedFallback.outline, { colour: highlight, style: "solid", width: "2px" });
+    assert.equal(fallback.shadow, retryPointer.shadow);
     for (const entry of [pointerCancel, pointerReturn, pointerSummary]) {
       assert(entry.focus && !entry.focusVisible);
       assert.equal(entry.outline.style, "none");
     }
-    for (const entry of [keyboardCancel, keyboardReturn, crashButton, crashSummary]) {
+    for (const entry of [keyboardCancel, keyboardReturn, pressed, crashButton, selectedFocused]) {
       assert(entry.focus && entry.focusVisible);
-      assert.equal(entry.outline.style, "double");
+      assert.equal(entry.outline.style, "none");
     }
-    assert.equal(keyboardReturn.outline.colour, ordinary.colour);
-    assert(Number.parseFloat(keyboardReturn.outline.width) > 3);
-    assert.equal(crashButton.outline.colour, "rgb(241, 219, 167)");
+    assert.equal(keyboardCancel.background, pointerCancel.background);
+    assert.notEqual(keyboardCancel.faceFill, pointerCancel.faceFill);
+    assert.equal(keyboardReturn.background, "rgb(241, 219, 167)");
+    assert.equal(keyboardReturn.colour, "rgb(62, 53, 43)");
+    assert.equal(crashButton.background, "rgb(62, 53, 43)");
+    assert.equal(crashButton.colour, "rgb(237, 183, 99)");
+    assert.deepEqual(crashButton.geometry, crashIdle.geometry);
+    assert.equal(crashButton.border, crashIdle.border);
+    assert.equal(crashButton.shadow, crashIdle.shadow);
+    assert.equal(crashSummary.outline.style, "double");
     assert.equal(crashSummary.outline.colour, "rgb(237, 183, 99)");
     for (const entry of [pressed, keyboardReturn, pointerReturn]) {
       assert.deepEqual(entry.geometry, ordinary.geometry);
@@ -501,12 +545,24 @@ try {
     assert(pressed.active && pressed.shadow !== ordinary.shadow);
     assert.equal(keyboardReturn.shadow, ordinary.shadow);
     assert.notEqual(selected.background, ordinary.background);
+    assert(selectedFocused.selected && forcedIcon.selected);
+    assert.equal(selectedFocused.background, "rgb(166, 201, 185)");
+    assert.deepEqual(selectedFocused.geometry, selected.geometry);
+    assert.equal(selectedFocused.border, selected.border);
+    assert.equal(selectedFocused.shadow, selected.shadow);
+    assert.equal(selected.iconOpacity, "1");
+    assert.equal(selectedFocused.iconOpacity, "0.65");
+    assert.equal(forcedIcon.iconOpacity, "0.65");
     assert.notEqual(disabled.opacity, ordinary.opacity);
     assert.deepEqual(crashSummary.geometry, pointerSummary.geometry);
-    for (const entry of [forcedShared, forcedCrashButton, forcedSummary]) {
+    for (const entry of [forcedShared, forcedCrashButton, forcedFallback, forcedIcon]) {
       assert(entry.focus && entry.focusVisible);
-      assert.deepEqual(entry.outline, { colour: highlight, style: "solid", width: "2px" });
+      assert.equal(entry.outline.style, "none");
+      assert.equal(entry.forcedAdjustment, "none");
+      assert.equal(entry.background, highlight);
+      assert.equal(entry.colour, highlightText);
     }
+    assert.deepEqual(forcedSummary.outline, { colour: highlight, style: "solid", width: "2px" });
     assert.deepEqual(forcedShared.geometry, ordinary.geometry);
   } finally {
     await browser.close();
