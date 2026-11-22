@@ -17,3 +17,4 @@ Reference: [High-density game UI](../../README.md#high-density-game-ui), [Dialog
 | gk-0026 | Render standard game buttons through one shared primitive | [gk-0026.md](../work/gk-0026.md) |
 | gk-0029 | Preserve pointer refusal on unavailable standard buttons  | [gk-0029.md](../work/gk-0029.md) |
 | gk-0031 | Use ring-free button state cues                           | [gk-0031.md](../work/gk-0031.md) |
+| gk-0037 | Respect pointer action admission and paint Retry presses  | [gk-0037.md](../work/gk-0037.md) |
