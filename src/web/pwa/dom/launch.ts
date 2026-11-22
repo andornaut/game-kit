@@ -9,6 +9,7 @@ import {
   type BuildManifest,
   type BuildPointer,
   type BuildPolicy,
+  type BuildState,
   type InstalledManifest,
   type LaunchFailure,
   type LaunchProgress,
@@ -20,7 +21,7 @@ import {
 import { installedManifest, parseBuildManifest, parseBuildPointer } from "../buildRecords.ts";
 import { verifiedJsonAliasCachePrefix } from "../verifiedJsonBody.ts";
 import { BACKGROUND_INSTALL, FOREGROUND_INSTALL, installBuild } from "./buildInstaller.ts";
-import { type BuildStore, createBuildStore } from "./buildStore.ts";
+import { type BuildStore, createBuildStore, withBuildStateLock } from "./buildStore.ts";
 import { type VisibilitySource, watchVisibility } from "./visibility.ts";
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -148,8 +149,8 @@ type FirstInstallFailure = LaunchFailure["reason"] | NetworkPlayNotice["reason"]
 class LaunchError extends Error {
   readonly reason: FirstInstallFailure;
 
-  constructor(reason: FirstInstallFailure, message: string) {
-    super(message);
+  constructor(reason: FirstInstallFailure, message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "LaunchError";
     this.reason = reason;
   }
@@ -597,7 +598,18 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
       return installDeployed(restarts + 1);
     }
     await store.saveManifest(manifest);
-    await store.setActive(manifest.version);
+    const active = await withBuildStateLock(policy, async () => {
+      const state = await store.readState();
+      if (state.active === undefined) {
+        await store.setActive(manifest.version);
+      }
+      return state.active ?? manifest.version;
+    });
+    if (active !== manifest.version) {
+      // Another context installed or activated a build while this document was downloading.
+      reload();
+      return "reloading";
+    }
     progress = { ...progress, received: progress.total, recorded: true };
     report("installing", 0);
     // CLEANUP (added 2026-11-18): remove once all three games deploy the router.
@@ -630,12 +642,12 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     return "reloading";
   };
 
-  // Retries a failed first install until it succeeds; each retry resumes from stored entries. An
-  // unsupported or quota failure plays from the network instead, with no active build.
-  const installUntilDone = (): Promise<LaunchResult> =>
+  // Retry startup from its storage read. Unsupported or quota errors from a first install
+  // still fall back to network play.
+  const launchUntilDone = (): Promise<LaunchResult> =>
     new Promise((resolve) => {
       const attempt = () => {
-        firstInstall().then(resolve, (error: unknown) => {
+        launch().then(resolve, (error: unknown) => {
           if (disposed) {
             return;
           }
@@ -662,7 +674,7 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
             resolve("play");
             return;
           }
-          console.warn("First install failed.", error);
+          console.warn("Launch failed.", error);
           let retried = false;
           const failure: LaunchFailure = {
             reason,
@@ -694,7 +706,9 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
   // staged builds, each build a live window's pin names and this document's build.
   const afterLaunch = async () => {
     try {
-      await store.reclaim(documentVersion === undefined ? [] : [documentVersion]);
+      await withBuildStateLock(policy, () =>
+        store.reclaim(documentVersion === undefined ? [] : [documentVersion]),
+      );
     } catch (error) {
       console.warn("Could not reclaim unused builds.", error);
     }
@@ -731,23 +745,56 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
   };
 
   let switching: Promise<void> | undefined;
-  const updateNow = (version: string, save: () => void | PromiseLike<void>): Promise<void> => {
+
+  const completeBuild = async (version: string): Promise<boolean> => {
+    const manifest = await store.readManifest(version);
+    return manifest !== undefined && (await store.complete(manifest));
+  };
+
+  // The caller holds the build-state lock and has just revalidated the staged version.
+  const activate = async (version: string): Promise<void> => {
+    await store.setActive(version);
+    try {
+      if ((await store.readState()).staged === version) {
+        await store.setStaged(undefined);
+      }
+    } catch (error) {
+      // The active write succeeded. The router can clear a matching staged entry on navigation.
+      console.warn("Could not clear the activated staged build.", error);
+    }
+  };
+
+  const updateNow = (
+    activeAtOffer: string | undefined,
+    version: string,
+    save: () => void | PromiseLike<void>,
+  ): Promise<void> => {
     switching ??= (async () => {
       await save();
+      const offeredIsStaged = (state: BuildState) =>
+        state.active === activeAtOffer && state.staged === version;
       const state = await store.readState();
-      if (state.active !== version) {
-        if (state.staged !== version) {
-          const manifest = await store.readManifest(version);
-          if (manifest === undefined || !(await store.complete(manifest))) {
-            throw new Error(`Build ${version} is no longer staged`);
-          }
+      const verified = offeredIsStaged(state) && (await completeBuild(version));
+      const accepted = await withBuildStateLock(policy, async () => {
+        const current = await store.readState();
+        if (disposed || reloading || required) {
+          return false;
         }
-        await store.setActive(version);
-        if (state.staged === version) {
-          await store.setStaged(undefined);
+        if (current.active === version) {
+          return true;
         }
+        if (!verified || !offeredIsStaged(current)) {
+          return false;
+        }
+        await activate(version);
+        return true;
+      });
+      if (!accepted) {
+        throw new Error(`Build ${version} is no longer available for this update offer`);
       }
-      reload();
+      if (!disposed && !reloading) {
+        reload();
+      }
     })().catch((error: unknown) => {
       switching = undefined;
       throw error;
@@ -755,7 +802,7 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     return switching;
   };
 
-  const offer = (version: string) => {
+  const offer = (activeAtOffer: string | undefined, version: string) => {
     if (required || offered.has(version) || disposed || reloading) {
       return;
     }
@@ -763,7 +810,7 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     try {
       options.onUpdateReady({
         dismiss: () => undefined,
-        updateNow: (save) => updateNow(version, save),
+        updateNow: (save) => updateNow(activeAtOffer, version, save),
         version,
       });
     } catch (error) {
@@ -771,15 +818,46 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     }
   };
 
+  // A download can finish after another context stages or activates a different build.
+  const publishStaged = async (previous: BuildState, version: string): Promise<void> => {
+    const published = await withBuildStateLock(policy, async () => {
+      const current = await store.readState();
+      if (
+        disposed ||
+        reloading ||
+        current.active === version ||
+        current.active !== previous.active ||
+        (current.staged !== previous.staged && current.staged !== version)
+      ) {
+        return false;
+      }
+      if (current.staged !== version) {
+        await store.setStaged(version);
+      }
+      return true;
+    });
+    if (published) {
+      reportUpdate({ phase: "ready", version });
+      offer(previous.active, version);
+    } else {
+      reportUpdate({ phase: "idle" });
+    }
+  };
+
   // Stages the build the pointer names; a redeploy mid-staging restarts on the new manifest.
   // Records in attempt the version it tries, so a failure can name it.
   const stageDeployed = async (restarts: number, attempt: { version?: string }): Promise<void> => {
-    const pointer = await readPointer();
     const state = await store.readState();
+    const pointer = await readPointer();
     if (pointer.version === documentVersion || pointer.version === state.active) {
       // The deployed build is already running; a staged one would roll it back.
       if (state.staged !== undefined && state.staged !== pointer.version) {
-        await store.setStaged(undefined);
+        await withBuildStateLock(policy, async () => {
+          const current = await store.readState();
+          if (current.active === state.active && current.staged === state.staged) {
+            await store.setStaged(undefined);
+          }
+        });
       }
       reportUpdate({ phase: "idle" });
       return;
@@ -788,8 +866,7 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     attempt.version = version;
     const manifest = await readPinnedManifest(pointer);
     if (state.staged === version && (await store.complete(manifest))) {
-      reportUpdate({ phase: "ready", version });
-      offer(version);
+      await publishStaged(state, version);
       return;
     }
     await store.saveManifest(manifest);
@@ -815,9 +892,7 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
       await stageDeployed(restarts + 1, attempt);
       return;
     }
-    await store.setStaged(version);
-    reportUpdate({ phase: "ready", version });
-    offer(version);
+    await publishStaged(state, version);
   };
 
   const stage = async () => {
@@ -950,21 +1025,31 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     }
     try {
       const state = await store.readState();
-      if (state.active !== undefined && state.active !== documentVersion) {
-        // Another window already activated a newer build.
+      const { staged } = state;
+      const verified =
+        (state.active === undefined || state.active === documentVersion) &&
+        staged !== undefined &&
+        staged !== documentVersion &&
+        (await completeBuild(staged));
+      const activated = await withBuildStateLock(policy, async () => {
+        const current = await store.readState();
+        if (disposed || reloading) {
+          return false;
+        }
+        if (current.active !== undefined && current.active !== documentVersion) {
+          // Another context already activated a newer build.
+          return true;
+        }
+        if (!verified || current.active !== state.active || current.staged !== staged) {
+          return false;
+        }
+        await activate(staged);
+        return true;
+      });
+      if (activated && !disposed && !reloading) {
         reportRequired("updating");
         reload();
         return;
-      }
-      if (state.staged !== undefined && state.staged !== documentVersion) {
-        const manifest = await store.readManifest(state.staged);
-        if (manifest !== undefined && (await store.complete(manifest))) {
-          reportRequired("updating");
-          await store.setActive(state.staged);
-          await store.setStaged(undefined);
-          reload();
-          return;
-        }
       }
     } catch (error) {
       console.warn("Could not read build records for a required update.", error);
@@ -1009,10 +1094,36 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
   cleanups.push(() => page.eventTarget.removeEventListener("online", online));
   cleanups.push(() => page.eventTarget.removeEventListener("offline", cancelDiscovery));
 
-  const launch = async (): Promise<LaunchResult> => {
+  const readStartup = async () => {
     const state = await store.readState();
+    const { active, staged } = state;
+    // A verified staged build may still need one reload into the router.
+    if (
+      active !== undefined &&
+      staged !== undefined &&
+      staged !== active &&
+      session !== undefined
+    ) {
+      let target: string | null;
+      try {
+        target = session.getItem(LAUNCH_RELOAD_KEY);
+      } catch {
+        target = staged;
+      }
+      const manifest = target === staged ? undefined : await store.readManifest(staged);
+      if (manifest !== undefined && (await store.complete(manifest))) {
+        return { reloadVersion: staged, state };
+      }
+    }
+    return { state };
+  };
+
+  const launch = async (): Promise<LaunchResult> => {
+    const { reloadVersion, state } = await readStartup().catch((error: unknown) => {
+      throw new LaunchError("verification", "Could not read stored build state", { cause: error });
+    });
     if (state.active === undefined) {
-      return installUntilDone();
+      return firstInstall();
     }
     // The router updates its own script; play does not wait for it.
     register().catch((error: unknown) =>
@@ -1032,21 +1143,10 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
       progress = { ...progress, recorded: true };
       writeSession(session, LAUNCH_PROGRESS_KEY, undefined);
     }
-    // The router promotes a complete staged build at navigation. A complete staged build at this
-    // point means this document was not promoted, so it reloads once into the router.
-    if (state.staged !== undefined && state.staged !== state.active && session !== undefined) {
-      let target: string | null;
-      try {
-        target = session.getItem(LAUNCH_RELOAD_KEY);
-      } catch {
-        target = state.staged;
-      }
-      const manifest = target === state.staged ? undefined : await store.readManifest(state.staged);
-      if (manifest !== undefined && (await store.complete(manifest))) {
-        writeSession(session, LAUNCH_RELOAD_KEY, state.staged);
-        reload();
-        return "reloading";
-      }
+    if (reloadVersion !== undefined) {
+      writeSession(session, LAUNCH_RELOAD_KEY, reloadVersion);
+      reload();
+      return "reloading";
     }
     return play(state.active);
   };
@@ -1082,7 +1182,7 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
       }
     },
     run() {
-      running ??= launch();
+      running ??= launchUntilDone();
       return running;
     },
   };

@@ -93,7 +93,7 @@ export interface LaunchProgress {
   readonly totalBytes: number;
 }
 
-// Shown only for the first install: Loading failed with Retry.
+// Loading failed with Retry for a failed startup read or foreground install.
 export interface LaunchFailure {
   readonly reason: "network" | "verification";
   readonly retry: () => void;
@@ -114,7 +114,8 @@ export type UpdateState =
   | { readonly phase: "failed"; readonly version: string };
 
 // Fired once per staged version during a session. The game draws its own prompt and pauses play.
-// updateNow awaits the game's save, then activates the staged build and reloads with no download.
+// updateNow awaits the game's save, then activates the offered build if still current. It reloads
+// without downloading if the build is already active or successfully activated. A stale offer rejects.
 // dismiss continues play on the active build; the next launch applies the update silently.
 export interface UpdateOffer {
   readonly version: string;

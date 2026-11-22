@@ -200,6 +200,48 @@ const roomFor = (free: number): Pick<StorageManager, "estimate" | "persist"> => 
   persist: async () => true,
 });
 
+describe("startup storage recovery", () => {
+  it.each(["lookup", "body"] as const)(
+    "retries an active record %s failure without installing or writing",
+    async (failure) => {
+      const caches = new MemoryCaches();
+      const server = new FakeServer(V1);
+      const installed = load(caches, server);
+      await expect(installed.launch.run()).resolves.toBe("play");
+      installed.launch.dispose();
+      const records = await caches.open(recordsCacheName(POLICY));
+      const recordMatch = records.match.bind(records);
+      const write = vi.spyOn(records, "put");
+      const read = vi.spyOn(records, "match").mockImplementation(async (key) => {
+        if (pathOf(key) !== ACTIVE_RECORD_PATH) {
+          return recordMatch(key);
+        }
+        const error = new Error("cache read refused");
+        if (failure === "lookup") {
+          throw error;
+        }
+        return new Response(new ReadableStream({ start: (controller) => controller.error(error) }));
+      });
+      const fetch = vi.spyOn(server, "fetch");
+      const page = load(caches, server);
+      const launched = page.launch.run().catch((error: unknown) => error);
+      await vi.waitFor(() => expect(page.failures).toHaveLength(1), WAIT);
+      expect(page.failures[0]?.reason).toBe("verification");
+      expect(page.networkPlay).toEqual([]);
+      expect(fetch).not.toHaveBeenCalled();
+      expect(write).not.toHaveBeenCalled();
+      read.mockRestore();
+      page.failures[0]!.retry();
+      page.failures[0]!.retry();
+      await expect(launched).resolves.toBe("play");
+      expect(await page.store.readState()).toEqual({ active: "aaaa" });
+      expect(write).not.toHaveBeenCalled();
+      expect(page.reload).not.toHaveBeenCalled();
+      page.launch.dispose();
+    },
+  );
+});
+
 describe("quota", () => {
   it("plays from the network before any file fetch when the estimate leaves too little room", async () => {
     const caches = new MemoryCaches();

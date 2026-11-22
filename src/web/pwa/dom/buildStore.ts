@@ -89,16 +89,26 @@ const versionRecord = (version: string) =>
     headers: { "content-type": RECORD_CONTENT_TYPE },
   });
 
-// The version a record names, or undefined for an absent or unreadable record.
-async function versionOf(response: Response | undefined): Promise<string | undefined> {
+export async function readCachedVersion(
+  response: Response | undefined,
+): Promise<string | undefined> {
   if (response === undefined) {
     return undefined;
   }
+  // An invalid record reads as absent. Body I/O failures propagate to the caller.
+  const body = await response.text();
   try {
-    return parseVersionRecord(await response.json());
+    return parseVersionRecord(JSON.parse(body));
   } catch {
     return undefined;
   }
+}
+
+// Serialize active/staged mutations across pages and the router when Web Locks is available.
+// Callers also revalidate before writing for browsers and older contexts outside the lock.
+export function withBuildStateLock<T>(policy: BuildPolicy, action: () => Promise<T>): Promise<T> {
+  const locks = globalThis.navigator?.locks;
+  return locks === undefined ? action() : locks.request(recordsCacheName(policy), action);
 }
 
 async function mapBounded<T, R>(
@@ -140,7 +150,7 @@ export function createBuildStore(
   const records = () => caches.open(recordsName);
 
   const readVersion = async (key: string): Promise<string | undefined> =>
-    versionOf(await (await records()).match(key));
+    readCachedVersion(await (await records()).match(key));
   const writeVersion = async (key: string, version: string): Promise<void> => {
     await (await records()).put(key, versionRecord(version));
   };
@@ -159,8 +169,9 @@ export function createBuildStore(
     if (response === undefined) {
       return undefined;
     }
+    const body = await response.text();
     try {
-      const manifest: InstalledManifest = parseBuildManifest(await response.json());
+      const manifest: InstalledManifest = parseBuildManifest(JSON.parse(body));
       const { soundFormat } = manifest;
       return manifest.version === version &&
         (soundFormat === undefined || typeof soundFormat === "string")
@@ -224,7 +235,7 @@ export function createBuildStore(
       .map((request) => keyPath(request.url))
       .filter((path) => path.startsWith(PIN_PREFIX));
     const versions = await Promise.all(
-      pins.map(async (path) => versionOf(await cache.match(keyOf(path)))),
+      pins.map(async (path) => readCachedVersion(await cache.match(keyOf(path)))),
     );
     const result = new Map<string, string>();
     pins.forEach((path, index) => {

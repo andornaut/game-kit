@@ -371,6 +371,73 @@ describe("navigation", () => {
     expect(server.fetched).toEqual([]);
   });
 
+  it("keeps newer active and staged records when an older promotion is verifying", async () => {
+    const server = new FakeServer(V2);
+    const worker = startWorker(server);
+    await worker.saveBuild(manifestOf("v1", V1), V1);
+    await worker.saveBuild(manifestOf("v2", V2), V2);
+    const newer = { ...V2, "/play/": "page v3" };
+    await worker.saveBuild(manifestOf("v3", newer), newer);
+    await worker.setRecord(ACTIVE, "v1");
+    await worker.setRecord(STAGED, "v2");
+    const cache = await worker.storage.open(buildCacheName(POLICY, "v2"));
+    let finishVerification!: (requests: Request[]) => void;
+    const verification = new Promise<Request[]>((resolve) => {
+      finishVerification = resolve;
+    });
+    const keys = vi.spyOn(cache, "keys").mockReturnValueOnce(verification);
+    const navigating = worker.navigate("/play/", "doc");
+    await vi.waitFor(() => expect(keys).toHaveBeenCalledOnce());
+    // A client still on an earlier version can write records without the lock.
+    await worker.setRecord(ACTIVE, "v3");
+    await worker.setRecord(STAGED, "v4");
+    finishVerification(await cache.keys());
+    expect(await (await navigating)!.text()).toBe("page v3");
+    expect(await worker.readRecord(ACTIVE)).toBe("v3");
+    expect(await worker.readRecord(STAGED)).toBe("v4");
+    expect(await worker.readRecord(pinKey("doc"))).toBe("v3");
+    expect(server.fetched).toEqual([]);
+  });
+
+  it("waits for a page's active and staged writes before committing a promotion", async () => {
+    const worker = startWorker(new FakeServer(V2));
+    await worker.saveBuild(manifestOf("v1", V1), V1);
+    await worker.saveBuild(manifestOf("v2", V2), V2);
+    const newer = { ...V2, "/play/": "page v3" };
+    await worker.saveBuild(manifestOf("v3", newer), newer);
+    await worker.setRecord(ACTIVE, "v1");
+    await worker.setRecord(STAGED, "v2");
+
+    let finishWriting!: () => void;
+    const writing = new Promise<void>((resolve) => {
+      finishWriting = resolve;
+    });
+    const page = navigator.locks.request(RECORDS, async () => {
+      await writing;
+      await worker.setRecord(ACTIVE, "v3");
+      await worker.setRecord(STAGED, "v4");
+    });
+    await vi.waitFor(async () => {
+      expect((await navigator.locks.query()).held).toContainEqual(
+        expect.objectContaining({ name: RECORDS }),
+      );
+    });
+    const navigating = worker.navigate("/play/", "doc");
+    try {
+      await vi.waitFor(async () => {
+        expect((await navigator.locks.query()).pending).toContainEqual(
+          expect.objectContaining({ name: RECORDS }),
+        );
+      });
+    } finally {
+      finishWriting();
+      await page;
+    }
+    expect(await (await navigating)!.text()).toBe("page v3");
+    expect(await worker.readRecord(ACTIVE)).toBe("v3");
+    expect(await worker.readRecord(STAGED)).toBe("v4");
+  });
+
   it("clears a staged record that names the active build", async () => {
     const worker = startWorker(new FakeServer(V1));
     await worker.saveBuild(manifestOf("v1", V1), V1);

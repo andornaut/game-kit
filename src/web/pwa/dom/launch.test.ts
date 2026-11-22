@@ -303,6 +303,14 @@ const settle = (turns = 20): Promise<void> =>
         setImmediate(resolve);
       }).then(() => settle(turns - 1));
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 const V1 = buildOf("aaaa", { "/a.js": "alpha", "/play/": "<html>" }, ["/a.js"]);
 const V2 = buildOf("bbbb", { "/a.js": "alpha2", "/play/": "<html>" }, ["/a.js"]);
 const V3 = buildOf("cccc", { "/a.js": "alpha3", "/play/": "<html>" }, ["/a.js"]);
@@ -637,6 +645,26 @@ describe("launch with an active build", () => {
     expect(again.reload).not.toHaveBeenCalled();
   });
 
+  it("retries failed staged-build startup verification before writing the reload marker", async () => {
+    const f = fixture();
+    f.store.state = { active: "aaaa", staged: "bbbb" };
+    f.store.manifests.set("bbbb", V2.manifest);
+    f.store.completeVersions.add("bbbb");
+    vi.spyOn(f.store, "complete").mockRejectedValueOnce(new Error("cache read refused"));
+    const launched = f.launch.run().catch((error: unknown) => error);
+    await settle();
+    expect(f.failures.map((failure) => failure.reason)).toEqual(["verification"]);
+    expect(f.reload).not.toHaveBeenCalled();
+    expect(f.session.getItem(LAUNCH_RELOAD_KEY)).toBeNull();
+    expect(f.container.register).not.toHaveBeenCalled();
+    expect(f.fetch).not.toHaveBeenCalled();
+    f.failures[0]!.retry();
+    await expect(launched).resolves.toBe("reloading");
+    expect(f.session.getItem(LAUNCH_RELOAD_KEY)).toBe("bbbb");
+    expect(f.reload).toHaveBeenCalledOnce();
+    expect(f.store.state).toEqual({ active: "aaaa", staged: "bbbb" });
+  });
+
   it("continues first-install progress carried across the reload", async () => {
     const f = fixture();
     f.session.setItem(
@@ -949,9 +977,102 @@ describe("background updates", () => {
     expect(f.store.state.active).toBe("aaaa");
     expect(f.reload).not.toHaveBeenCalled();
   });
+
+  it("rejects a superseded offer after saving and leaves a newly staged offer usable", async () => {
+    const f = fixture();
+    f.deploy(V2);
+    await playing(f);
+    const saving = deferred<void>();
+    const switching = f.offers[0]!.updateNow(() => saving.promise);
+    const failure = switching.catch((error: unknown) => error);
+    f.deploy(V3);
+    f.advance(UPDATE_CHECK_MS);
+    f.visibility.set("hidden");
+    f.visibility.set("visible");
+    await settle();
+    expect(f.offers.map((offer) => offer.version)).toEqual(["bbbb", "cccc"]);
+    expect(f.store.completeVersions.has("bbbb")).toBe(true);
+    saving.resolve();
+    expect(await failure).toMatchObject({
+      message: expect.stringContaining("no longer available"),
+    });
+    expect(f.store.state).toEqual({ active: "aaaa", staged: "cccc" });
+    expect(f.reload).not.toHaveBeenCalled();
+    expect(f.offers).toHaveLength(2);
+    await f.offers[1]!.updateNow(() => undefined);
+    expect(f.store.state).toEqual({ active: "cccc" });
+    expect(f.reload).toHaveBeenCalledOnce();
+  });
+
+  it("reloads an offer already promoted during save and keeps another staged build", async () => {
+    const f = fixture();
+    f.deploy(V2);
+    await playing(f);
+    const saving = deferred<void>();
+    const switching = f.offers[0]!.updateNow(() => saving.promise);
+    f.store.state = { active: "bbbb", staged: "cccc" };
+    const writes = f.store.calls.length;
+    saving.resolve();
+    await switching;
+    expect(f.store.calls).toHaveLength(writes);
+    expect(f.store.state).toEqual({ active: "bbbb", staged: "cccc" });
+    expect(f.reload).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a newer active build when an older offer is still staged after verification", async () => {
+    const f = fixture();
+    f.deploy(V2);
+    await playing(f);
+    const verifying = deferred<boolean>();
+    const complete = vi.spyOn(f.store, "complete").mockReturnValueOnce(verifying.promise);
+    const switching = f.offers[0]!.updateNow(() => undefined);
+    const failure = switching.catch((error: unknown) => error);
+    await settle();
+    expect(complete).toHaveBeenCalledWith(V2.manifest);
+    f.store.state.active = "cccc";
+    verifying.resolve(true);
+    expect(await failure).toMatchObject({
+      message: expect.stringContaining("no longer available"),
+    });
+    expect(f.store.state).toEqual({ active: "cccc", staged: "bbbb" });
+    expect(f.reload).not.toHaveBeenCalled();
+  });
+
+  it("does not replace a candidate staged while an older download is in flight", async () => {
+    const f = fixture();
+    f.deploy(V2);
+    const downloading = deferred<"complete">();
+    f.setResults([() => downloading.promise]);
+    await playing(f);
+    expect(f.installs).toHaveLength(1);
+    f.store.state.staged = "cccc";
+    downloading.resolve("complete");
+    await settle();
+    expect(f.store.state).toEqual({ active: "aaaa", staged: "cccc" });
+    expect(f.offers).toEqual([]);
+  });
 });
 
 describe("requireNewer", () => {
+  it("reloads into an active build that changed while a staged build was being verified", async () => {
+    const f = fixture();
+    f.deploy(V1);
+    await playing(f);
+    f.store.state.staged = "bbbb";
+    f.store.manifests.set("bbbb", V2.manifest);
+    const verifying = deferred<boolean>();
+    const complete = vi.spyOn(f.store, "complete").mockReturnValueOnce(verifying.promise);
+    f.launch.requireNewer();
+    await settle();
+    expect(complete).toHaveBeenCalledWith(V2.manifest);
+    f.store.state = { active: "cccc", staged: "dddd" };
+    verifying.resolve(true);
+    await settle();
+    expect(f.store.state).toEqual({ active: "cccc", staged: "dddd" });
+    expect(f.reload).toHaveBeenCalledOnce();
+    expect(f.offers).toEqual([]);
+  });
+
   it("activates a complete staged build and reloads without an offer", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const f = fixture();

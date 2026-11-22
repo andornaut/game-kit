@@ -23,13 +23,13 @@ import {
 } from "../buildContract.ts";
 import {
   parseBuildManifest,
-  parseVersionRecord,
   RECORD_CONTENT_TYPE,
   verifiedJsonFamilies,
   versionRecordText,
 } from "../buildRecords.ts";
 import { cacheKeyFor } from "../cachePolicy.ts";
 import type { VerifiedJsonBody } from "../verifiedJsonBody.ts";
+import { readCachedVersion, withBuildStateLock } from "./buildStore.ts";
 import {
   isDataProfile,
   isDataRequest,
@@ -131,7 +131,7 @@ async function mapBounded<T, R>(
 // A version record's version, or undefined for a missing or malformed record.
 async function readVersion(records: Cache, url: string): Promise<string | undefined> {
   try {
-    return parseVersionRecord(await (await records.match(url))?.json());
+    return await readCachedVersion(await records.match(url));
   } catch {
     return undefined;
   }
@@ -297,21 +297,33 @@ export function runServiceWorker(policy: BuildPolicy): void {
   // The silent launch switch: a complete staged build becomes active before the navigation
   // that loads game code is answered. An incomplete one stays staged for the page to repair.
   const promoteStaged = async (records: Cache) => {
-    const staged = await readVersion(records, STAGED_RECORD_PATH);
+    // A transient read refusal is a routing fallback, never permission to write active.
+    const versionAt = async (path: string) => readCachedVersion(await records.match(path));
+    const staged = await versionAt(STAGED_RECORD_PATH);
     if (staged === undefined) {
       return;
     }
-    if (staged !== (await readVersion(records, ACTIVE_RECORD_PATH))) {
+    const active = await versionAt(ACTIVE_RECORD_PATH);
+    if (staged !== active) {
       const build = await loadBuild(records, staged);
       if (build === undefined || !(await complete(build))) {
         return;
       }
-      await records.put(ACTIVE_RECORD_PATH, versionRecord(staged));
     }
-    // The page may have staged a newer build meanwhile; that record stays.
-    if ((await readVersion(records, STAGED_RECORD_PATH)) === staged) {
-      await records.delete(STAGED_RECORD_PATH);
-    }
+    await withBuildStateLock(policy, async () => {
+      if (
+        (await versionAt(STAGED_RECORD_PATH)) !== staged ||
+        (await versionAt(ACTIVE_RECORD_PATH)) !== active
+      ) {
+        return;
+      }
+      if (staged !== active) {
+        await records.put(ACTIVE_RECORD_PATH, versionRecord(staged));
+      }
+      if ((await versionAt(STAGED_RECORD_PATH)) === staged) {
+        await records.delete(STAGED_RECORD_PATH);
+      }
+    });
   };
 
   const fileFor = (build: Build, request: Request) =>
