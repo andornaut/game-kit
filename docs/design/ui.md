@@ -13,3 +13,4 @@ Reference: [High-density game UI](../../README.md#high-density-game-ui), [Dialog
 | gk-0010 | Publish the shared button and control presentation     | [gk-0010.md](../work/gk-0010.md) |
 | gk-0011 | Publish the typed layout tree and its exports          | [gk-0011.md](../work/gk-0011.md) |
 | gk-0023 | Recover focus in strict dialogs after a backdrop press | [gk-0023.md](../work/gk-0023.md) |
+| gk-0025 | Style keyboard focus in shared game controls           | [gk-0025.md](../work/gk-0025.md) |
