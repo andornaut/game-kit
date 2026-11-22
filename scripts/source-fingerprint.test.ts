@@ -26,9 +26,10 @@ function checkWithFakes(name: string, listing: string) {
   const bin = join(root, "bin");
   mkdirSync(bin);
   for (const file of [
+    "check-local.ts",
     "check.ts",
     "container-check.ts",
-    "pack.ts",
+    "package-source.ts",
     "release-source.ts",
     "runtime.ts",
     "source-fingerprint.ts",
@@ -44,14 +45,18 @@ function checkWithFakes(name: string, listing: string) {
     [
       "#!/bin/sh",
       'if [ "$1" = -C ]; then shift 2; fi',
-      `case "$1" in rev-parse) echo fixture;; status) :;; ls-files) ${listing};; esac`,
+      'case "$1" in rev-parse) echo fixture;; status) :;;',
+      `  ls-files) ${listing};;`,
+      '  archive) tar -cf - -C "$(dirname "$0")/.." .nvmrc;; esac',
       "",
     ].join("\n"),
     { mode: 0o755 },
   );
-  writeFileSync(join(bin, "docker"), '#!/bin/sh\necho "container started" >&2\nexit 99\n', {
-    mode: 0o755,
-  });
+  writeFileSync(
+    join(bin, "docker"),
+    '#!/bin/sh\ntouch "$(dirname "$0")/git.container-started"\necho "container started" >&2\nexit 99\n',
+    { mode: 0o755 },
+  );
   const result = spawnSync(process.execPath, [join(root, "scripts/check.ts")], {
     encoding: "utf8",
     env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
@@ -77,10 +82,9 @@ it("reports an unreadable listing before starting the verification containers", 
 });
 
 it("reports both the fingerprint cause and the gate failure after a failed gate", () => {
-  // The listing before the gate succeeds; the listing after it fails.
   const { result, root } = checkWithFakes(
     "file",
-    'if [ -e "$0.listed" ]; then exit 42; fi; touch "$0.listed"',
+    'if [ -e "$0.container-started" ]; then exit 42; fi',
   );
   expect(result.status).toBe(1);
   expect(result.stderr).toContain("container started");
@@ -151,4 +155,23 @@ it("covers every root in order", () => {
     sourceFingerprint(roots),
   );
   expect(new Set(fingerprints).size).toBe(fingerprints.length);
+});
+
+it("does not read through the symlink that replaced a deleted file's parent", () => {
+  const { git, root } = repository();
+  const previousParent = join(root, "parent");
+  mkdirSync(previousParent);
+  writeFileSync(join(previousParent, "tracked.txt"), "tracked");
+  git("add", "parent");
+  git(
+    ...["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid"],
+    ...["-c", "core.hooksPath=/dev/null", "commit", "--quiet", "--no-verify", "-m", "Add parent"],
+  );
+  const outside = mkdtempSync(join(tmpdir(), "kit-fingerprint-outside-"));
+  writeFileSync(join(outside, "tracked.txt"), "one");
+  rmSync(previousParent, { recursive: true });
+  symlinkSync(outside, previousParent);
+  const before = sourceFingerprint([root], "working-tree");
+  writeFileSync(join(outside, "tracked.txt"), "two");
+  expect(sourceFingerprint([root], "working-tree")).toBe(before);
 });

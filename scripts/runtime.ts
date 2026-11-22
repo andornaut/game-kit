@@ -65,6 +65,8 @@ export interface ContainerRun {
   input?: Buffer;
   /** Destination of the container's stdout and stderr: inherited, or an open file descriptor. */
   output?: "inherit" | number;
+  /** Optional GNU timeout duration for the attached container process. */
+  timeout?: string;
 }
 
 function docker(args: string[], options: SpawnSyncOptions = {}): string {
@@ -80,14 +82,17 @@ function docker(args: string[], options: SpawnSyncOptions = {}): string {
 
 /** Run one container to completion, copy its results out as the host user, then remove it. */
 export function runContainer(
-  { copyOut, input, output = "inherit" }: ContainerRun,
+  { copyOut, input, output = "inherit", timeout }: ContainerRun,
   args: string[],
 ): void {
   const create = input === undefined ? ["create"] : ["create", "--interactive"];
   const id = docker([...create, ...args], { stdio: ["ignore", "pipe", "inherit"] });
   try {
     const start = input === undefined ? ["start", "--attach"] : ["start", "--attach", "-i"];
-    const result = spawnSync("docker", [...start, id], {
+    const command = timeout === undefined ? "docker" : "timeout";
+    const args =
+      timeout === undefined ? [] : ["--signal=TERM", "--kill-after=10", timeout, "docker"];
+    const result = spawnSync(command, [...args, ...start, id], {
       input,
       stdio: [input === undefined ? "ignore" : "pipe", output, output],
     });
@@ -101,7 +106,10 @@ export function runContainer(
           .status === 0;
     }
     if (result.status !== 0) {
-      throw new ScriptError(`Container exited with status ${result.status}.`);
+      throw new ScriptError(
+        `Container exited with status ${result.status}.`,
+        timeout === undefined ? 1 : (result.status ?? 1),
+      );
     }
     if (!copied) {
       throw new ScriptError(`Cannot copy ${copyOut?.from} out of the container.`);

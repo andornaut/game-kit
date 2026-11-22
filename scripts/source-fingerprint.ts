@@ -39,6 +39,22 @@ export function isCredentialPath(path: Buffer): boolean {
     );
 }
 
+/** Never open paths that the stock source snapshot excludes. */
+export function isStockExcluded(path: Buffer): boolean {
+  const name = path.toString("latin1").toLowerCase();
+  return name
+    .split("/")
+    .some(
+      (part) =>
+        /^(?:\.\.|\.git|agents\.md|claude(?:\.local)?\.md|gemini\.md)$/.test(part) ||
+        /^(?:\.env(?:\..*)?|\.dev\.vars(?:\..*)?|\.npmrc|\.pypirc|\.netrc|\.git-credentials)$/.test(
+          part,
+        ) ||
+        /^(?:\.aws|\.private|\.ssh|credentials(?:\..*)?)$/.test(part) ||
+        /(?:\.(?:env|pem|key|crt|cer|p12|pfx|age|gpg)$|\.sops\.)/.test(part),
+    );
+}
+
 type Entry =
   | { kind: "file"; bytes: Buffer }
   | { kind: "link"; target: Buffer }
@@ -77,19 +93,45 @@ function dirtyPaths(status: Buffer): Buffer[] {
   return paths;
 }
 
-function hashRoot(digest: Hash, root: string): void {
+function hasLinkedParent(root: string, name: Buffer): boolean {
+  for (let end = name.indexOf(47); end !== -1; end = name.indexOf(47, end + 1)) {
+    try {
+      if (lstatSync(join(root, name.subarray(0, end))).isSymbolicLink()) {
+        return true;
+      }
+    } catch (error) {
+      if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) {
+        return false;
+      }
+      throw error;
+    }
+  }
+  return false;
+}
+
+function hashRoot(digest: Hash, root: string, mode?: "working-tree" | "release"): void {
   const head = gitBytes(root, ["rev-parse", "HEAD"]);
   const status = gitBytes(root, ["status", "--porcelain=v1", "--untracked-files=all", "-z"]);
   const listing = gitBytes(root, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"]);
   const dirty = dirtyPaths(status);
   // Check every listed and dirty name before reading any content.
-  if ([...split(listing), ...dirty].some((name) => isCredentialPath(join(root, name)))) {
+  const excluded = mode === undefined ? isCredentialPath : isStockExcluded;
+  if (
+    mode !== "working-tree" &&
+    [...split(listing), ...dirty].some((name) => excluded(join(root, name)))
+  ) {
     throw new ScriptError("Refusing credential path in source fingerprint");
   }
   digest.update(root).update("\0").update(head).update(status);
   for (const name of dirty) {
+    if (mode === "working-tree" && excluded(name)) {
+      continue;
+    }
     digest.update(name).update("\0");
-    const entry = read(join(root, name));
+    // A deleted tracked file can have a symlink in its former parent path.
+    const entry = hasLinkedParent(root, name)
+      ? { kind: "missing" as const }
+      : read(join(root, name));
     if (entry.kind === "link") {
       digest.update(entry.target);
     } else if (entry.kind === "file") {
@@ -106,11 +148,11 @@ function hashRoot(digest: Hash, root: string): void {
  * Hash each root's path, HEAD and status, and the bytes or link target of each dirty path.
  * Credential-shaped names in the tracked and unignored listing are refused before any read.
  */
-export function sourceFingerprint(roots: string[]): string {
+export function sourceFingerprint(roots: string[], mode?: "working-tree" | "release"): string {
   const digest = createHash("sha256");
   for (const root of roots) {
     try {
-      hashRoot(digest, root);
+      hashRoot(digest, root, mode);
     } catch (error) {
       if (error instanceof ScriptError) {
         throw error;

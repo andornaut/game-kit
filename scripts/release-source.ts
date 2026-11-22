@@ -24,9 +24,10 @@ export function requireReleaseCheckout(root: string, revision: string): void {
 export function pinReleaseSource(
   root: string,
   revision = git(root, "rev-parse", "HEAD"),
+  excluded = isCredentialPath,
 ): ReleaseSource {
   const listed = git(root, "ls-tree", "-r", "-z", "--name-only", revision);
-  if (listed.split("\0").some((name) => isCredentialPath(Buffer.from(name)))) {
+  if (listed.split("\0").some((name) => excluded(Buffer.from(name)))) {
     throw new ScriptError("Refusing credential path in release source");
   }
   return {
