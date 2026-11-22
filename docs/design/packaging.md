@@ -18,3 +18,4 @@ Reference: [Standalone verification](../../README.md#standalone-verification), [
 | gk-0012 | Close the kit test-reduction target                             | [gk-0012.md](../work/gk-0012.md) |
 | gk-0014 | Publish the runtime, build and test namespaces                  | [gk-0014.md](../work/gk-0014.md) |
 | gk-0033 | Bind release checks and receipts to their evidence              | [gk-0033.md](../work/gk-0033.md) |
+| gk-0035 | Use one local check runner                                      | [gk-0035.md](../work/gk-0035.md) |
