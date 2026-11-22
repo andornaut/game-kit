@@ -14,3 +14,4 @@ Reference: [Required loading failures](../../README.md#required-loading-failures
 | gk-0013 | Retry standalone XML load failures                      | [gk-0013.md](../work/gk-0013.md) |
 | gk-0017 | Configure the loading-failure presentation              | [gk-0017.md](../work/gk-0017.md) |
 | gk-0022 | Reject retry when a resource status check throws        | [gk-0022.md](../work/gk-0022.md) |
+| gk-0034 | Fit startup Retry to its label                          | [gk-0034.md](../work/gk-0034.md) |
