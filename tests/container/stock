@@ -50,10 +50,26 @@ stock_readonly() {
     _stock_container readonly "$@"
 }
 
+_stock_memory() {
+    # Docker memory suffixes use powers of 1024. Pass only bounded, positive bytes to Docker.
+    LC_ALL=C awk -v value="${CHECK_MEMORY:-4g}" 'BEGIN {
+        if (!match(value, /^[+]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?/)) exit 1
+        amount = substr(value, 1, RLENGTH) + 0
+        unit = tolower(substr(value, RLENGTH + 1))
+        sub(/^ +/, "", unit)
+        if (unit !~ /^(b|[kmgtp](b|ib)?)?$/) exit 1
+        power = unit == "" ? 0 : index("bkmgtp", substr(unit, 1, 1)) - 1
+        bytes = amount * 1024 ^ power
+        if (!(bytes >= 1 && bytes <= 4294967296)) exit 1
+        printf "%.0f\n", int(bytes)
+    }' || { printf 'CHECK_MEMORY must be a positive Docker size at or below 4 GiB.\n' >&2; return 2; }
+}
+
 _stock_container() {
-    local mode=$1 image=$2 entrypoint=$3 status network=${STOCK_NETWORK:-none}
+    local mode=$1 image=$2 entrypoint=$3 status memory network=${STOCK_NETWORK:-none}
     local -a mounts=()
     shift 3
+    memory=$(_stock_memory) || return
     if [[ ${mode} == readonly ]]; then
         network=none
         mounts+=(--mount "type=bind,source=${stock_source},target=/work,readonly")
@@ -69,7 +85,7 @@ _stock_container() {
     stock_remove_container
     set +e
     timeout --signal=TERM --kill-after=10 "${CHECK_TIMEOUT_SECONDS:-900}" docker run --rm \
-        --cidfile "${cidfile}" --user 19001:19001 --cpus 4 --memory "${CHECK_MEMORY:-4g}" \
+        --cidfile "${cidfile}" --user 19001:19001 --cpus 4 --memory "${memory}" \
         --ulimit "nofile=${CHECK_NOFILE:-256}:${CHECK_NOFILE:-256}" --pids-limit 512 --read-only --cap-drop ALL --security-opt no-new-privileges \
         --network "${network}" "${mounts[@]}" \
         --tmpfs "/scratch:rw,exec,nosuid,size=${CHECK_SCRATCH_SIZE:-1g},mode=1777" \

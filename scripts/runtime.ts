@@ -35,7 +35,7 @@ export function npmCacheVolume(env: NodeJS.ProcessEnv): string {
   return name;
 }
 
-/** Identity, CPU, descriptor and read-only options shared by every container; checkout groups grant reads. */
+/** Identity, resource limits and read-only options shared by every container; checkout groups grant reads. */
 export function containerOptions(...checkouts: string[]): string[] {
   const id = `${CONTAINER_UID}:${CONTAINER_UID}`;
   const groups = new Set(checkouts.map((checkout) => String(statSync(checkout).gid)));
@@ -43,6 +43,7 @@ export function containerOptions(...checkouts: string[]): string[] {
     ...["--read-only", "--cpus", "4", "--user", id],
     ...[...groups].flatMap((group) => ["--group-add", group]),
     ...["-e", "HOME=/tmp"],
+    ...["--memory", "4g"],
     // A low descriptor limit makes a build that opens too many files at once fail with EMFILE here.
     ...["--ulimit", "nofile=256"],
     // A per-run volume rather than tmpfs, so results survive for docker cp after exit.
