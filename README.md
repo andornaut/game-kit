@@ -97,6 +97,16 @@ Handled action keys stop before later listeners on the same root. After focus fa
 
 Configure and create the manager before delegated action listeners on its root. It cannot suppress an earlier listener on that root or an ancestor capture listener. Keep caller world/Phaser input scopes and cross-modal gesture guards. Dimming, visible layout, allowed navigation and actual backdrop selection remain caller-owned. Invalid strict configurations fail before stack, focus or inert changes.
 
+## Standard game buttons
+
+Import `createButton(document, options)` from `@andornaut/game-kit/runtime/web/ui/dom/button` and load the existing `controls.css`. The returned view owns one stable native button, an optional skin face and a content slot. Text supplies its name. Icon-only content requires a name and accepts a decorative noninteractive element. Update content with `setContent` and presentation with `refresh`. Use `dispose` before releasing the view.
+
+Place the native button in the caller's existing root action registry. Resolve the view through `holdAction()` and use the existing `bindHoldActions` on that root. In pointer-release mode return the same action from the physical resolver and use `setPressed` in the existing press feedback callback. Route click capture through the existing readiness and modal guards. Return `null` from `getAction` while a caller guard blocks activation. Keep only the renderer's native click handler on the button. Supply the current callback and change action identity when reusing a button for another logical action. A hold uses the normal callback unless the caller supplies a hold override.
+
+Keep the game's skin, size tokens, placement, labels and navigation callbacks in the caller. `appearance.layout: "caller"` keeps existing geometry. Native disabled controls, focusable unavailable controls with a reason, selected styling, toggle semantics and momentary press feedback remain distinct. Use separate native form and continuous input paths for submit, steering, drag, sliders and editing.
+
+The loading-failure presenter keeps its asset-independent inline fallback and adds a themed keyboard-focus cue when the browser exposes the necessary focus and forced-colors features. Native focus remains visible on the fallback path. Retry still uses its existing single-flight and input guards.
+
 ## Caller action order
 
 Layout primitives retain the caller's keyed order and action roles. Callers place the existing primary action last in vertical groups and rightmost in horizontal groups, retaining secondary order and hidden-control identities. The crash screen keeps Reload after its optional developer details and centres the sole Copy action in its own row. Its action callbacks and focus remain unchanged.

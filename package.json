@@ -178,6 +178,7 @@
     "./runtime/web/save/dom/pageSessionStore": "./src/web/save/dom/pageSessionStore.ts",
     "./runtime/web/save/sessionStore": "./src/web/save/sessionStore.ts",
     "./runtime/web/save/storage": "./src/web/save/storage.ts",
+    "./runtime/web/ui/dom/button": "./src/web/ui/dom/button.ts",
     "./runtime/web/ui/dom/buttonLayout": "./src/web/ui/dom/buttonLayout.ts",
     "./runtime/web/ui/dom/buttonSkin": "./src/web/ui/dom/buttonSkin.ts",
     "./runtime/web/ui/dom/controlPresentation": "./src/web/ui/dom/controlPresentation.ts",

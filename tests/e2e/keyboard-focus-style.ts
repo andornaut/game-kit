@@ -11,14 +11,8 @@ const markup = `<!doctype html>
   <link rel="stylesheet" href="/src/web/crash/dom/crash.css?direct">
   <link rel="stylesheet" href="/theme.css">
   <main id="root">
-    <div>
-      <button id="opener" class="ui-control-button"><span class="ui-control-label">Open</span></button>
-      <button id="selected" class="ui-control-button" aria-pressed="true">Selected</button>
-      <button id="disabled" class="ui-control-button" disabled>Disabled</button>
-    </div>
-    <div><section id="dialog" role="dialog" hidden>
-      <button id="cancel" class="ui-control-button">Cancel</button>
-    </section></div>
+    <div id="actions"></div>
+    <div><section id="dialog" role="dialog" hidden></section></div>
   </main>`;
 const theme = `
   body { background: #3e352b; color: #f1dba7; padding: 16px; }
@@ -30,6 +24,7 @@ const theme = `
   .ui-control-button:active { box-shadow: inset 0 4px #35291a; }
   .ui-control-button[aria-pressed=true] { background: #46645b; }
   .ui-control-button:disabled { opacity: .55; }
+  .fixture-face-button { background: transparent; border: 0; padding: 0; }
 `;
 const csp = "default-src 'self'; style-src 'self'; style-src-attr 'none'";
 const hostCss = `button { width: 1px !important; font-size: 1px !important;
@@ -59,6 +54,15 @@ function control(locator: Locator) {
 
 const save = (page: Page, name: string) =>
   existsSync("/outputs") ? page.screenshot({ path: join("/outputs", `${name}.png`) }) : undefined;
+const nextPaint = (page: Page) =>
+  page.evaluate(
+    () =>
+      new Promise<number>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(resolve);
+        });
+      }),
+  );
 const systemHighlight = (page: Page) =>
   page.evaluate(() => {
     const sample = document.createElement("span");
@@ -80,7 +84,7 @@ try {
   const origin = server.resolvedUrls!.local[0]!;
   const browser = await chromium.launch({ args: ["--disable-dev-shm-usage"], channel: "chromium" });
   try {
-    const page = await browser.newPage({ viewport: { height: 520, width: 620 } });
+    const page = await browser.newPage({ hasTouch: true, viewport: { height: 520, width: 620 } });
     await page.route(origin, (route) =>
       route.fulfill({
         body: markup,
@@ -107,12 +111,43 @@ try {
       const { createModalLayer } = (await import(
         path
       )) as typeof import("../../src/web/ui/dom/modalLayer.ts");
+      const buttonPath = "/src/web/ui/dom/button.ts";
+      const { createButton } = (await import(
+        buttonPath
+      )) as typeof import("../../src/web/ui/dom/button.ts");
+      const holdPath = "/src/web/input/dom/holdActions.ts";
+      const { bindHoldActions } = (await import(
+        holdPath
+      )) as typeof import("../../src/web/input/dom/holdActions.ts");
+      const gatePath = "/src/input/modalInput.ts";
+      const { createModalInputGate } = (await import(
+        gatePath
+      )) as typeof import("../../src/input/modalInput.ts");
       const root = document.querySelector<HTMLElement>("#root")!;
       const dialog = document.querySelector<HTMLElement>("#dialog")!;
-      const cancel = document.querySelector<HTMLButtonElement>("#cancel")!;
+      const actions = document.querySelector<HTMLElement>("#actions")!;
       const modal = createModalLayer(root);
+      const views = new Map<Element, ReturnType<typeof createButton>>();
+      const add = (
+        parent: HTMLElement,
+        id: string,
+        options: Parameters<typeof createButton>[1],
+      ) => {
+        const view = createButton(document, options);
+        view.element.id = id;
+        parent.append(view.element);
+        views.set(view.element, view);
+        return view.element;
+      };
+      const rule = { holdMs: 180, slopPx: 8 };
       let dismiss: () => void;
-      root.querySelector("#opener")!.addEventListener("click", () => {
+      const cancel = add(dialog, "cancel", {
+        appearance: { className: "fixture-face-button", face: {} },
+        content: { kind: "text", label: "Cancel" },
+        getAction: () => ({ activate: () => dismiss() }),
+        rule,
+      });
+      const open = () => {
         dialog.hidden = false;
         const close = modal.open(
           { close: () => dismiss(), focus: cancel, isolation: "dialog" },
@@ -122,8 +157,45 @@ try {
           close();
           dialog.hidden = true;
         };
+      };
+      add(actions, "opener", {
+        content: { kind: "text", label: "Open" },
+        getAction: () => ({ activate: open }),
+        rule,
       });
-      cancel.addEventListener("click", () => dismiss());
+      let activations = 0;
+      const icon = document.createElement("span");
+      icon.textContent = "Selected";
+      add(actions, "selected", {
+        content: { icon, kind: "icon", name: "Selected" },
+        getAction: () => ({
+          activate: () => {
+            root.dataset.activations = String(++activations);
+          },
+        }),
+        getState: () => ({ selected: true, toggled: true }),
+        rule,
+      });
+      add(actions, "disabled", {
+        content: { kind: "text", label: "Disabled" },
+        getAction: () => ({
+          activate: () => {
+            throw new Error("Disabled button activated");
+          },
+        }),
+        getState: () => ({ availability: { kind: "disabled" } }),
+        rule,
+      });
+      bindHoldActions(
+        {
+          guard: { gate: createModalInputGate() },
+          resolve: (target) => {
+            const button = target instanceof Element ? target.closest("button") : null;
+            return button === null ? null : (views.get(button)?.holdAction() ?? null);
+          },
+        },
+        root,
+      );
     });
     const opener = page.locator("#opener");
     const cancel = page.locator("#cancel");
@@ -156,6 +228,23 @@ try {
     const highlight = await systemHighlight(page);
     await save(page, "shared-forced-colours");
     await page.emulateMedia({ forcedColors: "none" });
+
+    const iconButton = page.getByRole("button", { name: "Selected" });
+    const point = (await iconButton.boundingBox())!;
+    const x = point.x + point.width / 2;
+    const y = point.y + point.height / 2;
+    const root = page.locator("#root");
+    await page.touchscreen.tap(x, y);
+    assert.equal(await root.getAttribute("data-activations"), "1");
+    const touch = await page.context().newCDPSession(page);
+    await touch.send("Input.dispatchTouchEvent", { touchPoints: [{ x, y }], type: "touchStart" });
+    await page.waitForFunction(
+      () => document.querySelector("#root")?.getAttribute("data-activations") === "2",
+    );
+    await touch.send("Input.dispatchTouchEvent", { touchPoints: [], type: "touchEnd" });
+    await nextPaint(page);
+    assert.equal(await root.getAttribute("data-activations"), "2");
+    await page.keyboard.press("ArrowRight");
 
     await page.evaluate(async () => {
       const path = "/src/web/crash/dom/crashScreen.ts";
@@ -198,34 +287,161 @@ try {
     await save(page, "crash-forced-colours");
     await page.emulateMedia({ forcedColors: "none" });
 
-    await page.goto(`${origin}emergency`);
-    await page.evaluate(async () => {
-      const path = "/src/web/progress/dom/loadingFailure.ts";
-      const { mountLoadingFailure } = (await import(
-        path
-      )) as typeof import("../../src/web/progress/dom/loadingFailure.ts");
-      const parent = document.querySelector("main")!;
-      const view = mountLoadingFailure(
-        {
-          onRetry: () => {
-            parent.dataset.retried = "yes";
+    const mountRetry = (unsupported = false) =>
+      page.evaluate(async (unsupported) => {
+        const path = "/src/web/progress/dom/loadingFailure.ts";
+        const { mountLoadingFailure } = (await import(
+          path
+        )) as typeof import("../../src/web/progress/dom/loadingFailure.ts");
+        const parent = document.querySelector("main")!;
+        const supports = CSS.supports.bind(CSS);
+        if (unsupported) {
+          CSS.supports = (condition) =>
+            condition === "selector(:focus-visible)" ? false : supports(condition);
+        }
+        const view = mountLoadingFailure(
+          {
+            onRetry: () => {
+              parent.dataset.retried = "yes";
+            },
+            ...(unsupported
+              ? {}
+              : {
+                  presentation: {
+                    action: {
+                      borderWidthPx: 3,
+                      heightPx: 48,
+                      highlightHeightPx: 1,
+                      paddingBottomPx: 4,
+                      paddingXPx: 12,
+                      shadeHeightPx: 4,
+                      widthPx: 128,
+                    },
+                    palette: {
+                      action: "#54442c",
+                      actionText: "#f1dba7",
+                      border: "#211b14",
+                      highlight: "#75603c",
+                      lip: "#35291a",
+                      panel: "#3e352b",
+                      shade: "#35291a",
+                      shadow: "#211b14",
+                      text: "#f1dba7",
+                    },
+                    panel: {
+                      bodyActionGapPx: 20,
+                      borderWidthPx: 2,
+                      lipHeightPx: 4,
+                      maxWidthPx: 328,
+                      paddingBottomPx: 16,
+                      paddingTopPx: 24,
+                      paddingXPx: 16,
+                      safeInsetPx: 12,
+                      shadowOffsetPx: 4,
+                      titleBodyGapPx: 12,
+                    },
+                    text: {
+                      action: { lineHeight: 1.25, sizePx: 16, weight: 700 },
+                      body: { lineHeight: 1.4, sizePx: 16, weight: 400 },
+                      title: { lineHeight: 1.25, sizePx: 20, weight: 700 },
+                    },
+                  },
+                }),
           },
-        },
-        parent,
-      );
-      view.update({ attempt: 1, error: new Error("Fixture failure"), kind: "failed" });
-    });
+          parent,
+        );
+        CSS.supports = supports;
+        view.update({ attempt: 1, error: new Error("Fixture failure"), kind: "failed" });
+        const modalPath = "/src/web/ui/dom/modalLayer.ts";
+        const { createModalLayer } = (await import(
+          modalPath
+        )) as typeof import("../../src/web/ui/dom/modalLayer.ts");
+        const modal = createModalLayer(parent);
+        const retry = view.element.querySelector("button")!;
+        const reset = retry.style.cssText;
+        parent.addEventListener("fixture-open", () => {
+          const dialog = document.createElement("section");
+          parent.append(dialog);
+          const close = modal.open(
+            {
+              close: () => {
+                close();
+                dialog.remove();
+              },
+              isolation: "dialog",
+            },
+            dialog,
+          );
+        });
+        parent.addEventListener("fixture-dispose", () => {
+          view.dispose();
+          modal.dispose();
+          parent.dataset.cleaned = JSON.stringify({
+            connected: retry.isConnected,
+            reset: retry.style.cssText === reset,
+          });
+        });
+      }, unsupported);
+    await page.goto(`${origin}emergency`);
+    await mountRetry();
     const retry = page.getByRole("button", { name: "Retry" });
-    await page.keyboard.press("Tab");
+    const box = (await retry.boundingBox())!;
+    const pressRetry = async () => {
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(500, 400);
+      await page.mouse.up();
+      await nextPaint(page);
+    };
+    await pressRetry();
+    const retryPointer = await control(retry);
+    assert(
+      retryPointer.focus && !retryPointer.focusVisible && retryPointer.outline.style === "none",
+    );
+    await save(page, "emergency-pointer");
+    await page.keyboard.press("ArrowRight");
+    await nextPaint(page);
     const fallback = await control(retry);
     await save(page, "emergency-keyboard");
+    await pressRetry();
+    const retryStablePointer = await control(retry);
+    assert(retryStablePointer.focus);
+    assert.equal(
+      retryStablePointer.outline.style,
+      retryStablePointer.focusVisible ? "double" : "none",
+    );
+    await page.locator("main").dispatchEvent("fixture-open");
+    await page.keyboard.press("Escape");
+    await nextPaint(page);
+    const retryReturn = await control(retry);
+    assert(retryReturn.focus && retryReturn.focusVisible && retryReturn.outline.style === "double");
     await page.emulateMedia({ forcedColors: "active" });
+    await nextPaint(page);
     const forcedFallback = await control(retry);
     await save(page, "emergency-forced-colours");
     await page.keyboard.press("Enter");
     assert.equal(await page.locator("main").getAttribute("data-retried"), "yes");
     await page.locator("main").evaluate((element) => element.removeAttribute("data-retried"));
     await retry.click();
+    assert.equal(await page.locator("main").getAttribute("data-retried"), "yes");
+    await page.keyboard.press("ArrowRight");
+    await retry.focus();
+    await nextPaint(page);
+    assert.equal((await control(retry)).outline.style, "solid");
+    await page.locator("main").dispatchEvent("fixture-dispose");
+    await nextPaint(page);
+    assert.equal(
+      await page.locator("main").getAttribute("data-cleaned"),
+      '{"connected":false,"reset":true}',
+    );
+    await page.emulateMedia({ forcedColors: "none" });
+    await page.goto(`${origin}emergency`);
+    await mountRetry(true);
+    await page.keyboard.press("Tab");
+    const unsupported = await control(retry);
+    assert(unsupported.focus && unsupported.focusVisible && unsupported.outline.style === "auto");
+    await save(page, "emergency-native-fallback");
+    await page.keyboard.press("Enter");
     assert.equal(await page.locator("main").getAttribute("data-retried"), "yes");
 
     console.log(
@@ -243,10 +459,14 @@ try {
         crashButton,
         crashSummary,
         pointerSummary,
+        retryPointer,
+        retryStablePointer,
+        retryReturn,
         forcedCrashButton,
         forcedSummary,
         fallback,
         forcedFallback,
+        unsupported,
       }),
     );
     for (const entry of [fallback, forcedFallback]) {
@@ -257,6 +477,11 @@ try {
       assert.notEqual(entry.geometry[2], 1);
       assert.notEqual(entry.outline.style, "none");
     }
+    assert.equal(fallback.outline.style, "double");
+    assert.equal(fallback.outline.colour, "rgb(241, 219, 167)");
+    assert.deepEqual(fallback.geometry, retryPointer.geometry);
+    assert.equal(fallback.border, retryPointer.border);
+    assert.deepEqual(forcedFallback.outline, { colour: highlight, style: "solid", width: "2px" });
     for (const entry of [pointerCancel, pointerReturn, pointerSummary]) {
       assert(entry.focus && !entry.focusVisible);
       assert.equal(entry.outline.style, "none");

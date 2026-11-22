@@ -6,6 +6,7 @@
 // (web/ui/dom/focusModality), so the ring shows only after keyboard input.
 import type { HoldActionBinding } from "../../input/dom/holdActions.ts";
 import { focusTarget, trackInputModality } from "../../ui/dom/focusModality.ts";
+import { createNativeButton } from "../../ui/dom/nativeButton.ts";
 import {
   crashGate,
   type CrashReport,
@@ -66,8 +67,8 @@ function button(
   text: string,
   onClick: () => void,
 ): HTMLButtonElement {
-  const element = el(document, "button", "crash-button", text);
-  element.type = "button";
+  const element = createNativeButton(document, text);
+  element.className = "crash-button";
   element.addEventListener("click", onClick);
   actions.push({ activate: onClick, available: () => !element.disabled, element });
   return element;

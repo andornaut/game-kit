@@ -1,5 +1,7 @@
 import { LOADING_FAILURE_TEXT, type LoadingAttemptState } from "../../../load/loadingAttempts.ts";
 import type { HoldActionBinding } from "../../input/dom/holdActions.ts";
+import { createNativeButton } from "../../ui/dom/nativeButton.ts";
+import { paintRetryFocus } from "./retryFocus.ts";
 
 export interface LoadingFailureLayout {
   readonly actionAlign: "start" | "center" | "end";
@@ -268,9 +270,7 @@ export function mountLoadingFailure(
   title.textContent = LOADING_FAILURE_TEXT.title;
   const body = document.createElement("p");
   body.textContent = LOADING_FAILURE_TEXT.body;
-  const retry = document.createElement("button");
-  retry.type = "button";
-  retry.textContent = LOADING_FAILURE_TEXT.retry;
+  const retry = createNativeButton(document, LOADING_FAILURE_TEXT.retry);
   element.append(title, body, retry);
   for (const node of [element, title, body, retry]) {
     fallback(node);
@@ -469,6 +469,7 @@ export function mountLoadingFailure(
   retry.addEventListener("click", onClick);
   render();
   parent.append(element);
+  const stopFocus = paintRetryFocus(retry);
   const view: LoadingFailureView = {
     dispose() {
       disposed = true;
@@ -481,6 +482,7 @@ export function mountLoadingFailure(
       document.removeEventListener("focusin", onFocus);
       document.defaultView?.removeEventListener("blur", clearKeys);
       retry.removeEventListener("click", onClick);
+      stopFocus();
       element.remove();
       const stop = stopHold;
       stopHold = undefined;
