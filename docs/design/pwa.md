@@ -22,3 +22,4 @@ Reference: [Classic service-worker output](../../README.md#classic-service-worke
 | gk-0018 | Reuse verified identical JSON bodies                                        | [gk-0018.md](../work/gk-0018.md) |
 | gk-0019 | Bound asset-group requests by inactivity                                    | [gk-0019.md](../work/gk-0019.md) |
 | gk-0020 | Encode the precache manifest compactly                                      | [gk-0020.md](../work/gk-0020.md) |
+| gk-0028 | Diagnose installed game update discovery                                    | [gk-0028.md](../work/gk-0028.md) |
