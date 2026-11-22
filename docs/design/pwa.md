@@ -24,3 +24,4 @@ Reference: [Classic service-worker output](../../README.md#classic-service-worke
 | gk-0020 | Encode the precache manifest compactly                                      | [gk-0020.md](../work/gk-0020.md) |
 | gk-0028 | Diagnose installed game update discovery                                    | [gk-0028.md](../work/gk-0028.md) |
 | gk-0030 | Check for updates on return to Start                                        | [gk-0030.md](../work/gk-0030.md) |
+| gk-0032 | Recover from stale update offers and failed startup storage reads           | [gk-0032.md](../work/gk-0032.md) |
