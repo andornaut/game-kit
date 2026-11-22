@@ -87,7 +87,7 @@ Chibi and Archie use an ungrouped precache. Defects 1, 7 and 10 (group store and
 
 **Failure and recovery.** Records change atomically and only after verification; no "none" value exists. No `active`: navigation goes to the network. Evicted entries: the router fetches the matching hash as today and the next launch repairs under the loader. K3: first-install state (`onProgress`, `onFailure`) and background updates (`onUpdateState`: `staging`, `ready`, `failed`) are separate channels. An update failure is retried silently and never shows Loading failed or pauses play: while the page stays visible after 60 s, then twice the previous wait up to 15 minutes, cancelled on hide or dispose, and at the next launch or resume. Loading failed covers foreground install failures and failed startup storage reads. Retry rereads startup state before deciding whether to resume an install. A failed read does not establish that the active record is absent. A first install the device cannot complete, `unsupported` (the router cannot register) or `quota` (storage is full), shows no Loading failed: `run()` calls `onNetworkPlay({ reason })` once, resolves `play` and the game plays from the network under its own notice. With no `active` record, each later launch tries the install again, reusing stored entries.
 
-**Request count (decided, 0.61.0).** Kit packs plus Art sheets: the plugin concatenates small files into 1 to 2 MB packs with a JSON index, and the installer splits them into per-URL entries, verifying each member, so runtime URLs are unchanged. Updates fetch changed members singly when few, else changed packs. This complements Art's packing of about 8,323 SVG frames into about 150 sheets and covers the remaining small JSON and audio files.
+**Request count (decided, later minor).** Kit packs plus Art sheets: the plugin concatenates small files into 1 to 2 MB packs with a JSON index, and the installer splits them into per-URL entries, verifying each member, so runtime URLs are unchanged. Updates fetch changed members singly when few, else changed packs. This complements Art's packing of about 8,323 SVG frames into about 150 sheets and covers the remaining small JSON and audio files.
 
 **Asset groups (decided).** Removed in 0.59.0, with groupStore and the activation barrier. The complete build installs up front.
 
@@ -103,7 +103,7 @@ Chibi and Archie use an ungrouped precache. Defects 1, 7 and 10 (group store and
 | Remove `groups`, `createAssetGroups`, groupStore                                                                                                                                         | Yes                                                                                       | Drop galaxy groups                                                             | None                                                                          | None                                                     |
 | `runServiceWorker(policy)` with no manifest; plugin emits manifest and pointer                                                                                                           | Yes (worker entry, headers for `/.game-kit/`)                                             | All                                                                            | All                                                                           | All                                                      |
 | `registerRouter()` for site pages                                                                                                                                                        | No                                                                                        | `/` page                                                                       | `/` page                                                                      | `/` page                                                 |
-| Packs option (0.61.0)                                                                                                                                                                    | No                                                                                        | Adopt                                                                          | Adopt                                                                         | Adopt                                                    |
+| Packs option (later minor)                                                                                                                                                               | No                                                                                        | Adopt                                                                          | Adopt                                                                         | Adopt                                                    |
 | Boot loads every group behind the one loader once installed                                                                                                                              | No (game-side)                                                                            | Load all                                                                       | Load all (G2, decided)                                                        | Load all                                                 |
 
 ## 6. Rollout
@@ -111,8 +111,9 @@ Chibi and Archie use an ungrouped precache. Defects 1, 7 and 10 (group store and
 0. 0.58.1: the decided header hotfix (unblocks Ada fresh installs; 0.57.0 and 0.58.0 are already released).
 1. 0.58.2 (non-breaking): fix 9 (write the selection only after verification) and 10 (expire `activating` at its deadline). Decided. Stuck devices then recover on their next worker update.
 2. 0.59.0 (breaking): router, installer, launch loader, silent launch promotion, Update now, K3 split and full hashes. Consumer adoption branches for all three games.
-3. 0.61.0: packs, sized from Art's sheet measurement.
-4. A later release removes the legacy CLEANUP.
+3. 0.61.0: release the ready UI and ordinary update discovery APIs.
+4. A later minor adds packs, sized from Art's sheet measurement.
+5. A later release removes the legacy CLEANUP.
 
 ### Tests
 
@@ -141,7 +142,7 @@ DECIDED (user):
 - Driver: page installer with a router-only worker.
 - Defects 9 and 10: patch now as 0.58.2.
 - Asset groups: remove in 0.59.0.
-- Request batching: kit packs plus Art sheets, in 0.61.0.
+- Request batching: kit packs plus Art sheets, in a later minor after the measurements.
 - Update discovery: the page fetches `build.json`.
 - Update now presentation: game-rendered; the kit fires `onUpdateReady({version, updateNow(save), dismiss})`.
 - Archie G2: once installed, boot loads every group behind the one loader.

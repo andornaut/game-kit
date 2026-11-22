@@ -53,6 +53,12 @@ Shared runtime contracts have dedicated paths: `runtime/art/rgbaImage` provides 
 
 Every legacy API path remains available unchanged as a deprecated compatibility alias to the same implementation as its canonical replacement. This includes CSS and the type-only `buildInfo` declaration. Use canonical paths for new imports and migrate existing imports according to this mapping; aliases are not removed by this alignment. Internal helpers and private fixtures are not additional APIs. Older migration sections and the source inventory below retain legacy names under this compatibility policy. These package paths do not establish consumer adoption or game integration.
 
+## Update discovery and control options in 0.61.0
+
+- `Launch.requestUpdateCheck()` asks the existing ordinary discovery scheduler to check after the game's genuine return to Start. Explicit Update now still applies the offered build.
+- Standard buttons accept guarded pointer refusal without a keyboard tab stop or an announced reason.
+- The configured loading-safe Retry can fit its label with `action.widthPx: "content"`, retaining the caller's padding and height.
+
 ## Update activation and startup recovery in 0.60.1
 
 Update now revalidates the offered build after saving. If the offer was superseded, the returned promise rejects and the current active and staged builds are preserved. A failed startup storage read now reaches the existing Loading failed callback, whose Retry repeats the read before deciding whether to install. See the [install and update design](docs/install-and-update.md).
