@@ -9,7 +9,7 @@ import {
   type BuildPolicy,
   type InstalledManifest,
 } from "../buildContract.ts";
-import { verifiedJsonFamilies } from "../buildRecords.ts";
+import { packContentType, readBuildPacks, verifiedJsonFamilies } from "../buildRecords.ts";
 import { isHashedAssetUrl } from "../cachePolicy.ts";
 import type { VerifiedJsonBody } from "../verifiedJsonBody.ts";
 import type { BuildStore } from "./buildStore.ts";
@@ -89,6 +89,60 @@ const PAUSE_POLL_MS = 1000;
 
 // A fetched body that does not match the pinned manifest.
 class BodyChanged extends Error {}
+
+interface PackDownload {
+  readonly byteSize: number;
+  readonly decodedByteSize: number;
+  readonly members: readonly BuildFile[];
+  readonly needed: Set<BuildFile>;
+  readonly url: string;
+}
+
+function joinBytes(chunks: readonly Uint8Array[], size: number): Uint8Array<ArrayBuffer> {
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
+async function inflatePack(
+  signal: AbortSignal,
+  byteSize: number,
+  body: Uint8Array<ArrayBuffer>,
+): Promise<Uint8Array<ArrayBuffer>> {
+  signal.throwIfAborted();
+  const reader = new Blob([body]).stream().pipeThrough(new DecompressionStream("gzip")).getReader();
+  const cancel = () => void reader.cancel().catch(() => undefined);
+  signal.addEventListener("abort", cancel, { once: true });
+  let received = 0;
+  const chunks: Uint8Array[] = [];
+  try {
+    while (true) {
+      // Decompression output is consumed in order.
+      // eslint-disable-next-line no-await-in-loop
+      const chunk = await reader.read();
+      signal.throwIfAborted();
+      if (chunk.done) {
+        break;
+      }
+      received += chunk.value.byteLength;
+      if (received > byteSize) {
+        throw new BodyChanged("Gzip pack exceeds its decoded size");
+      }
+      chunks.push(chunk.value);
+    }
+    if (received !== byteSize) {
+      throw new BodyChanged("Gzip pack does not match its decoded size");
+    }
+    return joinBytes(chunks, received);
+  } finally {
+    signal.removeEventListener("abort", cancel);
+    cancel();
+  }
+}
 
 const digestHex = (digest: ArrayBuffer) =>
   [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -191,7 +245,35 @@ export async function installBuild(
       }
     }
 
-    const total = toFetch.reduce((sum, file) => sum + file.byteSize, 0);
+    const missing = new Set(toFetch);
+    const byUrl = new Map(manifest.files.map((file) => [file.url, file]));
+    const jobs: (BuildFile | PackDownload)[] = [];
+    const packs = typeof DecompressionStream === "function" ? readBuildPacks(manifest) : undefined;
+    for (const pack of packs ?? []) {
+      const members = pack.members.map((url) => byUrl.get(url)!);
+      const needed = members.filter((file) => missing.has(file));
+      const decodedByteSize = members.reduce((sum, file) => sum + file.byteSize, 0);
+      const neededBytes = needed.reduce((sum, file) => sum + file.byteSize, 0);
+      // A pack must save requests, with at least half its members and bytes still needed.
+      if (
+        needed.length >= 2 &&
+        needed.length >= members.length - needed.length &&
+        neededBytes >= decodedByteSize - neededBytes
+      ) {
+        jobs.push({
+          byteSize: pack.encodedByteSize,
+          decodedByteSize,
+          members,
+          needed: new Set(needed),
+          url: pack.url,
+        });
+        for (const file of needed) {
+          missing.delete(file);
+        }
+      }
+    }
+    jobs.push(...missing);
+    let total = jobs.reduce((sum, job) => sum + job.byteSize, 0);
     let received = 0;
     onBytes?.(received, total);
     const count = (bytes: number) => {
@@ -199,7 +281,17 @@ export async function installBuild(
       onBytes?.(received, total);
     };
 
-    const fetchOnce = async (file: BuildFile): Promise<void> => {
+    const fetchBody = async (
+      url: string,
+      byteSize: number,
+      family: VerifiedJsonBody | undefined,
+      cache: RequestCache,
+      consume: (
+        body: Uint8Array<ArrayBuffer>,
+        contentType: string | null,
+        signal: AbortSignal,
+      ) => Promise<void>,
+    ): Promise<void> => {
       const attempt = new AbortController();
       const end = () => attempt.abort(run.signal.reason);
       run.signal.addEventListener("abort", end, { once: true });
@@ -212,7 +304,7 @@ export async function installBuild(
         timer = schedule(() => {
           const idle = now() - last;
           if (idle >= inactivityMs) {
-            attempt.abort(new Error(`No progress within ${inactivityMs} ms for ${file.url}`));
+            attempt.abort(new Error(`No progress within ${inactivityMs} ms for ${url}`));
           } else {
             arm(inactivityMs - idle);
           }
@@ -230,15 +322,8 @@ export async function installBuild(
       let partial = 0;
       let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
       try {
-        const family = families.get(file.url);
-        // A hashed build file never changes under its URL, so the HTTP cache, or the router serving
-        // the same URL from a stored build, may answer it, and the digest check still applies.
-        // Every other URL is fetched past both, and verified JSON also, so its source checks see a
-        // network response.
-        const cache: RequestCache =
-          family === undefined && isHashedAssetUrl(policy, file.url) ? "default" : "no-store";
         const response = await Promise.race([
-          fetch(file.url, {
+          fetch(url, {
             cache,
             credentials: family === undefined ? "same-origin" : "omit",
             priority,
@@ -251,16 +336,16 @@ export async function installBuild(
         // A deploy removes the previous build's hashed files, so a pinned file that is gone means
         // the build changed.
         if (response.status === 404 || response.status === 410) {
-          throw new BodyChanged(`HTTP ${response.status} for ${file.url}`);
+          throw new BodyChanged(`HTTP ${response.status} for ${url}`);
         }
         if (response.status !== 200) {
-          throw new Error(`HTTP ${response.status} for ${file.url}`);
+          throw new Error(`HTTP ${response.status} for ${url}`);
         }
-        if (family !== undefined && !safeJsonSource(origin, family, file.url, response)) {
+        if (family !== undefined && !safeJsonSource(origin, family, url, response)) {
           throw new BuildInstallError(
             "verification",
-            `Unsafe verified JSON response semantics for ${file.url}`,
-            file.url,
+            `Unsafe verified JSON response semantics for ${url}`,
+            url,
           );
         }
         const streaming = response.body?.getReader();
@@ -276,33 +361,20 @@ export async function installBuild(
             }
             touch();
             partial += chunk.value.byteLength;
-            count(chunk.value.byteLength);
-            if (partial > file.byteSize) {
-              throw new BodyChanged(`Body of ${file.url} exceeds its manifest size`);
+            if (partial > byteSize) {
+              partial -= chunk.value.byteLength;
+              throw new BodyChanged(`Body of ${url} exceeds its manifest size`);
             }
+            count(chunk.value.byteLength);
             chunks.push(chunk.value);
           }
         }
-        if (partial !== file.byteSize) {
-          throw new BodyChanged(`Body of ${file.url} does not match its manifest size`);
+        if (partial !== byteSize) {
+          throw new BodyChanged(`Body of ${url} does not match its manifest size`);
         }
-        const body = new Uint8Array(partial);
-        let offset = 0;
-        for (const chunk of chunks) {
-          body.set(chunk, offset);
-          offset += chunk.byteLength;
-        }
-        const digest = digestHex(await crypto.subtle.digest("SHA-256", body));
-        if (digest !== file.sha256) {
-          throw new BodyChanged(`Body of ${file.url} does not match its manifest digest`);
-        }
-        const contentType = response.headers.get("content-type");
-        const headers: Record<string, string> = { [BUILD_HASH_HEADER]: file.sha256 };
-        if (contentType !== null) {
-          headers["content-type"] = contentType;
-        }
+        const body = joinBytes(chunks, partial);
         await Promise.race([
-          store.putFile(manifest.version, file.url, new Response(body, { headers })),
+          consume(body, response.headers.get("content-type"), attempt.signal),
           aborted,
         ]);
         partial = 0;
@@ -321,6 +393,71 @@ export async function installBuild(
       }
     };
 
+    const verify = async (file: BuildFile, body: Uint8Array<ArrayBuffer>) => {
+      const digest = digestHex(await crypto.subtle.digest("SHA-256", body));
+      if (body.byteLength !== file.byteSize || digest !== file.sha256) {
+        throw new BodyChanged(`Body of ${file.url} does not match its manifest size or digest`);
+      }
+    };
+    const storeVerified = async (
+      file: BuildFile,
+      body: Uint8Array<ArrayBuffer>,
+      contentType: string | null,
+    ) => {
+      const headers = new Headers({ [BUILD_HASH_HEADER]: file.sha256 });
+      if (contentType !== null) {
+        headers.set("content-type", contentType);
+      }
+      await store.putFile(manifest.version, file.url, new Response(body, { headers }));
+    };
+
+    const waitWhileHidden = async () => {
+      while (paused?.() === true) {
+        // eslint-disable-next-line no-await-in-loop
+        await delay(PAUSE_POLL_MS);
+      }
+      run.signal.throwIfAborted();
+    };
+
+    const fetchPack = async (job: PackDownload) => {
+      await waitWhileHidden();
+      try {
+        await fetchBody(
+          job.url,
+          job.byteSize,
+          undefined,
+          "no-store",
+          async (body, _type, signal) => {
+            const decoded = await inflatePack(signal, job.decodedByteSize, body);
+            let offset = 0;
+            for (const file of job.members) {
+              const member = decoded.subarray(offset, offset + file.byteSize);
+              offset += file.byteSize;
+              // Each member is validated before storing under its original URL.
+              // eslint-disable-next-line no-await-in-loop
+              await verify(file, member);
+              signal.throwIfAborted();
+              if (job.needed.has(file)) {
+                // eslint-disable-next-line no-await-in-loop
+                await storeVerified(file, member, packContentType(file.url)!);
+                job.needed.delete(file);
+              }
+            }
+          },
+        );
+      } catch (error) {
+        run.signal.throwIfAborted();
+        if (isQuotaError(error)) {
+          throw new BuildInstallError("quota", "Storage is full", job.url, error);
+        }
+        // A missing or invalid pack falls back to the same pinned individual files.
+        const remaining = [...job.needed];
+        jobs.push(...remaining);
+        total += remaining.reduce((sum, file) => sum + file.byteSize, 0) - job.byteSize;
+        onBytes?.(received, total);
+      }
+    };
+
     // Resolves true when the body changed. Throws a BuildInstallError once attempts run out.
     const fetchFile = async (file: BuildFile): Promise<boolean> => {
       let failure: BuildInstallError | undefined;
@@ -331,13 +468,19 @@ export async function installBuild(
           // eslint-disable-next-line no-await-in-loop
           await delay(wait);
         }
-        while (paused?.() === true) {
-          // eslint-disable-next-line no-await-in-loop
-          await delay(PAUSE_POLL_MS);
-        }
+        // eslint-disable-next-line no-await-in-loop
+        await waitWhileHidden();
         try {
+          const family = families.get(file.url);
+          // Only hashed files without response-profile checks can use the HTTP cache or router.
+          const cache =
+            family === undefined && isHashedAssetUrl(policy, file.url) ? "default" : "no-store";
           // eslint-disable-next-line no-await-in-loop
-          await fetchOnce(file);
+          await fetchBody(file.url, file.byteSize, family, cache, async (body, type, signal) => {
+            await verify(file, body);
+            signal.throwIfAborted();
+            await storeVerified(file, body, type);
+          });
           return false;
         } catch (error) {
           run.signal.throwIfAborted();
@@ -365,13 +508,16 @@ export async function installBuild(
     let failure: unknown;
     let next = 0;
     const lane = async () => {
-      while (next < toFetch.length && !run.signal.aborted) {
-        const file = toFetch[next] as BuildFile;
+      while (next < jobs.length && !run.signal.aborted) {
+        const job = jobs[next]!;
         next += 1;
         try {
-          // Each lane takes the next file once its last one is done.
-          // eslint-disable-next-line no-await-in-loop
-          if (await fetchFile(file)) {
+          // Each lane takes the next job once its last one is done.
+          if ("members" in job) {
+            // eslint-disable-next-line no-await-in-loop
+            await fetchPack(job);
+            // eslint-disable-next-line no-await-in-loop
+          } else if (await fetchFile(job)) {
             changed = true;
             run.abort(new BodyChanged("Body changed"));
           }
@@ -383,7 +529,7 @@ export async function installBuild(
         }
       }
     };
-    await Promise.all(Array.from({ length: Math.min(lanes, toFetch.length) }, lane));
+    await Promise.all(Array.from({ length: Math.min(lanes, jobs.length) }, lane));
     signal?.throwIfAborted();
     if (failure !== undefined) {
       throw failure;

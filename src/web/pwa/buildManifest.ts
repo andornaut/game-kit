@@ -10,6 +10,7 @@ import {
   type BuildPointer,
 } from "./buildContract.ts";
 import { isBuildId } from "./buildIdentity.ts";
+import { validateBuildPacks } from "./buildRecords.ts";
 import { validateVerifiedJsonBodies, type VerifiedJsonBody } from "./verifiedJsonBody.ts";
 
 // The buildId of a build without a clean, known source commit, such as a development build.
@@ -22,7 +23,7 @@ const RESERVED_PREFIX = "/.game-kit/";
 
 const POINTER_KEYS = ["buildId", "manifest", "schema", "version"];
 const MANIFEST_KEYS = ["boot", "buildId", "files", "schema", "sounds", "version"];
-const OPTIONAL_MANIFEST_KEYS = ["verifiedJsonBodies"];
+const OPTIONAL_MANIFEST_KEYS = ["packs", "verifiedJsonBodies"];
 const FILE_KEYS = ["byteSize", "sha256", "url"];
 const FAMILY_KEYS = ["byteSize", "sha256", "urls"];
 
@@ -207,6 +208,9 @@ export function validateBuildManifest(value: unknown): BuildManifest {
     schema: schema(input, "Build manifest"),
     sounds: Object.freeze(sounds),
     version: version(input.version),
+    ...(input.packs === undefined
+      ? {}
+      : { packs: validateBuildPacks(files, verifiedJsonBodies, input.packs) }),
     ...(verifiedJsonBodies === undefined ? {} : { verifiedJsonBodies }),
   });
 }
@@ -228,6 +232,7 @@ export function createBuildManifest(input: Omit<BuildManifest, "schema">): Build
         .map((logical) => [logical, input.sounds[logical]]),
     ),
     version: input.version,
+    ...(input.packs === undefined ? {} : { packs: input.packs }),
     ...(input.verifiedJsonBodies === undefined
       ? {}
       : { verifiedJsonBodies: input.verifiedJsonBodies }),

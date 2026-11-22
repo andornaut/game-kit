@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Script } from "node:vm";
+import { gunzipSync } from "node:zlib";
 
 import { build, type Plugin } from "vite";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -18,6 +19,7 @@ import {
   type BuildPointer,
 } from "../buildContract.ts";
 import { UNKNOWN_BUILD_ID, validateBuildManifest, validateBuildPointer } from "../buildManifest.ts";
+import { installedManifest } from "../buildRecords.ts";
 import type { CachePolicy } from "../cachePolicy.ts";
 import { assertClassicWorker } from "./classicWorker.ts";
 import { precachePlugin, type PrecachePluginOptions } from "./precachePlugin.ts";
@@ -81,6 +83,7 @@ function site(icon: string): string {
 
 interface Build {
   readonly boot?: PrecachePluginOptions["boot"];
+  readonly packs?: PrecachePluginOptions["packs"];
   readonly buildId?: string | undefined;
   readonly verifiedJsonBodies?: PrecachePluginOptions["verifiedJsonBodies"];
   readonly lateEmitted?: Readonly<Record<string, string>>;
@@ -124,6 +127,7 @@ async function precache({
   hashedFiles,
   lateEmitted = {},
   missing,
+  packs,
   root = site("icon"),
   unreadable,
   verifiedJsonBodies,
@@ -149,6 +153,7 @@ async function precache({
         buildId,
         ...(hashedFiles === undefined ? {} : { hashedFiles }),
         pageHtmlFile: "index.html",
+        ...(packs === undefined ? {} : { packs }),
         policy: POLICY,
         serviceWorkerSource: join(root, "sw.js"),
         ...(verifiedJsonBodies === undefined ? {} : { verifiedJsonBodies }),
@@ -204,6 +209,75 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
       "/manifest.webmanifest",
     ]);
     expect(manifest).not.toHaveProperty("verifiedJsonBodies");
+  });
+
+  it("emits deterministic bounded packs while keeping individual files and sound formats", async () => {
+    const emitted = {
+      "art/a.svg": "<svg>a".repeat(42),
+      "art/family-a.json": '{"a":1}',
+      "art/family-b.json": '{"a":1}',
+      "art/one.m4a": "m4a1".repeat(48),
+      "art/one.ogg": "ogg1".repeat(48),
+      "art/two.m4a": "m4a2".repeat(48),
+      "art/two.ogg": "ogg2".repeat(48),
+      "art/z.svg": "<svg>z".repeat(42),
+    };
+    const root = site("icon");
+    const options: Build = {
+      hashedFiles: () => ({
+        sounds: {
+          "/one": ["/art/one.ogg", "/art/one.m4a"],
+          "/two": ["/art/two.ogg", "/art/two.m4a"],
+        },
+        urls: ["/art/z.svg", "/art/a.svg", "/art/family-a.json", "/art/family-b.json"],
+      }),
+      root,
+      verifiedJsonBodies: () => [["/art/family-a.json", "/art/family-b.json"]],
+    };
+    const packed = await precache({ ...options, emitted, packs: { maxBytes: 504 } });
+    const reordered = await precache({
+      ...options,
+      emitted: Object.fromEntries(Object.entries(emitted).reverse()),
+      packs: { maxBytes: 504 },
+    });
+    const plain = await precache({ ...options, emitted });
+    const wider = await precache({ ...options, emitted, packs: { maxBytes: 1024 } });
+    expect(packed.manifest).toEqual(reordered.manifest);
+    expect(packed.manifest.files).toEqual(plain.manifest.files);
+    expect(plain.manifest).not.toHaveProperty("packs");
+    expect(packed.pointer.version).not.toBe(plain.pointer.version);
+    expect(packed.pointer.version).not.toBe(wider.pointer.version);
+    const sizes = fileMap(packed.manifest);
+    const packs = packed.manifest.packs!;
+    expect(packs.map((pack) => pack.members)).toContainEqual(["/art/a.svg", "/art/z.svg"]);
+    expect(packs.map((pack) => pack.members)).toContainEqual(["/art/one.ogg", "/art/two.ogg"]);
+    expect(packs.map((pack) => pack.members)).toContainEqual(["/art/one.m4a", "/art/two.m4a"]);
+    for (const { encodedByteSize, encoding, members, url } of packs) {
+      const pack = packed.output.get(url.slice(1))!;
+      const decoded = gunzipSync(pack);
+      expect(sizes.has(url)).toBe(false);
+      expect(encoding).toBe("gzip");
+      expect(encodedByteSize).toBe(pack.byteLength);
+      expect([...pack.subarray(4, 8)]).toEqual([0, 0, 0, 0]);
+      expect(pack[9]).toBe(255);
+      expect(pack.byteLength).toBeLessThan(decoded.byteLength);
+      expect(decoded.byteLength).toBeLessThanOrEqual(504);
+      expect(decoded.byteLength).toBe(
+        members.reduce((sum, member) => sum + sizes.get(member)!.byteSize, 0),
+      );
+      expect(members).toEqual([...members].sort());
+      expect(members).not.toContain("/art/family-a.json");
+      expect(members).not.toContain("/art/family-b.json");
+      expect(pack).toEqual(reordered.output.get(url.slice(1)));
+    }
+    const art = packs.find((pack) => pack.members.includes("/art/a.svg"))!;
+    expect(gunzipSync(packed.output.get(art.url.slice(1))!).toString()).toBe(
+      emitted["art/a.svg"] + emitted["art/z.svg"],
+    );
+    expect(Buffer.from(packed.output.get("art/a.svg")!).toString()).toBe(emitted["art/a.svg"]);
+    expect(
+      installedManifest("ogg", packed.manifest).packs?.flatMap(({ members }) => members),
+    ).not.toContain("/art/one.m4a");
   });
 
   it("records the full SHA-256 and exact size of every file, hashed build output included", async () => {

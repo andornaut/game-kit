@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -71,7 +72,7 @@ class FakeCaches {
 const sha256 = (body: string) => createHash("sha256").update(body).digest("hex");
 
 interface Served {
-  body: string;
+  body: string | Uint8Array<ArrayBuffer>;
   headers?: Record<string, string>;
   status?: number;
 }
@@ -196,7 +197,7 @@ function buildOf(version: string, bodies: Record<string, string>): BuildManifest
 }
 
 function setup(
-  bodies: Record<string, string>,
+  bodies: Record<string, Served["body"]>,
   storage?: { quota: number; usage: number },
   headers?: Record<string, Record<string, string>>,
 ) {
@@ -237,8 +238,219 @@ function setup(
 }
 
 const files = { "/a.js": "alpha", "/b.js": "bravo", "/c.png": "charlie", "/d.js": "delta" };
+const packUrl = `/.game-kit/pack-${"a".repeat(64)}.bin`;
+const nextPackUrl = `/.game-kit/pack-${"b".repeat(64)}.bin`;
+const packFiles = {
+  "/a.svg": "α".repeat(80),
+  "/b.json": "{}".repeat(80),
+  "/c.ogg": "og".repeat(80),
+};
+const gzipFiles = { "/a.svg": "α".repeat(80), "/b.json": "{}".repeat(80) };
+const gzipDecoded = Object.values(gzipFiles).join("");
+const gzip = (body: string) => Uint8Array.from(gzipSync(body, { level: 9 }));
+const packBody = gzip(Object.values(packFiles).join(""));
+const packed = packedBuild("packed", packFiles, packUrl, packBody);
+const envelope = gzip(gzipDecoded);
+const gzipManifest = (encodedByteSize = envelope.byteLength): BuildManifest => ({
+  ...buildOf("gzip", gzipFiles),
+  packs: [{ encodedByteSize, encoding: "gzip", members: Object.keys(gzipFiles), url: packUrl }],
+});
+
+function packedBuild(
+  version: string,
+  bodies: Record<string, string>,
+  url: string,
+  body: Uint8Array,
+): BuildManifest {
+  return {
+    ...buildOf(version, bodies),
+    packs: [
+      { encodedByteSize: body.byteLength, encoding: "gzip", members: Object.keys(bodies), url },
+    ],
+  };
+}
 
 describe("installBuild", () => {
+  it("decodes a gzip envelope served without HTTP compression and reports encoded progress", async () => {
+    const { caches, install, server, store } = setup({ ...gzipFiles, [packUrl]: envelope });
+    const manifest = gzipManifest();
+    const progress = vi.fn();
+    await expect(install({ manifest, onBytes: progress })).resolves.toBe("complete");
+    expect(server.fetched()).toEqual([packUrl]);
+    expect(progress).toHaveBeenLastCalledWith(envelope.byteLength, envelope.byteLength);
+    const cache = await caches.open(buildCacheName(policy, manifest.version));
+    expect(await (await cache.match("/a.svg"))?.text()).toBe(gzipFiles["/a.svg"]);
+    expect(await store.complete(manifest)).toBe(true);
+  });
+
+  it.each([
+    ["encoded length", envelope, envelope.byteLength - 1],
+    ["expanded length", gzip(gzipDecoded + "x".repeat(150)), undefined],
+    ["short decoded body", gzip(gzipDecoded.slice(0, -1)), undefined],
+    ["invalid gzip", new Uint8Array(envelope.byteLength), undefined],
+  ] as const)("falls back when the gzip pack has %s", async (_case, body, advertisedSize) => {
+    const { install, server, store } = setup({ ...gzipFiles, [packUrl]: body });
+    const manifest = gzipManifest(advertisedSize ?? body.byteLength);
+    await expect(install({ lanes: 1, manifest })).resolves.toBe("complete");
+    expect(server.fetched()).toEqual([packUrl, ...Object.keys(gzipFiles)]);
+    expect(await store.complete(manifest)).toBe(true);
+  });
+
+  it("uses individual URLs when gzip decoding is unavailable", async () => {
+    const { install, server } = setup({ ...gzipFiles, [packUrl]: envelope });
+    vi.stubGlobal("DecompressionStream", undefined);
+    try {
+      await expect(install({ manifest: gzipManifest() })).resolves.toBe("complete");
+      expect(server.fetched().sort()).toEqual(Object.keys(gzipFiles));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("downloads one pack and stores each verified member under its normal URL and media type", async () => {
+    const { caches, install, server, store } = setup({ [packUrl]: packBody, ...packFiles });
+    const progress = vi.fn();
+    await expect(install({ manifest: packed, onBytes: progress })).resolves.toBe("complete");
+    expect(server.fetched()).toEqual([packUrl]);
+    expect(server.calls[0]?.init.cache).toBe("no-store");
+    expect(progress).toHaveBeenLastCalledWith(packBody.byteLength, packBody.byteLength);
+    const cache = await caches.open(buildCacheName(policy, packed.version));
+    expect([...cache.entries.keys()]).toEqual(Object.keys(packFiles));
+    expect(await store.complete(packed)).toBe(true);
+    const svg = await cache.match("/a.svg");
+    expect(await svg?.text()).toBe(packFiles["/a.svg"]);
+    expect(svg?.headers.get("content-type")).toBe("image/svg+xml");
+    expect(svg?.headers.get(BUILD_HASH_HEADER)).toBe(sha256(packFiles["/a.svg"]));
+    expect((await cache.match("/b.json"))?.headers.get("content-type")).toBe("application/json");
+    expect((await cache.match("/c.ogg"))?.headers.get("content-type")).toBe("audio/ogg");
+  });
+
+  it.each([
+    ["sparse", { ...packFiles, "/b.json": "[]".repeat(80) }, ["/b.json"]],
+    [
+      "dense",
+      { ...packFiles, "/b.json": "[]".repeat(80), "/c.ogg": "xx".repeat(80) },
+      [nextPackUrl],
+    ],
+  ] as const)("uses the appropriate transport after %s reuse", async (label, update, requests) => {
+    const { install, server, store } = setup({ [packUrl]: packBody, ...packFiles });
+    await expect(install({ manifest: packed })).resolves.toBe("complete");
+    server.calls.length = 0;
+    server.files.set("/b.json", { body: update["/b.json"] });
+    server.files.set("/c.ogg", { body: update["/c.ogg"] });
+    const body = gzip(Object.values(update).join(""));
+    server.files.set(nextPackUrl, { body });
+    const next = packedBuild("next", update, nextPackUrl, body);
+    const bytes = label === "dense" ? body.byteLength : Buffer.byteLength(update["/b.json"]);
+    const progress = vi.fn();
+    await expect(
+      install({ ...BACKGROUND_INSTALL, manifest: next, onBytes: progress }),
+    ).resolves.toBe("complete");
+    expect(server.fetched()).toEqual(requests);
+    expect(progress).toHaveBeenLastCalledWith(bytes, bytes);
+    expect(await store.complete(next)).toBe(true);
+  });
+
+  it("keeps the verified prefix of a corrupt pack and fetches the outstanding individual members", async () => {
+    const corrupt = gzip(packFiles["/a.svg"] + "[]".repeat(80) + packFiles["/c.ogg"]);
+    const manifest = packedBuild(packed.version, packFiles, packUrl, corrupt);
+    const { caches, install, server } = setup({ [packUrl]: corrupt, ...packFiles });
+    const progress = vi.fn();
+    await expect(install({ lanes: 1, manifest, onBytes: progress })).resolves.toBe("complete");
+    expect(server.fetched()).toEqual([packUrl, "/b.json", "/c.ogg"]);
+    expect(progress).toHaveBeenLastCalledWith(320, 320);
+    const cache = await caches.open(buildCacheName(policy, packed.version));
+    expect(await (await cache.match("/b.json"))?.text()).toBe(packFiles["/b.json"]);
+  });
+
+  it("fetches individual files when most pack members are reusable even if they are small", async () => {
+    const previous = {
+      "/a.svg": "a".repeat(100),
+      "/b.svg": "b".repeat(100),
+      "/c.svg": "c",
+      "/d.svg": "d",
+      "/e.svg": "e",
+    };
+    const update = { ...previous, "/a.svg": "x".repeat(100), "/b.svg": "y".repeat(100) };
+    const { install, server } = setup(previous);
+    await expect(install({ manifest: buildOf("old", previous) })).resolves.toBe("complete");
+    server.calls.length = 0;
+    server.files.set("/a.svg", { body: update["/a.svg"] });
+    server.files.set("/b.svg", { body: update["/b.svg"] });
+    const body = gzip(Object.values(update).join(""));
+    server.files.set(packUrl, { body });
+    const manifest = packedBuild("new", update, packUrl, body);
+    await expect(install({ manifest })).resolves.toBe("complete");
+    expect(server.fetched()).toEqual(["/a.svg", "/b.svg"]);
+  });
+
+  it("installs added pack members and keeps removed files only in the old pinned build", async () => {
+    const previous = { "/a.svg": packFiles["/a.svg"], "/removed.svg": "old" };
+    const update = {
+      "/a.svg": previous["/a.svg"],
+      "/new-a.svg": "new-a".repeat(50),
+      "/new-b.svg": "new-b".repeat(50),
+    };
+    const { caches, install, server, store } = setup({ ...previous, ...update });
+    const old = buildOf("old", previous);
+    await expect(install({ manifest: old })).resolves.toBe("complete");
+    await store.setActive(old.version);
+    await store.writePin("old-client", old.version);
+    server.calls.length = 0;
+    const body = gzip(Object.values(update).join(""));
+    server.files.set(nextPackUrl, { body });
+    const next = packedBuild("new", update, nextPackUrl, body);
+    await expect(install({ ...BACKGROUND_INSTALL, manifest: next })).resolves.toBe("complete");
+    expect(server.fetched()).toEqual([nextPackUrl]);
+    const target = await caches.open(buildCacheName(policy, next.version));
+    expect([...target.entries.keys()]).toEqual(Object.keys(update));
+    const original = await caches.open(buildCacheName(policy, old.version));
+    expect(await (await original.match("/removed.svg"))?.text()).toBe("old");
+    expect(await store.readPin("old-client")).toBe(old.version);
+    expect(await store.readState()).toEqual({ active: old.version });
+  });
+
+  it("falls back from a missing pack and detects a missing pinned individual file", async () => {
+    const { install, server, store } = setup({
+      "/a.svg": packFiles["/a.svg"],
+      "/c.ogg": packFiles["/c.ogg"],
+    });
+    await expect(install({ lanes: 1, manifest: packed })).resolves.toBe("changed");
+    expect(server.fetched()).toEqual([packUrl, "/a.svg", "/b.json"]);
+    expect(await store.complete(packed)).toBe(false);
+  });
+
+  it("uses individual URLs when a pack body is truncated", async () => {
+    const { install, server } = setup({
+      [packUrl]: packBody.subarray(0, packBody.byteLength - 1),
+      ...packFiles,
+    });
+    await expect(install({ lanes: 1, manifest: packed })).resolves.toBe("complete");
+    expect(server.fetched()).toEqual([packUrl, ...Object.keys(packFiles)]);
+  });
+
+  it("aborts a pack without individual fallback and resumes from previously verified members", async () => {
+    const { caches, install, server } = setup({ [packUrl]: packBody, ...packFiles });
+    const cache = await caches.open(buildCacheName(policy, packed.version));
+    const controller = new AbortController();
+    const stop = new Error("Page closed");
+    const put = cache.put.bind(cache);
+    vi.spyOn(cache, "put").mockImplementationOnce(async (key, response) => {
+      await put(key, response);
+      controller.abort(stop);
+    });
+    await expect(install({ manifest: packed, signal: controller.signal })).rejects.toBe(stop);
+    expect(server.fetched()).toEqual([packUrl]);
+    expect([...cache.entries.keys()]).toEqual(["/a.svg"]);
+    server.calls.length = 0;
+    await expect(install({ manifest: packed })).resolves.toBe("complete");
+    expect(server.fetched()).toEqual([packUrl]);
+    expect([...cache.entries.keys()]).toEqual(Object.keys(packFiles));
+    expect((await cache.match("/a.svg"))?.headers.get(BUILD_HASH_HEADER)).toBe(
+      sha256(packFiles["/a.svg"]),
+    );
+  });
+
   it("fetches, verifies and stores every file with its digest header and content type", async () => {
     const { caches, install, persist, server, store } = setup(files, undefined, {
       "/c.png": { "content-type": "image/png", "server-timing": "edge" },
@@ -443,6 +655,20 @@ describe("verified JSON bodies", () => {
     ],
   });
   const base = { "content-type": "application/json; charset=utf-8" };
+
+  it("keeps response-profile checks even when a pack index names a verified family", async () => {
+    const { install, server } = setup({ ...bodies, [packUrl]: json + json }, undefined, {
+      "/one.json": base,
+      "/two.json": base,
+    });
+    const manifest: BuildManifest = {
+      ...manifestWith(),
+      packs: [{ encodedByteSize: 1, encoding: "gzip", members: Object.keys(bodies), url: packUrl }],
+    };
+    await expect(install({ manifest })).resolves.toBe("complete");
+    expect(server.fetched().sort()).toEqual(Object.keys(bodies));
+    expect(server.calls.every((call) => call.init.credentials === "omit")).toBe(true);
+  });
 
   it("ignores unknown and HTTP/1.1 transport headers and fetches without credentials", async () => {
     const extra = {

@@ -27,6 +27,14 @@ export interface BuildFile {
   readonly byteSize: number;
 }
 
+// Install transport only. Decoded bytes concatenate the files in order, with boundaries from files.
+export interface BuildPack {
+  readonly encodedByteSize: number;
+  readonly encoding: "gzip";
+  readonly url: string;
+  readonly members: readonly string[];
+}
+
 export interface BuildManifest {
   readonly schema: 1;
   readonly version: string;
@@ -38,6 +46,7 @@ export interface BuildManifest {
   readonly sounds: Readonly<Record<string, readonly string[]>>;
   // Files the game reads while booting, after install, counted into the one progress total.
   readonly boot: readonly string[];
+  readonly packs?: readonly BuildPack[];
   readonly verifiedJsonBodies?: readonly VerifiedJsonBody[];
 }
 

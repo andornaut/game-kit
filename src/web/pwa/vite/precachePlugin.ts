@@ -1,12 +1,19 @@
 import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
 
 import type { Plugin, ResolvedConfig } from "vite";
 
 import { isBuildId } from "../../build/buildVersion.ts";
 import { contentHash } from "../../build/vite/contentHash.ts";
 import { gitBuildMetadata } from "../../build/vite/gitHead.ts";
-import { BUILD_POINTER_URL, type BuildManifest, buildManifestUrl } from "../buildContract.ts";
+import {
+  BUILD_POINTER_URL,
+  type BuildManifest,
+  buildManifestUrl,
+  type BuildPack,
+} from "../buildContract.ts";
 import { createBuildManifest, createBuildPointer, UNKNOWN_BUILD_ID } from "../buildManifest.ts";
+import { packContentType, soundFormatOf } from "../buildRecords.ts";
 import { cacheKeyFor, type CachePolicy, isHashedAssetUrl } from "../cachePolicy.ts";
 import {
   bundleDependencies,
@@ -42,6 +49,8 @@ export interface PrecachePluginOptions {
   // The files the game reads while booting after install, selected from the final discovery
   // like verifiedJsonBodies. None when unset.
   readonly boot?: (files: HashedFiles) => readonly string[];
+  // Opt in to transport packs with an explicit raw byte ceiling per pack.
+  readonly packs?: { readonly maxBytes: number };
   // Explicit public, URL-independent JSON families selected from final emitted discovery.
   readonly verifiedJsonBodies?: (files: HashedFiles) => readonly VerifiedJsonFamilySelection[];
   // The hashed files beyond what the page links, read once the bundle is written: bundleFile
@@ -62,6 +71,70 @@ function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+function packFiles(
+  maxBytes: number,
+  sounds: HashedFiles["sounds"],
+  excluded: ReadonlySet<string>,
+  contents: ReadonlyMap<string, Uint8Array>,
+  digests: ReadonlyMap<string, string>,
+): { pack: BuildPack; source: Uint8Array }[] {
+  const alternatives = new Set(Object.values(sounds).flat());
+  const groups = new Map<string, string[]>();
+  for (const url of [...contents.keys()].sort()) {
+    const size = contents.get(url)!.byteLength;
+    if (size === 0 || size > maxBytes || excluded.has(url) || packContentType(url) === undefined) {
+      continue;
+    }
+    // Keep sound alternatives in packs that can be dropped together for another format.
+    const key = alternatives.has(url) ? `sound:${soundFormatOf(url)}` : "files";
+    const group = groups.get(key) ?? [];
+    group.push(url);
+    groups.set(key, group);
+  }
+  const packs: { pack: BuildPack; source: Uint8Array }[] = [];
+  const add = (members: string[]) => {
+    if (members.length > 1) {
+      const decoded = Buffer.concat(members.map((url) => contents.get(url)!));
+      const source = gzipSync(decoded, { level: 9 });
+      if (source.byteLength >= decoded.byteLength) {
+        return;
+      }
+      // The gzip header does not need the producer's operating-system identifier.
+      source[9] = 255;
+      const identity = JSON.stringify([
+        sha256Hex(source),
+        members.map((url) => [url, digests.get(url)]),
+      ]);
+      const digest = sha256Hex(new TextEncoder().encode(identity));
+      packs.push({
+        pack: {
+          encodedByteSize: source.byteLength,
+          encoding: "gzip",
+          members,
+          url: `/.game-kit/pack-${digest}.bin`,
+        },
+        source,
+      });
+    }
+  };
+  for (const group of groups.values()) {
+    let members: string[] = [];
+    let bytes = 0;
+    for (const url of group) {
+      const size = contents.get(url)!.byteLength;
+      if (size > maxBytes - bytes) {
+        add(members);
+        members = [];
+        bytes = 0;
+      }
+      members.push(url);
+      bytes += size;
+    }
+    add(members);
+  }
+  return packs;
+}
+
 // Builds the service worker as one self-contained classic script, and writes the build's
 // manifest and pointer into the build output. The manifest, at buildManifestUrl(version), lists
 // every file the complete build needs offline with its full SHA-256 and byte size: the page, the
@@ -79,12 +152,16 @@ export function precachePlugin({
   boot,
   buildId,
   hashedFiles = () => ({ sounds: {}, urls: [] }),
+  packs,
   pageHtmlFile,
   policy,
   serviceWorkerFileName = "sw.js",
   serviceWorkerSource,
   verifiedJsonBodies,
 }: PrecachePluginOptions): Plugin {
+  if (packs !== undefined && (!Number.isSafeInteger(packs.maxBytes) || packs.maxBytes < 1)) {
+    throw new RangeError("precache: packs.maxBytes must be a positive safe integer");
+  }
   let root: string;
   let config: ResolvedConfig;
   const checkIdentity = () => {
@@ -255,6 +332,17 @@ export function precachePlugin({
                   };
                 }),
               );
+        const packAssets =
+          packs === undefined
+            ? []
+            : packFiles(
+                packs.maxBytes,
+                sounds,
+                new Set(verified?.flatMap((family) => family.urls)),
+                listed,
+                sha256s,
+              );
+        const packIndex = packAssets.map(({ pack }) => pack);
         const recordedBuildId = buildId ?? UNKNOWN_BUILD_ID;
         // Hashed build output contributes its name and size, as its name changes with its content.
         const contentHashes = new Map(
@@ -263,7 +351,12 @@ export function precachePlugin({
             isHashedAssetUrl(policy, url) ? "" : contentHash(bytes),
           ]),
         );
-        const identity = JSON.stringify({ boot: bootUrls, buildId: recordedBuildId, sounds });
+        const identity = JSON.stringify({
+          boot: bootUrls,
+          buildId: recordedBuildId,
+          ...(packIndex.length === 0 ? {} : { packs: packIndex }),
+          sounds,
+        });
         const fingerprint = `${precacheFingerprint(policy, contentHashes, byteSizes, verified)}\n${identity}`;
 
         const createManifest = (): BuildManifest => {
@@ -276,6 +369,7 @@ export function precachePlugin({
                 sha256: sha256s.get(url)!,
                 url,
               })),
+              ...(packIndex.length === 0 ? {} : { packs: packIndex }),
               sounds,
               version: sha256Hex(encoder.encode(fingerprint)).slice(0, 16),
               ...(verified === undefined ? {} : { verifiedJsonBodies: verified }),
@@ -287,10 +381,21 @@ export function precachePlugin({
         const manifest = createManifest();
         const manifestFileName = buildManifestUrl(manifest.version).slice(1);
         const pointerFileName = BUILD_POINTER_URL.slice(1);
-        for (const fileName of [manifestFileName, pointerFileName]) {
+        for (const fileName of [
+          manifestFileName,
+          pointerFileName,
+          ...packIndex.map(({ url }) => url.slice(1)),
+        ]) {
           if (fileName in bundle) {
             this.error(`precache: ${fileName} is reserved for the build manifest`);
           }
+        }
+        for (const { pack, source } of packAssets) {
+          this.emitFile({
+            fileName: pack.url.slice(1),
+            source,
+            type: "asset",
+          });
         }
         this.emitFile({
           fileName: manifestFileName,

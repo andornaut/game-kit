@@ -53,6 +53,14 @@ Shared runtime contracts have dedicated paths: `runtime/art/rgbaImage` provides 
 
 Every legacy API path remains available unchanged as a deprecated compatibility alias to the same implementation as its canonical replacement. This includes CSS and the type-only `buildInfo` declaration. Use canonical paths for new imports and migrate existing imports according to this mapping; aliases are not removed by this alignment. Internal helpers and private fixtures are not additional APIs. Older migration sections and the source inventory below retain legacy names under this compatibility policy. These package paths do not establish consumer adoption or game integration.
 
+## Optional install packs in 0.63.0
+
+Set `packs: { maxBytes }` on `precachePlugin` to batch eligible small assets
+into gzip envelopes with a decoded byte limit. Each verified member keeps its
+original URL. Sparse updates, unavailable packs and unavailable decoding use
+individual files. See the [install and update design](docs/install-and-update.md)
+for HTTP representation and transfer qualification.
+
 ## Refusal admission and Retry press cues in 0.62.1
 
 Pointer refusal runs only when the caller resolves a current action. Configured loading-safe Retry shows a non-ring press cue for fixed or content width, including forced colours.

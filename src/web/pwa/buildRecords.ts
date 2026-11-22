@@ -4,14 +4,31 @@
 // any other, so a pointer, manifest or record that a later kit version wrote stays readable.
 // buildManifest's validators are the strict build-time checks.
 import {
+  type BuildFile,
   type BuildManifest,
   buildManifestUrl,
+  type BuildPack,
   type BuildPointer,
   type InstalledManifest,
 } from "./buildContract.ts";
 import { validateVerifiedJsonBodies, type VerifiedJsonBody } from "./verifiedJsonBody.ts";
 
 const SHA256_HEX = /^[a-f0-9]{64}$/;
+
+const PACK_URL = /^\/\.game-kit\/pack-[0-9a-f]{64}\.bin$/;
+const PACK_CONTENT_TYPES = new Map([
+  ["avif", "image/avif"],
+  ["jpg", "image/jpeg"],
+  ["jpeg", "image/jpeg"],
+  ["json", "application/json"],
+  ["m4a", "audio/mp4"],
+  ["mp3", "audio/mpeg"],
+  ["ogg", "audio/ogg"],
+  ["png", "image/png"],
+  ["svg", "image/svg+xml"],
+  ["wav", "audio/wav"],
+  ["webp", "image/webp"],
+]);
 
 // The content type of every record and saved manifest entry.
 export const RECORD_CONTENT_TYPE = "application/json; charset=utf-8";
@@ -54,6 +71,82 @@ export function parseBuildPointer(value: unknown): BuildPointer {
   return pointer as BuildPointer;
 }
 
+// Packs supply bodies without individual HTTP headers. Limit them to known media types.
+export function packContentType(url: string): string | undefined {
+  return PACK_CONTENT_TYPES.get(soundFormatOf(url) ?? "");
+}
+
+export function validateBuildPacks(
+  files: readonly BuildFile[],
+  families: readonly VerifiedJsonBody[] | undefined,
+  value: unknown,
+): readonly BuildPack[] {
+  if (!Array.isArray(value)) {
+    throw new TypeError("Build packs must be an array");
+  }
+  const sizes = new Map(files.map(({ byteSize, url }) => [url, byteSize]));
+  const used = new Set(families?.flatMap((family) => family.urls) ?? []);
+  const urls = new Set<string>();
+  return Object.freeze(
+    value.map((entry: Partial<BuildPack> | null) => {
+      if (
+        entry === null ||
+        typeof entry !== "object" ||
+        Object.keys(entry).length !== 4 ||
+        entry.encoding !== "gzip" ||
+        typeof entry.url !== "string" ||
+        !PACK_URL.test(entry.url) ||
+        urls.has(entry.url) ||
+        !Array.isArray(entry.members) ||
+        entry.members.length < 2
+      ) {
+        throw new TypeError("Invalid build pack");
+      }
+      urls.add(entry.url);
+      let bytes = 0;
+      const members = entry.members.map((member: unknown) => {
+        if (
+          typeof member !== "string" ||
+          used.has(member) ||
+          !sizes.has(member) ||
+          sizes.get(member) === 0 ||
+          packContentType(member) === undefined
+        ) {
+          throw new TypeError(`Invalid build pack member: ${String(member)}`);
+        }
+        used.add(member);
+        bytes += sizes.get(member)!;
+        return member;
+      });
+      if (!Number.isSafeInteger(bytes)) {
+        throw new RangeError("Invalid build pack byte size");
+      }
+      const file = { members: Object.freeze(members), url: entry.url };
+      const { encodedByteSize } = entry;
+      if (
+        encodedByteSize === undefined ||
+        !Number.isSafeInteger(encodedByteSize) ||
+        encodedByteSize < 1 ||
+        encodedByteSize >= bytes
+      ) {
+        throw new RangeError("Invalid gzip pack byte size");
+      }
+      return Object.freeze({ ...file, encodedByteSize, encoding: "gzip" });
+    }),
+  );
+}
+
+export function readBuildPacks(manifest: BuildManifest): readonly BuildPack[] | undefined {
+  if (manifest.packs === undefined) {
+    return undefined;
+  }
+  try {
+    return validateBuildPacks(manifest.files, manifest.verifiedJsonBodies, manifest.packs);
+  } catch {
+    return undefined;
+  }
+}
+
 // Checks a manifest read from a record or the network: its schema, version, each file's
 // root-relative URL, full SHA-256 and byte size, unique URLs, and boot files that are build
 // files. Throws TypeError.
@@ -93,6 +186,12 @@ export function parseBuildManifest(value: unknown): BuildManifest {
   }
   if (!manifest.boot.every((url) => typeof url === "string" && urls.has(url))) {
     throw new TypeError("Invalid build manifest boot files");
+  }
+  if (manifest.packs !== undefined && readBuildPacks(manifest) === undefined) {
+    // Individual files remain usable when the optional transport index is unavailable.
+    const withoutPacks = { ...manifest };
+    delete withoutPacks.packs;
+    return withoutPacks;
   }
   return manifest;
 }
@@ -168,6 +267,7 @@ export function installedManifest(
   const families = manifest.verifiedJsonBodies
     ?.map((family) => ({ ...family, urls: family.urls.filter((url) => !leftOut.has(url)) }))
     .filter((family) => family.urls.length > 1);
+  const packs = manifest.packs?.filter((pack) => pack.members.every((url) => !leftOut.has(url)));
   return {
     boot: [...new Set(boot)],
     buildId: manifest.buildId,
@@ -175,6 +275,7 @@ export function installedManifest(
     schema: manifest.schema,
     sounds,
     version: manifest.version,
+    ...(packs === undefined ? {} : { packs }),
     ...(families === undefined ? {} : { verifiedJsonBodies: families }),
     ...(soundFormat === undefined ? {} : { soundFormat }),
   };
