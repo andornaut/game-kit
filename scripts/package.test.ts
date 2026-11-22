@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createProgressState } from "@andornaut/game-kit/progressState";
+import { createProgressState } from "@andornaut/game-kit/runtime/progressState";
 import { expect, it } from "vitest";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -16,6 +16,7 @@ it("exposes the root source package through explicit existing module paths", () 
   const lock = JSON.parse(readFileSync(resolve(root, "package-lock.json"), "utf8"));
   expect([lock.version, lock.packages[""].version]).toEqual([manifest.version, manifest.version]);
   expect(manifest.name).toBe("@andornaut/game-kit");
+  expect(manifest.exports["./package.json"]).toBe("./package.json");
   expect(Object.keys(manifest.exports)).not.toContain(".");
   for (const [name, target] of Object.entries(manifest.exports)) {
     expect(name).not.toContain("*");
@@ -24,6 +25,7 @@ it("exposes the root source package through explicit existing module paths", () 
     const path = typeof target === "string" ? target : target.types;
     expect(existsSync(resolve(root, path)), name).toBe(true);
     if (name !== "./package.json") {
+      expect(name).toMatch(/^\.\/(runtime|build|test)\/.+$/);
       expect(path).toMatch(/^\.\/src\//);
     }
     if (typeof target !== "string") {

@@ -18,7 +18,7 @@ Pure imports need no runtime peers. Phaser, TypeScript, Vite and Vitest are opti
 
 ## API namespaces and migration
 
-Version 0.47.0 adds canonical imports using `@andornaut/game-kit/runtime/...`, `@andornaut/game-kit/build/...` or `@andornaut/game-kit/test/...`. Every path is explicit in `package.json`; there are no root barrels or wildcard exports. The `package.json` metadata export is unchanged.
+Version 0.47.0 introduced canonical imports using `@andornaut/game-kit/runtime/...`, `@andornaut/game-kit/build/...` or `@andornaut/game-kit/test/...`. The remaining pre-0.47 aliases have been retired. Every public subpath is explicit in `package.json`. The `@andornaut/game-kit/package.json` metadata export remains available.
 
 | Namespace  | Use                                                                                                             | Dependency direction                                           |
 | ---------- | --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
@@ -26,9 +26,9 @@ Version 0.47.0 adds canonical imports using `@andornaut/game-kit/runtime/...`, `
 | `build/`   | Build configuration, asset processing, generated metadata and plugins                                           | May import runtime modules; must not import test helpers       |
 | `test/`    | The three shared testing APIs                                                                                   | For tests only; runtime and build modules must not import them |
 
-For the 144 existing APIs, use `runtime/<legacy-path>` except for the build and test mappings below and `web/build/buildLabel`, whose canonical path is `runtime/web/buildLabel`. The source layout and environmental constraints remain separate from these consumer namespaces.
+For the retired aliases, use `runtime/<legacy-path>` except for the build and test mappings below and `web/build/buildLabel`, whose canonical path is `runtime/web/buildLabel`. The source layout and environmental constraints remain separate from these consumer namespaces.
 
-| Canonical build path          | Deprecated compatibility path            |
+| Canonical build path          | Retired compatibility path               |
 | ----------------------------- | ---------------------------------------- |
 | `build/rgbaImage`             | `art/rgbaImage`                          |
 | `build/buildVersion`          | `web/build/buildVersion`                 |
@@ -49,9 +49,19 @@ For the 144 existing APIs, use `runtime/<legacy-path>` except for the build and 
 
 The test paths replace only the `testing/` prefix: `test/storageFixture`, `test/dom/failingLocalStorage` and `test/phaser/sceneStub` map to their existing implementations.
 
-Shared runtime contracts have dedicated paths: `runtime/art/rgbaImage` provides RGBA image types, `runtime/web/pwa/buildIdentity` provides build identity contracts, and `runtime/web/pwa/buildContract` provides the build pointer, manifest, record, launch and update contracts. Image processing remains at `build/rgbaImage`; build manifest construction and validation are at `build/buildManifest`. The legacy `art/rgbaImage` path retains both its functions and types.
+Move image processing from `art/rgbaImage` to `build/rgbaImage`, which also exports the `RgbaImage` type. Runtime code that only needs the type should import it from `runtime/art/rgbaImage`. Build manifest construction and validation use `build/buildManifest`. The build identity and installed-build contracts use `runtime/web/pwa/buildIdentity` and `runtime/web/pwa/buildContract`.
 
-Every legacy API path remains available unchanged as a deprecated compatibility alias to the same implementation as its canonical replacement. This includes CSS and the type-only `buildInfo` declaration. Use canonical paths for new imports and migrate existing imports according to this mapping; aliases are not removed by this alignment. Internal helpers and private fixtures are not additional APIs. Older migration sections and the source inventory below retain legacy names under this compatibility policy. These package paths do not establish consumer adoption or game integration.
+Apply the mapping to JavaScript and TypeScript imports, test mocks and configuration, and stylesheet imports. Change the old build-info reference to `/// <reference types="@andornaut/game-kit/build/buildInfo" />`. This declaration-only export still provides `__APP_VERSION__`, `__BUILD_ID__` and `__COMMIT__`. Historical migration notes use the subpaths current at the time. The source inventory uses implementation paths relative to `src/`.
+
+## Migration to 0.64.0
+
+The deprecated pre-0.47 package subpaths are gone. Use the canonical paths
+above, including in mocks, CSS and generated references.
+
+`runtime/web/pwa/dom/launch` no longer exports `LAUNCH_RELOAD_KEY`,
+`LAUNCH_PROGRESS_KEY`, `legacyRoutingCacheName` or `legacyGroupDatabaseName`.
+Use the launch lifecycle and `bootProgress()` for recovery. Launch still
+recognises existing persisted keys and migrates older installed builds.
 
 ## Optional install packs in 0.63.0
 
@@ -306,7 +316,7 @@ Loading bars follow one rule: nothing while idle, a measured bar that fills to f
 
 - `progress`: `progressBarLayout` takes a `number`; a nonfinite share lays out empty. A build-time layout of `undefined`, such as a pre-script strip, becomes the DOM bar's markup with its bands at `progressBarLayout(style, frame, 1).fills`, animated by `progressBar.css`. Match the script's markup: the track is the bar's first child, then one `.progress-bar-band` per fill, each holding one segment. The script sets `overflow: hidden` on each band, so pre-script CSS must clip the bands itself.
 - `progress/phaser/drawProgressBar`: `drawProgressBar` takes a `number` and stays for measured meters. A loading bar keeps a `createProgressDisplay(fullMs)` that its progress state reports to (`state.subscribe(display.report)`), and each frame clears its graphics and calls `drawProgressDisplay(graphics, style, motion, frame, display.at(time))` with the scene clock and a `ProgressMotion`.
-- `web/progress/dom/progressBar`: import `@andornaut/game-kit/web/progress/dom/progressBar.css`; without it a pending bar draws its segment across the whole track. Existing `createDomProgressBar(parent, style, frame)` and `update(value)` calls are unchanged and travel while pending. Pass `timing` to set the motion and hold, and subscribe `report` in place of toggling visibility to hide the bar while idle and fill it on a measured finish. The fill shows only when the last active report was measured: reporting `undefined` before the finish hides the bar at once. To fill a measured load and then wait on work of unknown length, finish the measured operation at 1 and begin a separate one for the rest.
+- `web/progress/dom/progressBar`: import `@andornaut/game-kit/runtime/web/progress/dom/progressBar.css`; without it a pending bar draws its segment across the whole track. Existing `createDomProgressBar(parent, style, frame)` and `update(value)` calls are unchanged and travel while pending. Pass `timing` to set the motion and hold, and subscribe `report` in place of toggling visibility to hide the bar while idle and fill it on a measured finish. The fill shows only when the last active report was measured: reporting `undefined` before the finish hides the bar at once. To fill a measured load and then wait on work of unknown length, finish the measured operation at 1 and begin a separate one for the rest.
 
 ## Migration to 0.21.0
 

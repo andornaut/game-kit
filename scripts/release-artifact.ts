@@ -60,14 +60,14 @@ assert.deepEqual(Object.keys(manifest.peerDependencies), [
   "vite",
   "vitest",
 ]);
-assert.deepEqual(manifest.exports["./web/build/vite/buildInfo"], {
+assert.deepEqual(manifest.exports["./build/buildInfo"], {
   types: "./dist/web/build/vite/buildInfo.d.ts",
 });
-assert.deepEqual(
-  manifest.exports["./build/buildInfo"],
-  manifest.exports["./web/build/vite/buildInfo"],
+assert.equal(
+  manifest.exports["./runtime/web/crash/dom/crash.css"],
+  "./dist/web/crash/dom/crash.css",
 );
-assert.equal(manifest.exports["./web/crash/dom/crash.css"], "./dist/web/crash/dom/crash.css");
+assert.equal(manifest.exports["./package.json"], "./package.json");
 for (const path of files) {
   assert.ok(!path.endsWith(".ts") || path.endsWith(".d.ts"), path);
   assert.ok(!path.includes(".test."), path);
@@ -170,8 +170,10 @@ for (const [canonical, legacy] of [
   ['test/dom/failingLocalStorage', 'testing/dom/failingLocalStorage'],
   ['test/phaser/sceneStub', 'testing/phaser/sceneStub'],
 ]) {
-  assert.strictEqual(await import('@andornaut/game-kit/' + canonical),
-    await import('@andornaut/game-kit/' + legacy), canonical);
+  await import('@andornaut/game-kit/' + canonical);
+  assert.throws(() => import.meta.resolve('@andornaut/game-kit/' + legacy), {
+    code: 'ERR_PACKAGE_PATH_NOT_EXPORTED'
+  });
 }
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -186,6 +188,9 @@ assert.throws(() => import.meta.resolve('@andornaut/game-kit/build/buildInfo'), 
   code: 'ERR_PACKAGE_PATH_NOT_EXPORTED'
 });
 assert.throws(() => import.meta.resolve('@andornaut/game-kit/web/build/vite/buildInfo'), {
+  code: 'ERR_PACKAGE_PATH_NOT_EXPORTED'
+});
+assert.throws(() => import.meta.resolve('@andornaut/game-kit/web/crash/dom/crash.css'), {
   code: 'ERR_PACKAGE_PATH_NOT_EXPORTED'
 });
 assert.equal(clamp(0,1,2), 1);
@@ -410,13 +415,6 @@ import { defineConfig } from 'vite';
 import { clamp } from '@andornaut/game-kit/runtime/numbers';
 import { securityHeadersPlugin } from '@andornaut/game-kit/build/securityHeadersPlugin';
 import { phaserBuildPlugin } from '@andornaut/game-kit/build/phaserBuildPlugin';
-import { phaserBuildPlugin as legacyPhaserPlugin } from '@andornaut/game-kit/web/build/vite/phaserBuildPlugin';
-import {
-  securityHeadersPlugin as legacyHeadersPlugin,
-} from '@andornaut/game-kit/web/headers/vite/securityHeadersPlugin';
-if (phaserBuildPlugin !== legacyPhaserPlugin || securityHeadersPlugin !== legacyHeadersPlugin) {
-  throw new Error('Canonical build aliases changed module identity');
-}
 export default defineConfig({
   define: { __KIT_CHECK__: JSON.stringify(clamp(0,1,2)) },
   plugins: [phaserBuildPlugin({ flags: {}, omitted: [] }), securityHeadersPlugin({

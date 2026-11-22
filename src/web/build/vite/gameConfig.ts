@@ -1,6 +1,6 @@
 // A game's whole Vite and Vitest config, for its vite.config.ts to export:
 //
-//   import { gameViteConfig } from "@andornaut/game-kit/web/build/vite/gameConfig";
+//   import { gameViteConfig } from "@andornaut/game-kit/build/gameConfig";
 //   import type * as ConfigModules from "./src/tools/viteConfigModules";
 //   export default gameViteConfig<typeof ConfigModules>({ ... });
 //

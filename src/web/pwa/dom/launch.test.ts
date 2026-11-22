@@ -26,11 +26,7 @@ import {
   CONTROL_WAIT_MS,
   createLaunch,
   type FetchLike,
-  LAUNCH_PROGRESS_KEY,
-  LAUNCH_RELOAD_KEY,
   type LaunchPage,
-  legacyGroupDatabaseName,
-  legacyRoutingCacheName,
   registerRouter,
   type RequiredUpdateState,
   type SessionLike,
@@ -42,6 +38,8 @@ import {
 const POLICY = { cacheNamePrefix: "game-", hashedAssetPrefix: "/assets/" };
 const ORIGIN = "https://game.test";
 const ROUTER = "/sw.js";
+const LAUNCH_PROGRESS_KEY = "game-kit:launch-progress";
+const LAUNCH_RELOAD_KEY = "game-kit:launch-reload";
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 
@@ -572,7 +570,7 @@ describe("legacy migration", () => {
       new Response("alpha", { headers: { "content-type": "text/javascript" } }),
     );
     await old.put("/play/", new Response("<stale>"));
-    await f.caches.open(legacyRoutingCacheName(POLICY));
+    await f.caches.open("game-kit-routing:game-");
     await f.caches.open("other-cache");
     let copiedBeforeInstall: string[] = [];
     f.setResults([
@@ -589,9 +587,9 @@ describe("legacy migration", () => {
     expect(copied?.headers.get("content-type")).toBe("text/javascript");
     expect(await copied?.text()).toBe("alpha");
     expect(await f.caches.keys()).not.toContain("game-0123456789abcdef");
-    expect(await f.caches.keys()).not.toContain(legacyRoutingCacheName(POLICY));
+    expect(await f.caches.keys()).not.toContain("game-kit-routing:game-");
     expect(await f.caches.keys()).toContain("other-cache");
-    expect(f.deleteDatabase).toHaveBeenCalledWith(legacyGroupDatabaseName(POLICY));
+    expect(f.deleteDatabase).toHaveBeenCalledWith("game-kit-groups:game-");
   });
 });
 

@@ -1,6 +1,8 @@
 # Packaging
 
-Every public path is an explicit `package.json` export under `runtime/`, `build/` or `test/`. The
+Public modules use explicit `package.json` exports under `runtime/`, `build/` or `test/`. The
+package also exports `package.json` for metadata. Retiring the pre-0.47 aliases changes subpath
+resolution. The canonical targets and installed-build data contracts stay the same. The
 release archive holds compiled JavaScript, declarations, README, licence and `SOURCE_COMMIT`,
 built offline from the committed revision. Release verification and packaging use the same pinned
 source. Consumer receipts identify the checks that actually ran. See the release procedure for

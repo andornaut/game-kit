@@ -142,8 +142,8 @@ const RECORD_SHARE = 0.01;
 
 // Session keys: the build a launch reload targeted, and first-install progress carried across the
 // reload that boots the new build.
-export const LAUNCH_RELOAD_KEY = "game-kit:launch-reload";
-export const LAUNCH_PROGRESS_KEY = "game-kit:launch-progress";
+const LAUNCH_RELOAD_KEY = "game-kit:launch-reload";
+const LAUNCH_PROGRESS_KEY = "game-kit:launch-progress";
 
 type FirstInstallFailure = LaunchFailure["reason"] | NetworkPlayNotice["reason"];
 
@@ -236,11 +236,11 @@ function legacyVersionCaches(policy: BuildPolicy, names: readonly string[]): str
   );
 }
 
-export function legacyRoutingCacheName(policy: BuildPolicy): string {
+function legacyRoutingCacheName(policy: BuildPolicy): string {
   return `game-kit-routing:${policy.cacheNamePrefix}`;
 }
 
-export function legacyGroupDatabaseName(policy: BuildPolicy): string {
+function legacyGroupDatabaseName(policy: BuildPolicy): string {
   return `game-kit-groups:${policy.cacheNamePrefix}`;
 }
 
