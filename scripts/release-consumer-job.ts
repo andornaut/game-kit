@@ -242,7 +242,7 @@ export function releaseConsumerJob(args: string[]): void {
   writeFileSync(join(EVIDENCE, "artifact-modes.txt"), modes);
   assert.deepEqual(unsafeArchiveModes(modes), []);
   execFileSync("tar", ["-xzf", ARTIFACT, "-C", reference, "--no-same-owner"]);
-  const scope = single ? "incomplete-release-proof" : "complete-release-proof";
+  const scope = single ? "incomplete-release-proof" : "archie-chibi-proof";
   writeFileSync(
     join(EVIDENCE, "scope.json"),
     `${JSON.stringify({ selectedGames: selected.map(({ game }) => game), scope })}\n`,

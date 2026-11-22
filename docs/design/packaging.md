@@ -2,9 +2,10 @@
 
 Every public path is an explicit `package.json` export under `runtime/`, `build/` or `test/`. The
 release archive holds compiled JavaScript, declarations, README, licence and `SOURCE_COMMIT`,
-built offline from the committed revision. A release is tagged only after CI is green for that
-exact `main` commit and both games pass the consumer proof. Changes limited to `docs/` run only
-lint and the attribution check in CI.
+built offline from the committed revision. Release verification and packaging use the same pinned
+source. Consumer receipts identify the checks that actually ran. See the release procedure for
+combining Archie and Chibi's receipt with the separately verified Ada snapshot. Docs-only CI runs
+lint and the attribution check.
 
 Reference: [Standalone verification](../../README.md#standalone-verification), [Release artifacts and consumer proof](../../README.md#release-artifacts-and-consumer-proof).
 

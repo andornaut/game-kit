@@ -25,7 +25,14 @@ function checkWithFakes(name: string, listing: string) {
   mkdirSync(join(root, "scripts"));
   const bin = join(root, "bin");
   mkdirSync(bin);
-  for (const file of ["check.ts", "pack.ts", "runtime.ts", "source-fingerprint.ts"]) {
+  for (const file of [
+    "check.ts",
+    "container-check.ts",
+    "pack.ts",
+    "release-source.ts",
+    "runtime.ts",
+    "source-fingerprint.ts",
+  ]) {
     copyFileSync(join(scripts, file), join(root, "scripts", file));
   }
   writeFileSync(join(root, ".nvmrc"), "24.21.0\n");

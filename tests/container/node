@@ -8,4 +8,4 @@ node scripts/typecheck.ts
 prettier --check .
 eslint --max-warnings 0 .
 npm test
-exec npm run build
+exec node scripts/release-build.ts /scratch/unstamped-distribution

@@ -79,7 +79,8 @@ export function checkReleaseConsumers(env: NodeJS.ProcessEnv, kit: string, args:
       git: git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir"),
     };
   });
-  const scope = single ? "incomplete-release-proof" : "complete-release-proof";
+  const scope = single ? "incomplete-release-proof" : "archie-chibi-proof";
+  const selectedGames = consumers.map(({ game }) => game);
   if (!/^[0-9a-f]{64}$/.test(hash)) {
     throw new ScriptError("Expected SHA256 must be 64 lowercase hex digits.", 2);
   }
@@ -87,7 +88,7 @@ export function checkReleaseConsumers(env: NodeJS.ProcessEnv, kit: string, args:
     throw new ScriptError("Artifact SHA256 mismatch.");
   }
   mkdirSync(join(kit, ".claude"), { recursive: true });
-  const output = mkdtempSync(join(kit, ".claude/release-consumers."));
+  const output = mkdtempSync(join(kit, `.claude/release-consumers.${selectedGames.join("-")}.`));
   const roots = [kit, ...consumers.map(({ repository }) => repository)];
   const before = sourceFingerprint(roots);
   writeFileSync(join(output, "source.before"), `${before}\n`);
@@ -97,7 +98,7 @@ export function checkReleaseConsumers(env: NodeJS.ProcessEnv, kit: string, args:
       `artifact_sha256=${hash}`,
       `source=${sourceRevision}`,
       `version=${version}`,
-      `selected_games=${consumers.map(({ game }) => game).join(",")}`,
+      `selected_games=${selectedGames.join(",")}`,
       `scope=${scope}`,
       ...consumers.map(({ game, revision }) => `${game}=${revision}`),
       `harness=${git(kit, "rev-parse", "HEAD")}`,

@@ -1,11 +1,56 @@
 // Project checks run directly inside the isolated source snapshot, without nested containers.
 import { spawnSync } from "node:child_process";
-import { delimiter, resolve } from "node:path";
+import { writeFileSync } from "node:fs";
+import { delimiter, join, resolve } from "node:path";
 
 import { main, ScriptError } from "./runtime.ts";
 
+export const NPM_CACHE_MISS = "NPM_CACHE_MISS";
+
+export function isNpmCacheMiss(diagnostic: string): boolean {
+  const codes = [...diagnostic.matchAll(/^npm (?:ERR!|error) code ([A-Z0-9]+)\s*$/gm)];
+  if (codes.length > 0) {
+    return codes.every((match) => match[1] === "ENOTCACHED");
+  }
+  return diagnostic.split(/\r?\n/).some((line) => {
+    const message = /^npm (?:ERR!|error) request to .+ failed: (.+)$/.exec(line)?.[1];
+    return (
+      message !== undefined &&
+      /^cache mode is ['"]only-if-cached['"] but no cached response is available\.?$/.test(message)
+    );
+  });
+}
+
+function installOffline(env: NodeJS.ProcessEnv, evidence: string): void {
+  const result = spawnSync(
+    "npm",
+    ["ci", "--offline", "--ignore-scripts", "--no-audit", "--no-fund"],
+    {
+      encoding: "utf8",
+      env,
+    },
+  );
+  if (result.error) {
+    throw result.error;
+  }
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
+  if (result.status !== 0) {
+    const diagnostic = `${result.stderr}\n${result.stdout}`;
+    writeFileSync(join(evidence, "npm-ci-offline.log"), diagnostic);
+    if (isNpmCacheMiss(diagnostic)) {
+      writeFileSync(join(evidence, NPM_CACHE_MISS), "");
+    }
+    throw new ScriptError("Offline npm ci failed.", result.status ?? 1);
+  }
+}
+
 export function containerCheck(env: NodeJS.ProcessEnv, args: string[]): void {
   const [task, ...focused] = args;
+  if (task === "install-offline" && focused.length === 1) {
+    installOffline(env, focused[0]!);
+    return;
+  }
   if (!["lint", "test"].includes(task ?? "")) {
     throw new ScriptError("Expected lint or test.", 2);
   }

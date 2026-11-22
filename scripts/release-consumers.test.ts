@@ -35,6 +35,7 @@ function fixture(name: string) {
   for (const file of [
     "check-release-consumers.ts",
     "pack.ts",
+    "release-source.ts",
     "runtime.ts",
     "source-fingerprint.ts",
   ]) {
@@ -113,9 +114,12 @@ it("passes the version from the pinned source rather than current HEAD or artifa
     args.filter((arg) => arg.startsWith("type=bind")).every((arg) => arg.endsWith(",readonly")),
   ).toBe(true);
   const [evidence] = readdirSync(join(root, ".claude")).filter((name) =>
-    name.startsWith("release-consumers."),
+    name.startsWith("release-consumers.archie-chibi."),
   );
   expect(readFileSync(join(root, ".claude", String(evidence), "RESULT"), "utf8")).toBe("PASS\n");
+  expect(readFileSync(join(root, ".claude", String(evidence), "revisions.txt"), "utf8")).toContain(
+    "selected_games=archie,chibi\nscope=archie-chibi-proof\n",
+  );
 });
 
 it("rejects a source revision belonging to another package before launching Docker", () => {
@@ -214,7 +218,7 @@ it.each(["chibi", "archie"] as const)(
     ).toBe(false);
     expect(args.some((arg) => arg.includes("unselected-must-not-resolve"))).toBe(false);
     const [name] = readdirSync(join(root, ".claude")).filter((name) =>
-      name.startsWith("release-consumers."),
+      name.startsWith(`release-consumers.${game}.`),
     );
     const output = join(root, ".claude", name!);
     expect(readFileSync(join(output, "RESULT"), "utf8")).toBe(
@@ -245,7 +249,7 @@ it("does not turn a failed selected container into a partial pass", () => {
   });
   expect(result.status).toBe(1);
   const [name] = readdirSync(join(root, ".claude")).filter((name) =>
-    name.startsWith("release-consumers."),
+    name.startsWith("release-consumers.chibi."),
   );
   expect(readFileSync(join(root, ".claude", name!, "RESULT"), "utf8")).toBe("FAIL\n");
 });
@@ -320,7 +324,7 @@ it.each([
     if (mode !== "invalid") {
       const scope = JSON.parse(fs.readFileSync("/tmp/scratch/scope.json", "utf8"));
       expect(scope).toEqual({
-        scope: mode === "both" ? "complete-release-proof" : "incomplete-release-proof",
+        scope: mode === "both" ? "archie-chibi-proof" : "incomplete-release-proof",
         selectedGames: expected,
       });
     }

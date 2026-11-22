@@ -1,10 +1,19 @@
 // Compile and pack the source identified by SOURCE_COMMIT.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { pinReleaseSource, requireReleaseCheckout } from "./release-source.ts";
 import { main, ScriptError } from "./runtime.ts";
 
 /** The validated source commit; SOURCE_DATE_EPOCH must name its timestamp. */
@@ -19,7 +28,8 @@ export function sourceCommit(env: NodeJS.ProcessEnv): string {
   return revision;
 }
 
-export function packageSource(env: NodeJS.ProcessEnv, root: string, destination: string): string {
+// Used only by packaging paths after extraction from their pinned Git archive.
+export function packageSnapshot(env: NodeJS.ProcessEnv, root: string, destination: string): string {
   const revision = sourceCommit(env);
   const staging = mkdtempSync(join(tmpdir(), "game-kit-package-"));
   mkdirSync(destination, { recursive: true });
@@ -46,6 +56,23 @@ export function packageSource(env: NodeJS.ProcessEnv, root: string, destination:
     `${createHash("sha256").update(readFileSync(artifact)).digest("hex")}  ${filename}\n`,
   );
   return artifact;
+}
+
+export function packageSource(env: NodeJS.ProcessEnv, root: string, destination: string): string {
+  const revision = sourceCommit(env);
+  requireReleaseCheckout(root, revision);
+  const source = pinReleaseSource(root, revision);
+  if (source.dateEpoch !== env.SOURCE_DATE_EPOCH) {
+    throw new ScriptError("SOURCE_DATE_EPOCH must match the pinned source commit timestamp.");
+  }
+  const snapshot = mkdtempSync(join(tmpdir(), "game-kit-release-source-"));
+  try {
+    execFileSync("tar", ["-xf", "-", "-C", snapshot], { input: source.archive });
+    symlinkSync(resolve(root, "node_modules"), join(snapshot, "node_modules"), "dir");
+    return packageSnapshot(env, snapshot, destination);
+  } finally {
+    rmSync(snapshot, { force: true, recursive: true });
+  }
 }
 
 main(import.meta.url, (args) => {
