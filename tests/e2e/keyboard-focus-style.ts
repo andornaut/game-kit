@@ -29,7 +29,10 @@ const theme = `
   #selected svg { display: block; }
 `;
 const csp = "default-src 'self'; style-src 'self'; style-src-attr 'none'";
-const hostCss = `button { width: 1px !important; font-size: 1px !important;
+const hostCss = `
+  body { margin: 0; }
+  main { display: grid; height: 100dvh; place-items: center; }
+  button { width: 1px !important; font-size: 1px !important;
   pointer-events: none !important; } button:focus-visible { outline: none !important; }`;
 
 function control(locator: Locator) {
@@ -56,6 +59,35 @@ function control(locator: Locator) {
       pointerEvents: css.pointerEvents,
       selected: element.getAttribute("aria-pressed") === "true",
       shadow: css.boxShadow,
+    };
+  });
+}
+
+function retryWidth(locator: Locator) {
+  return locator.evaluate((button) => {
+    const panel = button.parentElement!;
+    const css = getComputedStyle(button);
+    const panelCss = getComputedStyle(panel);
+    const range = document.createRange();
+    range.selectNodeContents(button);
+    const { height, width, x } = button.getBoundingClientRect();
+    return {
+      buttonCentre: x + width / 2,
+      edges: ["padding-left", "padding-right", "border-left-width", "border-right-width"].reduce(
+        (total, property) => total + Number.parseFloat(css.getPropertyValue(property)),
+        0,
+      ),
+      font: css.font,
+      height,
+      labelWidth: range.getBoundingClientRect().width,
+      panelCentre: panel.getBoundingClientRect().x + panel.clientLeft + panel.clientWidth / 2,
+      panelContentWidth:
+        panel.clientWidth -
+        Number.parseFloat(panelCss.paddingLeft) -
+        Number.parseFloat(panelCss.paddingRight),
+      panelHeight: panel.getBoundingClientRect().height,
+      scrollable: panel.scrollHeight > panel.clientHeight,
+      width,
     };
   });
 }
@@ -313,15 +345,15 @@ try {
     await save(page, "crash-forced-colours");
     await page.emulateMedia({ forcedColors: "none" });
 
-    const mountRetry = (unsupported = false) =>
-      page.evaluate(async (unsupported) => {
+    const mountRetry = (mode: "numeric" | "content" | "default" | "unsupported" = "numeric") =>
+      page.evaluate(async (mode) => {
         const path = "/src/web/progress/dom/loadingFailure.ts";
         const { mountLoadingFailure } = (await import(
           path
         )) as typeof import("../../src/web/progress/dom/loadingFailure.ts");
         const parent = document.querySelector("main")!;
         const supports = CSS.supports.bind(CSS);
-        if (unsupported) {
+        if (mode === "unsupported") {
           CSS.supports = (condition) =>
             condition === "selector(:focus-visible)" ? false : supports(condition);
         }
@@ -336,7 +368,7 @@ try {
             paddingBottomPx: 4,
             paddingXPx: 12,
             shadeHeightPx: 4,
-            widthPx: 128,
+            widthPx: mode === "content" ? ("content" as const) : 128,
           },
           palette: {
             action: "#54442c",
@@ -367,9 +399,10 @@ try {
             title: { lineHeight: 1.25, sizePx: 20, weight: 700 },
           },
         };
-        const themed = unsupported
-          ? undefined
-          : mountLoadingFailure({ onRetry, presentation }, parent);
+        const themed =
+          mode === "content" || mode === "numeric"
+            ? mountLoadingFailure({ onRetry, presentation }, parent)
+            : undefined;
         const view = themed ?? mountLoadingFailure({ onRetry }, parent);
         CSS.supports = supports;
         view.update({ attempt: 1, error: new Error("Fixture failure"), kind: "failed" });
@@ -409,10 +442,12 @@ try {
             reset: retry.style.cssText === reset,
           });
         });
-      }, unsupported);
+      }, mode);
     await page.goto(`${origin}emergency`);
     await mountRetry();
     const retry = page.getByRole("button", { name: "Retry" });
+    const numeric = await retryWidth(retry);
+    assert.equal(numeric.width, 128);
     const box = (await retry.boundingBox())!;
     const pressRetry = async () => {
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -471,11 +506,51 @@ try {
     );
     await page.emulateMedia({ forcedColors: "none" });
     await page.goto(`${origin}emergency`);
-    await mountRetry(true);
+    await mountRetry("default");
+    const unconfigured = await retryWidth(retry);
+    await page.goto(`${origin}emergency`);
+    await mountRetry("unsupported");
     await page.keyboard.press("Tab");
     const unsupported = await control(retry);
     assert(unsupported.focus && unsupported.focusVisible && unsupported.outline.style === "auto");
     await save(page, "emergency-native-fallback");
+    await page.keyboard.press("Enter");
+    assert.equal(await page.locator("main").getAttribute("data-retried"), "yes");
+    assert.deepEqual(await retryWidth(retry), unconfigured);
+
+    await page.goto(`${origin}emergency`);
+    await mountRetry("content");
+    await page.keyboard.press("Tab");
+    await nextPaint(page);
+    const contentWidth = await retryWidth(retry);
+    assert(Math.abs(contentWidth.width - contentWidth.labelWidth - contentWidth.edges) < 0.5);
+    assert(Math.abs(contentWidth.buttonCentre - contentWidth.panelCentre) < 1);
+    assert.equal(contentWidth.height, numeric.height);
+    assert.equal(contentWidth.font, numeric.font);
+    const contentFocus = await control(retry);
+    assert(contentFocus.focusVisible && contentFocus.outline.style === "none");
+    await save(page, "emergency-content-width");
+
+    await page.setViewportSize({ height: 100, width: 620 });
+    const short = await retryWidth(retry);
+    assert(short.scrollable);
+    assert(short.panelHeight <= 100 - 24);
+    assert.equal(short.width, contentWidth.width);
+    assert.equal(short.height, numeric.height);
+    assert.equal(short.font, numeric.font);
+    await retry.scrollIntoViewIfNeeded();
+    await save(page, "emergency-content-short");
+
+    await page.setViewportSize({ height: 100, width: 116 });
+    const narrow = await retryWidth(retry);
+    assert(narrow.scrollable);
+    assert(narrow.width < contentWidth.width);
+    assert.equal(narrow.width, narrow.panelContentWidth);
+    assert(Math.abs(narrow.buttonCentre - narrow.panelCentre) < 1);
+    assert.equal(narrow.height, numeric.height);
+    assert.equal(narrow.font, numeric.font);
+    await retry.scrollIntoViewIfNeeded();
+    await save(page, "emergency-content-narrow");
     await page.keyboard.press("Enter");
     assert.equal(await page.locator("main").getAttribute("data-retried"), "yes");
 
@@ -503,6 +578,11 @@ try {
         forcedSummary,
         fallback,
         forcedFallback,
+        numeric,
+        unconfigured,
+        contentWidth,
+        short,
+        narrow,
         unsupported,
       }),
     );

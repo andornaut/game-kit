@@ -20,7 +20,7 @@ export interface LoadingFailureActionTextStyle extends LoadingFailureTextStyle {
   readonly synthesis?: "none" | "weight";
 }
 
-export interface LoadingFailurePresentation {
+export interface LoadingFailurePresentation<Width extends number | "content" = number> {
   readonly panel: {
     readonly maxWidthPx: number;
     readonly safeInsetPx: number;
@@ -39,7 +39,8 @@ export interface LoadingFailurePresentation {
     readonly action: LoadingFailureActionTextStyle;
   };
   readonly action: {
-    readonly widthPx: number;
+    // Content uses the label, horizontal padding and borders, capped by the panel.
+    readonly widthPx: Width;
     readonly heightPx: number;
     readonly paddingXPx: number;
     readonly paddingBottomPx: number;
@@ -60,12 +61,16 @@ export interface LoadingFailurePresentation {
   };
 }
 
-export interface LoadingFailureContext {
+type Presentation = LoadingFailurePresentation<number | "content">;
+
+export interface LoadingFailureContext<Width extends number | "content" = number> {
   readonly bindHoldAction?: HoldActionBinding;
   readonly layout?: LoadingFailureLayout;
-  readonly presentation?: LoadingFailurePresentation;
+  readonly presentation?: LoadingFailurePresentation<Width>;
   readonly onRetry: () => void | PromiseLike<void>;
 }
+
+type Context = LoadingFailureContext<number | "content">;
 
 export interface LoadingFailureView {
   readonly element: HTMLDivElement;
@@ -74,7 +79,7 @@ export interface LoadingFailureView {
 }
 
 export interface LoadingFailurePresentationView extends LoadingFailureView {
-  setPresentation(next: LoadingFailurePresentation): void;
+  setPresentation(next: Presentation): void;
 }
 
 // CSSOM fallback styling works without a stylesheet, custom font or game artwork. System
@@ -148,9 +153,7 @@ function presentationNumbers<K extends string>(
   ) as Record<K, number>;
 }
 
-function checkedPresentation(
-  value: LoadingFailurePresentation | undefined,
-): LoadingFailurePresentation | undefined {
+function checkedPresentation(value: Presentation | undefined): Presentation | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -171,19 +174,26 @@ function checkedPresentation(
     ] as const,
     record.panel,
   );
-  const action = presentationNumbers(
-    "action",
-    [
-      "widthPx",
-      "heightPx",
-      "paddingXPx",
-      "paddingBottomPx",
-      "borderWidthPx",
-      "highlightHeightPx",
-      "shadeHeightPx",
-    ] as const,
-    record.action,
-  );
+  const actionRecord = presentationRecord(record.action);
+  const widthPx: number | "content" =
+    actionRecord.widthPx === "content"
+      ? "content"
+      : presentationNumbers("action", ["widthPx"], actionRecord).widthPx;
+  const action = {
+    ...presentationNumbers(
+      "action",
+      [
+        "heightPx",
+        "paddingXPx",
+        "paddingBottomPx",
+        "borderWidthPx",
+        "highlightHeightPx",
+        "shadeHeightPx",
+      ],
+      actionRecord,
+    ),
+    widthPx,
+  };
   const textRecord = presentationRecord(record.text);
   const textStyle = (name: string) => {
     const style = presentationNumbers(
@@ -219,7 +229,7 @@ function checkedPresentation(
   if (
     ![panelEdges, actionEdgesX, actionEdgesY].every(Number.isFinite) ||
     panel.maxWidthPx < panelEdges ||
-    action.widthPx < actionEdgesX ||
+    (typeof action.widthPx === "number" && action.widthPx < actionEdgesX) ||
     action.heightPx < actionEdgesY
   ) {
     throw new RangeError("Presentation dimensions must contain their border and padding");
@@ -245,15 +255,12 @@ function checkedPresentation(
 // Mount in a visible, non-inert caller-owned parent outside any font/art reveal gate. The
 // caller wires update to onState and onRetry to retry, retaining its existing single top bar.
 export function mountLoadingFailure(
-  context: LoadingFailureContext & { readonly presentation: LoadingFailurePresentation },
+  context: Context & { readonly presentation: Presentation },
   parent: HTMLElement,
 ): LoadingFailurePresentationView;
+export function mountLoadingFailure(context: Context, parent: HTMLElement): LoadingFailureView;
 export function mountLoadingFailure(
-  context: LoadingFailureContext,
-  parent: HTMLElement,
-): LoadingFailureView;
-export function mountLoadingFailure(
-  context: LoadingFailureContext,
+  context: Context,
   parent: HTMLElement,
 ): LoadingFailureView | LoadingFailurePresentationView {
   if (context.layout !== undefined && context.presentation !== undefined) {
@@ -301,7 +308,7 @@ export function mountLoadingFailure(
       retry.style.setProperty(name, value, "important");
     }
   }
-  const applyPresentation = (next: LoadingFailurePresentation) => {
+  const applyPresentation = (next: Presentation) => {
     const { action, palette, panel, text } = next;
     const styles = (properties: Record<string, string>, node: HTMLElement) => {
       for (const [name, value] of Object.entries(properties)) {
@@ -362,6 +369,11 @@ export function mountLoadingFailure(
     } else {
       retry.style.setProperty("font-synthesis", text.action.synthesis, "important");
     }
+    if (action.widthPx === "content") {
+      retry.style.setProperty("max-width", "100%", "important");
+    } else {
+      retry.style.removeProperty("max-width");
+    }
     styles(
       {
         "align-items": "center",
@@ -379,7 +391,7 @@ export function mountLoadingFailure(
         "min-height": "0",
         "min-width": "0",
         padding: `0 ${action.paddingXPx}px ${action.paddingBottomPx}px`,
-        width: `${action.widthPx}px`,
+        width: action.widthPx === "content" ? "max-content" : `${action.widthPx}px`,
       },
       retry,
     );

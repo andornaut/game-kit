@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createLoadingAttempts, createRequiredLoading } from "../../../load/loadingAttempts.ts";
 import { bindHoldActions } from "../../input/dom/holdActions.ts";
 import {
+  type LoadingFailureContext,
   type LoadingFailureLayout,
   type LoadingFailurePresentation,
   mountLoadingFailure,
@@ -52,6 +53,40 @@ function presentationFixture(unit = 1): LoadingFailurePresentation {
 }
 
 describe("mountLoadingFailure", () => {
+  it("switches between intrinsic and numeric widths on the same hardened Retry", () => {
+    const parent = document.createElement("div");
+    const numeric = presentationFixture();
+    const legacy: LoadingFailureContext = { onRetry: vi.fn(), presentation: numeric };
+    const numericWidth: number = legacy.presentation!.action.widthPx;
+    const content: LoadingFailurePresentation<"content"> = {
+      ...numeric,
+      action: { ...numeric.action, widthPx: "content" },
+    };
+    const view = mountLoadingFailure({ onRetry: vi.fn(), presentation: content }, parent);
+    const retry = view.element.querySelector("button")!;
+    try {
+      expect(retry.style.width).toBe("max-content");
+      expect(retry.style.maxWidth).toBe("100%");
+      expect(retry.style.getPropertyPriority("width")).toBe("important");
+      expect(retry.style.getPropertyPriority("max-width")).toBe("important");
+      expect(retry.style.getPropertyPriority("all")).toBe("important");
+      expect(retry.style.height).toBe("48px");
+      expect(retry.style.paddingLeft).toBe("12px");
+      expect(retry.style.fontFamily).toBe("system-ui, sans-serif");
+      expect(view.element.style.alignItems).toBe("center");
+
+      view.setPresentation(numeric);
+      expect(view.element.querySelector("button")).toBe(retry);
+      expect(retry.style.width).toBe(`${numericWidth}px`);
+      expect(retry.style.maxWidth).toBe("");
+      view.setPresentation(content);
+      expect(retry.style.width).toBe("max-content");
+      expect(retry.style.maxWidth).toBe("100%");
+    } finally {
+      view.dispose();
+    }
+  });
+
   it("applies and resets only the action synthesis policy without replacing a busy view", async () => {
     const parent = document.createElement("div");
     parent.style.setProperty("font-synthesis", "none");
@@ -294,6 +329,10 @@ describe("mountLoadingFailure", () => {
     invalid.push({
       ...presentationFixture(),
       action: { ...presentationFixture().action, widthPx: 0 },
+    });
+    invalid.push({
+      ...presentationFixture(),
+      action: { ...presentationFixture().action, widthPx: "max-content" },
     });
     invalid.push({
       ...presentationFixture(),
