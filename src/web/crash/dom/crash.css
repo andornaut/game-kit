@@ -67,9 +67,10 @@
   box-shadow: inset 0 4px 0 var(--crash-button-lip);
 }
 
-.crash-button:focus-visible {
-  outline: 3px solid var(--crash-text);
-  outline-offset: 3px;
+.crash-button:focus-visible,
+.crash-details summary:focus-visible {
+  outline: 3px double var(--crash-text);
+  outline-offset: 2px;
 }
 
 .crash-details {
@@ -88,7 +89,15 @@
 }
 
 .crash-details summary:focus-visible {
-  outline: 3px solid var(--crash-button-face);
+  outline-color: var(--crash-button-face);
+}
+
+@media (forced-colors: active) {
+  .crash-button:focus-visible,
+  .crash-details summary:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
 }
 
 .crash-stack {

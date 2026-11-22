@@ -28,6 +28,18 @@
   pointer-events: auto;
 }
 
+.ui-control-button:focus-visible {
+  outline: max(3px, calc(var(--ui-unit, 1) * 3px)) double currentColor;
+  outline-offset: max(1px, calc(var(--ui-unit, 1) * 1px));
+}
+
+@media (forced-colors: active) {
+  .ui-control-button:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}
+
 .ui-control-label {
   display: block;
   min-width: 0;
