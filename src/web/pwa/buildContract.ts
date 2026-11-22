@@ -1,6 +1,5 @@
 // Shared contract between the build plugin, the page installer, the router service worker and the
-// launch module (docs/install-and-update.md). Types and constants only; each side implements its
-// part in its own module.
+// launch module (docs/install-and-update.md). Each side implements its part in its own module.
 import type { CachePolicy } from "./cachePolicy.ts";
 import type { VerifiedJsonBody } from "./verifiedJsonBody.ts";
 
@@ -115,12 +114,23 @@ export type UpdateState =
 
 // Fired once per staged version during a session. The game draws its own prompt and pauses play.
 // updateNow awaits the game's save, then activates the offered build if still current. It reloads
-// without downloading if the build is already active or successfully activated. A stale offer rejects.
+// without downloading if the build is already active or successfully activated.
+// A superseded offer rejects with ObsoleteUpdateOfferError naming the offer that started the switch.
 // dismiss continues play on the active build; the next launch applies the update silently.
 export interface UpdateOffer {
   readonly version: string;
   readonly updateNow: (save: () => void | PromiseLike<void>) => Promise<void>;
   readonly dismiss: () => void;
+}
+
+export class ObsoleteUpdateOfferError extends Error {
+  readonly version: string;
+
+  constructor(version: string) {
+    super(`Build ${version} is no longer available for this update offer`);
+    this.name = "ObsoleteUpdateOfferError";
+    this.version = version;
+  }
 }
 
 export type LaunchResult = "play" | "reloading";

@@ -15,6 +15,7 @@ import {
   type LaunchProgress,
   type LaunchResult,
   type NetworkPlayNotice,
+  ObsoleteUpdateOfferError,
   type UpdateOffer,
   type UpdateState,
 } from "../buildContract.ts";
@@ -789,7 +790,10 @@ export function createLaunch(
         if (current.active === version) {
           return true;
         }
-        if (!verified || !offeredIsStaged(current)) {
+        if (!offeredIsStaged(current)) {
+          throw new ObsoleteUpdateOfferError(version);
+        }
+        if (!verified) {
           return false;
         }
         await activate(version);

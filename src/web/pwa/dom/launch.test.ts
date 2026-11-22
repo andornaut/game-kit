@@ -13,6 +13,7 @@ import {
   type LaunchFailure,
   type LaunchProgress,
   type NetworkPlayNotice,
+  ObsoleteUpdateOfferError,
   type UpdateOffer,
   type UpdateState,
 } from "../buildContract.ts";
@@ -1059,20 +1060,59 @@ describe("background updates", () => {
     const f = fixture();
     f.deploy(V2);
     await playing(f);
-    await expect(
-      f.offers[0]!.updateNow(() => Promise.reject(new Error("save failed"))),
-    ).rejects.toThrow("save failed");
+    const error = new Error("save failed");
+    await expect(f.offers[0]!.updateNow(() => Promise.reject(error))).rejects.toBe(error);
     expect(f.store.state.active).toBe("aaaa");
     expect(f.reload).not.toHaveBeenCalled();
   });
 
-  it("rejects a superseded offer after saving and leaves a newly staged offer usable", async () => {
+  it("keeps a still-current offer retryable when verification or activation fails", async () => {
+    const f = fixture();
+    f.deploy(V2);
+    await playing(f);
+    const offer = f.offers[0]!;
+    const save = () => undefined;
+    f.store.completeVersions.delete("bbbb");
+    const unverified = await offer.updateNow(save).catch((error: unknown) => error);
+    expect(unverified).toBeInstanceOf(Error);
+    expect(unverified).not.toBeInstanceOf(ObsoleteUpdateOfferError);
+
+    f.store.completeVersions.add("bbbb");
+    const failure = new Error("active record write failed");
+    vi.spyOn(f.store, "setActive").mockRejectedValueOnce(failure);
+    await expect(offer.updateNow(save)).rejects.toBe(failure);
+    expect(f.store.state).toEqual({ active: "aaaa", staged: "bbbb" });
+    expect(f.reload).not.toHaveBeenCalled();
+    expect(f.offers).toHaveLength(1);
+
+    await offer.updateNow(save);
+    expect(f.store.state).toEqual({ active: "bbbb" });
+    expect(f.reload).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a disposed launch rejection distinct from an obsolete offer", async () => {
     const f = fixture();
     f.deploy(V2);
     await playing(f);
     const saving = deferred<void>();
     const switching = f.offers[0]!.updateNow(() => saving.promise);
-    const failure = switching.catch((error: unknown) => error);
+    f.launch.dispose();
+    f.store.state.staged = "cccc";
+    saving.resolve();
+    const failure = await switching.catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(ObsoleteUpdateOfferError);
+    expect(f.store.state).toEqual({ active: "aaaa", staged: "cccc" });
+    expect(f.reload).not.toHaveBeenCalled();
+  });
+
+  it("names the superseded offer when its successor shares the pending switch", async () => {
+    const f = fixture();
+    f.deploy(V2);
+    await playing(f);
+    const saving = deferred<void>();
+    const obsolete = f.offers[0]!;
+    const switching = obsolete.updateNow(() => saving.promise);
     f.deploy(V3);
     f.advance(UPDATE_CHECK_MS);
     f.visibility.set("hidden");
@@ -1080,14 +1120,21 @@ describe("background updates", () => {
     await settle();
     expect(f.offers.map((offer) => offer.version)).toEqual(["bbbb", "cccc"]);
     expect(f.store.completeVersions.has("bbbb")).toBe(true);
+    const successor = f.offers[1]!;
+    const saveSuccessor = vi.fn();
+    const sharedSwitch = successor.updateNow(saveSuccessor);
+    expect(sharedSwitch).toBe(switching);
     saving.resolve();
-    expect(await failure).toMatchObject({
-      message: expect.stringContaining("no longer available"),
-    });
+    const failure = await sharedSwitch.catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ObsoleteUpdateOfferError);
+    expect(failure).toHaveProperty("version", obsolete.version);
+    expect(failure).not.toHaveProperty("version", successor.version);
+    expect(saveSuccessor).not.toHaveBeenCalled();
     expect(f.store.state).toEqual({ active: "aaaa", staged: "cccc" });
     expect(f.reload).not.toHaveBeenCalled();
     expect(f.offers).toHaveLength(2);
-    await f.offers[1]!.updateNow(() => undefined);
+    await successor.updateNow(saveSuccessor);
+    expect(saveSuccessor).toHaveBeenCalledOnce();
     expect(f.store.state).toEqual({ active: "cccc" });
     expect(f.reload).toHaveBeenCalledOnce();
   });
@@ -1119,9 +1166,7 @@ describe("background updates", () => {
     expect(complete).toHaveBeenCalledWith(V2.manifest);
     f.store.state.active = "cccc";
     verifying.resolve(true);
-    expect(await failure).toMatchObject({
-      message: expect.stringContaining("no longer available"),
-    });
+    expect(await failure).toBeInstanceOf(ObsoleteUpdateOfferError);
     expect(f.store.state).toEqual({ active: "cccc", staged: "bbbb" });
     expect(f.reload).not.toHaveBeenCalled();
   });
