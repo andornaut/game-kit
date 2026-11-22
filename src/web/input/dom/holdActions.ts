@@ -63,6 +63,14 @@ interface Release {
   readonly pointerId: number;
 }
 
+interface TouchFocusRelease {
+  readonly focus: Element;
+  readonly target: Element;
+  readonly timeStamp: number;
+  readonly x: number;
+  readonly y: number;
+}
+
 // Default mode adds holds to caller-owned native activation. Pointer-release mode also owns taps.
 // Register before root capture-click actions; descendant actions are suppressed in capture.
 export function bindHoldActions(
@@ -104,6 +112,7 @@ export function bindHoldActions(
   let active: Gesture | undefined;
   let released: Release | undefined;
   let legacyRelease = false;
+  let touchFocusRelease: TouchFocusRelease | undefined;
   let invalidatedRelease: Release | undefined;
   let releaseTimer: number | undefined;
   let downRevision = 0;
@@ -153,6 +162,7 @@ export function bindHoldActions(
   const clearRelease = () => {
     released = undefined;
     legacyRelease = false;
+    touchFocusRelease = undefined;
     view.clearTimeout(releaseTimer);
     releaseTimer = undefined;
   };
@@ -245,6 +255,7 @@ export function bindHoldActions(
     legacyRelease = true;
     releaseTimer = view.setTimeout(() => {
       legacyRelease = false;
+      touchFocusRelease = undefined;
       releaseTimer = undefined;
     }, 0);
   };
@@ -328,6 +339,44 @@ export function bindHoldActions(
       cancel(true);
     }
   };
+  const activateTap = (gesture: Gesture, action: HoldAction, event: PointerEvent) => {
+    const release = released;
+    if (
+      release === undefined ||
+      !event.isTrusted ||
+      event.pointerType !== "touch" ||
+      !event.isPrimary ||
+      !inside(gesture.element, event.target)
+    ) {
+      action.activate();
+      return;
+    }
+    // Chromium's touch-derived mousedown uses the release timestamp and rounded client pixels.
+    const x = Math.round(event.clientX);
+    const y = Math.round(event.clientY);
+    const originalHit = document.elementFromPoint(x, y);
+    const before = document.activeElement;
+    action.activate();
+    const focus = document.activeElement;
+    if (
+      released !== release ||
+      focus === null ||
+      focus === before ||
+      !inside(root, focus) ||
+      !inside(gesture.element, originalHit)
+    ) {
+      return;
+    }
+    const target = document.elementFromPoint(x, y);
+    if (
+      target !== null &&
+      inside(root, target) &&
+      !inside(gesture.element, target) &&
+      !focus.contains(target)
+    ) {
+      touchFocusRelease = { focus, target, timeStamp: event.timeStamp, x, y };
+    }
+  };
   const onEnd = (event: PointerEvent) => {
     if (invalidatedRelease?.pointerId === event.pointerId) {
       const witness = invalidatedRelease;
@@ -372,7 +421,7 @@ export function bindHoldActions(
     if (tap && !disposed && revision === downRevision) {
       const action = current(gesture);
       if (action !== null && !disposed && revision === downRevision) {
-        action.activate();
+        activateTap(gesture, action, event);
       }
     }
   };
@@ -405,6 +454,26 @@ export function bindHoldActions(
   const onLostCapture = (event: PointerEvent) => {
     if (active?.pointerId === event.pointerId && active.press.state !== "held") {
       cancel(true);
+    }
+  };
+  const onMouseDown = (
+    event: MouseEvent & { readonly sourceCapabilities?: { readonly firesTouchEvents: boolean } },
+  ) => {
+    const release = touchFocusRelease;
+    if (release === undefined || !event.isTrusted) {
+      return;
+    }
+    touchFocusRelease = undefined;
+    if (
+      event.sourceCapabilities?.firesTouchEvents === true &&
+      event.button === 0 &&
+      event.timeStamp === release.timeStamp &&
+      event.clientX === release.x &&
+      event.clientY === release.y &&
+      event.target === release.target &&
+      document.activeElement === release.focus
+    ) {
+      event.preventDefault();
     }
   };
   const onClick = (event: MouseEvent) => {
@@ -460,6 +529,7 @@ export function bindHoldActions(
   root.addEventListener("click", onClick, true);
   view.addEventListener("blur", reset);
   if (releaseOptions !== undefined) {
+    root.addEventListener("mousedown", onMouseDown, true);
     document.addEventListener("visibilitychange", onVisibility);
   }
   const dispose = () => {
@@ -486,6 +556,7 @@ export function bindHoldActions(
       root.removeEventListener("click", onClick, true);
       view.removeEventListener("blur", reset);
       if (releaseOptions !== undefined) {
+        root.removeEventListener("mousedown", onMouseDown, true);
         document.removeEventListener("visibilitychange", onVisibility);
       }
     }

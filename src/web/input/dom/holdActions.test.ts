@@ -754,6 +754,113 @@ it("owns short releases and holds once while preserving native keyboard and unre
   expect(click(other, 4).defaultPrevented).toBe(false);
 });
 
+it.each([
+  "matching touch",
+  "same hit",
+  "unchanged focus",
+  "untrusted release",
+  "untrusted mousedown",
+  "missing provenance",
+  "real mouse",
+  "different time",
+  "different point",
+  "different target",
+  "new finger",
+  "expired release",
+  "window blur",
+  "disposed binding",
+  "held gesture",
+  "canceled gesture",
+] as const)("only cancels the retargeted mousedown default for a matching touch (%s)", (mode) => {
+  const opener = document.createElement("button");
+  const hit = document.createElement("div");
+  const other = document.createElement("div");
+  root.append(opener, hit, other);
+  button.focus();
+  let physicalHit: Element = child;
+  const previous = Object.getOwnPropertyDescriptor(document, "elementFromPoint");
+  Object.defineProperty(document, "elementFromPoint", {
+    configurable: true,
+    value: () => physicalHit,
+  });
+  action = {
+    ...action,
+    activate: () => {
+      original();
+      if (mode !== "same hit") {
+        physicalHit = hit;
+      }
+      if (mode !== "unchanged focus") {
+        opener.focus();
+      }
+    },
+  };
+  bindRelease();
+  try {
+    const timeStamp = 17;
+    pointer("pointerdown", child, { pointerType: "touch" });
+    if (mode === "held gesture") {
+      vi.advanceTimersByTime(100);
+    }
+    const release = Object.defineProperties(
+      new PointerEvent(mode === "canceled gesture" ? "pointercancel" : "pointerup", {
+        bubbles: true,
+        clientX: 8.75,
+        clientY: 8.5,
+        isPrimary: true,
+        pointerId: 4,
+        pointerType: "touch",
+      }),
+      { isTrusted: { value: mode !== "untrusted release" }, timeStamp: { value: timeStamp } },
+    );
+    child.dispatchEvent(release);
+    if (mode === "new finger") {
+      pointer("pointerdown", other, { clientX: 40, pointerId: 5, pointerType: "touch" });
+    } else if (mode === "expired release") {
+      vi.advanceTimersByTime(0);
+    } else if (mode === "window blur") {
+      window.dispatchEvent(new Event("blur"));
+    } else if (mode === "disposed binding") {
+      stop();
+    }
+    const mousedown = () => {
+      const event = Object.defineProperties(
+        new MouseEvent("mousedown", {
+          bubbles: true,
+          cancelable: true,
+          clientX: mode === "different point" ? 10 : 9,
+          clientY: 9,
+        }),
+        {
+          isTrusted: { value: mode !== "untrusted mousedown" },
+          sourceCapabilities: {
+            value:
+              mode === "missing provenance" ? null : { firesTouchEvents: mode !== "real mouse" },
+          },
+          timeStamp: { value: mode === "different time" ? timeStamp + 1 : timeStamp },
+        },
+      );
+      (mode === "different target" ? other : hit).dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    const observed = vi.fn();
+    root.addEventListener("mousedown", observed);
+    expect(mousedown()).toBe(mode === "matching touch");
+    expect(mousedown()).toBe(false);
+    expect(observed).toHaveBeenCalledTimes(2);
+    expect(original).toHaveBeenCalledTimes(mode === "canceled gesture" ? 0 : 1);
+    if (mode === "matching touch" || mode === "held gesture") {
+      expect(click(child, 4).defaultPrevented).toBe(true);
+    }
+  } finally {
+    if (previous === undefined) {
+      Reflect.deleteProperty(document, "elementFromPoint");
+    } else {
+      Object.defineProperty(document, "elementFromPoint", previous);
+    }
+  }
+});
+
 it("observes pass-through coordinates without intercepting canvas pointers or compatibility clicks", () => {
   const canvas = document.createElement("canvas");
   document.body.append(canvas);
