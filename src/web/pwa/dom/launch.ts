@@ -114,6 +114,9 @@ export interface Launch {
   run(): Promise<LaunchResult>;
   // The boot loader's settled reads, in any unit, counted into the same progress value.
   bootProgress(done: number, total: number): void;
+  // Request ordinary update discovery after a caller-owned transition. Shares the resume and
+  // reconnect cooldown and eligibility. Activation during the current session remains explicit.
+  requestUpdateCheck(): void;
   // A save a newer version wrote: activate a newer build and reload, never offering it, and
   // report each state through onRequireNewer. The caller keeps Start, save loading and writes
   // blocked in both states. Idempotent; it lasts for the page.
@@ -971,7 +974,7 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
     return true;
   };
 
-  // Resume and reconnect share one ordinary wake. Pending failed attempts keep their own backoff.
+  // Resume, reconnect and caller requests share one ordinary wake. Failed attempts keep their own backoff.
   const canDiscover = () =>
     discoveryReady &&
     visible &&
@@ -1174,6 +1177,7 @@ export function createLaunch(context: LaunchContext, options: LaunchOptions): La
         cleanup();
       }
     },
+    requestUpdateCheck: discoverOnWake,
     requireNewer() {
       if (!required) {
         required = true;

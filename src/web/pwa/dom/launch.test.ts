@@ -475,6 +475,10 @@ describe("first install", () => {
     expect(f.failures.map((failure) => failure.reason)).toEqual(["network"]);
     expect(result).toBeUndefined();
     expect(f.store.state.active).toBeUndefined();
+    const fetches = f.fetch.mock.calls.length;
+    f.launch.requestUpdateCheck();
+    await settle();
+    expect(f.fetch).toHaveBeenCalledTimes(fetches);
     f.failures[0]!.retry();
     f.failures[0]!.retry();
     await settle();
@@ -612,8 +616,11 @@ describe("launch with an active build", () => {
       });
       return reclaim(versions);
     });
+    f.launch.requestUpdateCheck();
+    expect(f.fetch).not.toHaveBeenCalled();
     const result = f.launch.run();
     await expect(result).resolves.toBe("play");
+    f.launch.requestUpdateCheck();
     f.setOnline(false);
     f.setOnline(true);
     await settle();
@@ -690,6 +697,85 @@ describe("launch with an active build", () => {
 });
 
 describe("background updates", () => {
+  it("coalesces a caller-requested wake with reconnect and resume and leaves activation explicit", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const f = fixture();
+    f.deploy(V1);
+    await playing(f);
+    f.deploy(V2);
+    const pointerFetches = () => f.fetch.mock.calls.filter(([url]) => url === BUILD_POINTER_URL);
+    f.advance(10_000);
+    vi.advanceTimersByTime(10_000);
+    f.launch.requestUpdateCheck();
+    f.launch.requestUpdateCheck();
+    expect(vi.getTimerCount()).toBe(1);
+    expect(pointerFetches()).toHaveLength(1);
+
+    f.setOnline(false);
+    f.setOnline(true);
+    f.visibility.set("hidden");
+    f.visibility.set("visible");
+    expect(vi.getTimerCount()).toBe(1);
+    f.advance(49_999);
+    vi.advanceTimersByTime(49_999);
+    await settle();
+    expect(pointerFetches()).toHaveLength(1);
+    expect(f.offers).toEqual([]);
+    f.advance(1);
+    vi.advanceTimersByTime(1);
+    await settle();
+    expect(pointerFetches()).toHaveLength(2);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(f.offers.map((offer) => offer.version)).toEqual(["bbbb"]);
+    expect(f.store.state).toEqual({ active: "aaaa", staged: "bbbb" });
+    expect(f.reload).not.toHaveBeenCalled();
+
+    const save = vi.fn(() => {
+      expect(f.store.state.active).toBe("aaaa");
+    });
+    await f.offers[0]!.updateNow(save);
+    expect(save).toHaveBeenCalledOnce();
+    expect(f.store.state).toEqual({ active: "bbbb" });
+    expect(f.reload).toHaveBeenCalledOnce();
+    expect(pointerFetches()).toHaveLength(2);
+  });
+
+  it.each(["hidden", "offline", "required", "disposed"] as const)(
+    "ignores a caller-requested wake while %s",
+    async (state) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const f = fixture();
+      f.deploy(V1);
+      await playing(f);
+      switch (state) {
+        case "hidden":
+          f.visibility.set("hidden");
+          break;
+        case "offline":
+          f.setOnline(false);
+          break;
+        case "required":
+          f.launch.requireNewer();
+          await settle();
+          expect(f.required).toEqual(["updating", "unavailable"]);
+          break;
+        case "disposed":
+          f.launch.dispose();
+          break;
+      }
+      const fetches = f.fetch.mock.calls.length;
+      f.deploy(V2);
+      f.advance(UPDATE_CHECK_MS);
+      vi.advanceTimersByTime(UPDATE_CHECK_MS);
+      f.launch.requestUpdateCheck();
+      await settle();
+      expect(vi.getTimerCount()).toBe(0);
+      expect(f.fetch).toHaveBeenCalledTimes(fetches);
+      expect(f.store.state).toEqual({ active: "aaaa" });
+      expect(f.offers).toEqual([]);
+    },
+  );
+
   it("stages a newer build in the background and offers it once", async () => {
     const f = fixture();
     f.deploy(V2);
@@ -842,6 +928,7 @@ describe("background updates", () => {
     await playing(f);
     f.advance(UPDATE_CHECK_MS);
     vi.advanceTimersByTime(UPDATE_CHECK_MS);
+    f.launch.requestUpdateCheck();
     f.visibility.set("hidden");
     f.visibility.set("visible");
     f.setOnline(false);
@@ -893,6 +980,7 @@ describe("background updates", () => {
     expect(f.installs).toHaveLength(1);
     f.setOnline(false);
     f.setOnline(true);
+    f.launch.requestUpdateCheck();
     expect(vi.getTimerCount()).toBe(1);
     const waits = [UPDATE_RETRY_MS, 120_000, 240_000, 480_000, UPDATE_RETRY_MAX_MS];
     for (const [index, wait] of [...waits, UPDATE_RETRY_MAX_MS].entries()) {
