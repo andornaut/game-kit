@@ -55,7 +55,7 @@ Every legacy API path remains available unchanged as a deprecated compatibility 
 
 ## Update discovery and control options in 0.61.0
 
-- `Launch.requestUpdateCheck()` asks the existing ordinary discovery scheduler to check after the game's genuine return to Start. Explicit Update now still applies the offered build.
+- `createLaunch(...).requestUpdateCheck()` asks the existing ordinary discovery scheduler to check after the game's genuine return to Start. Explicit Update now still applies the offered build.
 - Standard buttons accept guarded pointer refusal without a keyboard tab stop or an announced reason.
 - The configured loading-safe Retry can fit its label with `action.widthPx: "content"`, retaining the caller's padding and height.
 

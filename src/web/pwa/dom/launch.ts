@@ -114,9 +114,6 @@ export interface Launch {
   run(): Promise<LaunchResult>;
   // The boot loader's settled reads, in any unit, counted into the same progress value.
   bootProgress(done: number, total: number): void;
-  // Request ordinary update discovery after a caller-owned transition. Shares the resume and
-  // reconnect cooldown and eligibility. Activation during the current session remains explicit.
-  requestUpdateCheck(): void;
   // A save a newer version wrote: activate a newer build and reload, never offering it, and
   // report each state through onRequireNewer. The caller keeps Start, save loading and writes
   // blocked in both states. Idempotent; it lasts for the page.
@@ -392,7 +389,13 @@ export function browserLaunchContext(policy: BuildPolicy): LaunchContext | undef
 // build in the background, retrying a failed staging while the page stays visible. Staging never
 // activates: a staged build becomes active through Update now, requireNewer, or the router's
 // promotion at the next launch navigation.
-export function createLaunch(context: LaunchContext, options: LaunchOptions): Launch {
+export function createLaunch(
+  context: LaunchContext,
+  options: LaunchOptions,
+): Launch & {
+  // Share ordinary discovery eligibility and cooldown with resume and reconnect.
+  requestUpdateCheck(): void;
+} {
   const { page, policy, store } = context;
   const install = context.installBuild;
   const { session } = page.storage;
