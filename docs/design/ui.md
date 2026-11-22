@@ -15,3 +15,4 @@ Reference: [High-density game UI](../../README.md#high-density-game-ui), [Dialog
 | gk-0023 | Recover focus in strict dialogs after a backdrop press    | [gk-0023.md](../work/gk-0023.md) |
 | gk-0025 | Style keyboard focus in shared game controls              | [gk-0025.md](../work/gk-0025.md) |
 | gk-0026 | Render standard game buttons through one shared primitive | [gk-0026.md](../work/gk-0026.md) |
+| gk-0029 | Preserve pointer refusal on unavailable standard buttons  | [gk-0029.md](../work/gk-0029.md) |
