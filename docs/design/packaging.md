@@ -19,3 +19,4 @@ Reference: [Standalone verification](../../README.md#standalone-verification), [
 | gk-0014 | Publish the runtime, build and test namespaces                  | [gk-0014.md](../work/gk-0014.md) |
 | gk-0033 | Bind release checks and receipts to their evidence              | [gk-0033.md](../work/gk-0033.md) |
 | gk-0035 | Use one local check runner                                      | [gk-0035.md](../work/gk-0035.md) |
+| gk-0038 | Migrate consumers and retire obsolete GameKit interfaces        | [gk-0038.md](../work/gk-0038.md) |
