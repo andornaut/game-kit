@@ -36,7 +36,8 @@ export interface ButtonAppearance {
 }
 
 export interface ButtonState {
-  readonly availability?: ControlAvailability | { readonly kind: "disabled" };
+  readonly availability?:
+    ControlAvailability | { readonly kind: "disabled" } | { readonly kind: "pointer-refusal" };
   readonly selected?: boolean;
   readonly toggled?: boolean;
 }
@@ -53,6 +54,8 @@ export interface ButtonOptions {
   readonly getState?: () => ButtonState;
   readonly reason?: HTMLElement;
   readonly onUnavailable?: (reason: string) => void;
+  // Only a pointer-owned action or a native pointer click may give this feedback.
+  readonly onPointerRefusal?: () => void;
 }
 
 export interface ButtonView {
@@ -119,25 +122,50 @@ export function createButton(document: Document, options: ButtonOptions): Button
     setButtonRole(appearance.role, element);
   }
   let disposed = false;
-  const refresh = (): ControlPresentation => {
+  let previousTabIndex: string | null | undefined;
+  const syncTabIndex = (pointerRefusal: boolean) => {
+    const tabIndex = element.getAttribute("tabindex");
+    if (pointerRefusal) {
+      if (previousTabIndex === undefined || tabIndex !== "-1") {
+        previousTabIndex = tabIndex;
+        element.tabIndex = -1;
+      }
+    } else if (previousTabIndex !== undefined) {
+      if (tabIndex === "-1") {
+        if (previousTabIndex === null) {
+          element.removeAttribute("tabindex");
+        } else {
+          element.setAttribute("tabindex", previousTabIndex);
+        }
+      }
+      previousTabIndex = undefined;
+    }
+  };
+  const refresh = (): ControlPresentation & { readonly pointerRefusal: boolean } => {
     const { availability = { kind: "available" }, selected, toggled } = options.getState?.() ?? {};
     const disabled = availability.kind === "disabled";
-    const state = disabled
-      ? { executable: false, visible: true }
-      : controlPresentation(availability);
+    const pointerRefusal = availability.kind === "pointer-refusal";
+    const state: ControlPresentation =
+      disabled || pointerRefusal
+        ? { executable: false, visible: true }
+        : controlPresentation(availability);
     element.hidden = !state.visible;
     element.disabled = disabled;
+    syncTabIndex(pointerRefusal);
     element.toggleAttribute("data-ui-selected", selected === true);
     if (toggled === undefined) {
       element.removeAttribute("aria-pressed");
     } else {
       element.setAttribute("aria-pressed", String(toggled));
     }
-    if (state.reason === undefined) {
+    if (pointerRefusal || state.reason !== undefined) {
+      element.setAttribute("aria-disabled", "true");
+    } else {
       element.removeAttribute("aria-disabled");
+    }
+    if (state.reason === undefined) {
       element.removeAttribute("aria-description");
     } else {
-      element.setAttribute("aria-disabled", "true");
       element.setAttribute("aria-description", state.reason);
     }
     const reason = options.reason;
@@ -148,7 +176,7 @@ export function createButton(document: Document, options: ButtonOptions): Button
       }
       reason.hidden = state.reason === undefined;
     }
-    return state;
+    return { ...state, pointerRefusal };
   };
   const admitted = () =>
     !disposed &&
@@ -173,8 +201,18 @@ export function createButton(document: Document, options: ButtonOptions): Button
     }
     return state;
   };
-  const dispatch = (hold: boolean, state: NonNullable<ReturnType<typeof current>>) => {
-    if (!state.executable && state.reason !== undefined) {
+  type Current = NonNullable<ReturnType<typeof current>>;
+  const canDispatch = (state: Current) =>
+    state.executable ||
+    (state.pointerRefusal
+      ? options.onPointerRefusal !== undefined
+      : state.reason !== undefined && options.onUnavailable !== undefined);
+  const dispatch = (hold: boolean, pointer: boolean, state: Current) => {
+    if (state.pointerRefusal) {
+      if (pointer) {
+        options.onPointerRefusal?.();
+      }
+    } else if (!state.executable && state.reason !== undefined) {
       options.onUnavailable?.(state.reason);
     } else if (state.executable && state.action !== null) {
       (hold ? (state.action.hold ?? state.action.activate) : state.action.activate)();
@@ -196,7 +234,7 @@ export function createButton(document: Document, options: ButtonOptions): Button
       stopClick(event);
     }
     if (state !== null) {
-      dispatch(false, state);
+      dispatch(false, event.detail > 0, state);
     }
   };
   refresh();
@@ -204,6 +242,7 @@ export function createButton(document: Document, options: ButtonOptions): Button
   return {
     dispose() {
       disposed = true;
+      syncTabIndex(false);
       element.removeAttribute("data-ui-pressed");
       element.removeEventListener("click", onClick, true);
     },
@@ -214,26 +253,23 @@ export function createButton(document: Document, options: ButtonOptions): Button
         return null;
       }
       const state = current();
-      const feedback = options.onUnavailable !== undefined;
-      if (
-        state === null ||
-        state.action === null ||
-        (!state.executable && !(feedback && state.reason !== undefined))
-      ) {
+      if (state === null || state.action === null || !canDispatch(state)) {
         return null;
       }
+      const feedback =
+        options.onUnavailable !== undefined || options.onPointerRefusal !== undefined;
       const expected = identity(state.action);
       const invoke = (hold: boolean) => {
         const next = sameAction(expected);
         if (next !== null) {
-          dispatch(hold, next);
+          dispatch(hold, true, next);
         }
       };
       return {
         activate: () => invoke(false),
         available: () => {
           const next = sameAction(expected);
-          return next !== null && (next.executable || (feedback && next.reason !== undefined));
+          return next !== null && canDispatch(next);
         },
         element,
         hold: () => invoke(true),
