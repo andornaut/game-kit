@@ -209,7 +209,7 @@ export function createButton(document: Document, options: ButtonOptions): Button
       : state.reason !== undefined && options.onUnavailable !== undefined);
   const dispatch = (hold: boolean, pointer: boolean, state: Current) => {
     if (state.pointerRefusal) {
-      if (pointer) {
+      if (pointer && state.action !== null) {
         options.onPointerRefusal?.();
       }
     } else if (!state.executable && state.reason !== undefined) {

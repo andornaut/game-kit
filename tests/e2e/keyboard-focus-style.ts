@@ -47,6 +47,7 @@ function control(locator: Locator) {
       background: css.backgroundColor,
       border: css.border,
       colour: css.color,
+      decoration: css.textDecorationLine,
       faceFill: face ? getComputedStyle(face).backgroundColor : css.backgroundColor,
       focus: element.matches(":focus"),
       focusVisible: element.matches(":focus-visible"),
@@ -448,18 +449,39 @@ try {
     const retry = page.getByRole("button", { name: "Retry" });
     const numeric = await retryWidth(retry);
     assert.equal(numeric.width, 128);
-    const box = (await retry.boundingBox())!;
-    const pressRetry = async () => {
+    const pressRetry = async (capture?: string) => {
+      const box = (await retry.boundingBox())!;
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
       await page.mouse.down();
-      await page.mouse.move(500, 400);
+      await nextPaint(page);
+      const down = await control(retry);
+      if (capture !== undefined) {
+        await save(page, capture);
+      }
+      await page.mouse.move(1, 1);
       await page.mouse.up();
       await nextPaint(page);
+      return down;
     };
-    await pressRetry();
-    const retryPointer = await control(retry);
-    assert(
-      retryPointer.focus && !retryPointer.focusVisible && retryPointer.outline.style === "none",
+    const checkPointerPress = async (capture: string) => {
+      const down = await pressRetry(capture);
+      const up = await control(retry);
+      assert(up.focus && !up.focusVisible && up.outline.style === "none");
+      assert(down.active && !down.focusVisible && !up.active);
+      assert.notEqual(down.background, up.background);
+      assert.equal(down.background, up.colour);
+      assert.equal(down.colour, up.background);
+      assert.equal(down.decoration, "underline");
+      assert.equal(up.decoration, "none");
+      assert.equal(down.outline.style, "none");
+      assert.equal(down.border, up.border);
+      assert.equal(down.shadow, up.shadow);
+      assert.deepEqual(down.geometry, up.geometry);
+      assert.equal(await page.locator("main").getAttribute("data-retried"), null);
+      return { down, up };
+    };
+    const { down: retryPressed, up: retryPointer } = await checkPointerPress(
+      "emergency-pointer-pressed",
     );
     await save(page, "emergency-pointer");
     await page.keyboard.press("ArrowRight");
@@ -489,6 +511,21 @@ try {
     await nextPaint(page);
     const forcedFallback = await control(retry);
     await save(page, "emergency-forced-colours");
+    await page.keyboard.down("Space");
+    await nextPaint(page);
+    const forcedPressed = await control(retry);
+    assert(forcedPressed.active && forcedPressed.focusVisible);
+    assert.equal(forcedPressed.background, highlightText);
+    assert.equal(forcedPressed.colour, highlight);
+    assert.equal(forcedPressed.outline.style, "none");
+    assert.equal(forcedPressed.border, forcedFallback.border);
+    assert.deepEqual(forcedPressed.geometry, forcedFallback.geometry);
+    await save(page, "emergency-forced-pressed");
+    await page.keyboard.up("Space");
+    await nextPaint(page);
+    assert.equal(await page.locator("main").getAttribute("data-retried"), "yes");
+    assert.equal((await control(retry)).active, false);
+    await page.locator("main").evaluate((element) => element.removeAttribute("data-retried"));
     await page.keyboard.press("Enter");
     assert.equal(await page.locator("main").getAttribute("data-retried"), "yes");
     await page.locator("main").evaluate((element) => element.removeAttribute("data-retried"));
@@ -518,9 +555,11 @@ try {
     assert.equal(await page.locator("main").getAttribute("data-retried"), "yes");
     assert.deepEqual(await retryWidth(retry), unconfigured);
 
+    await page.setViewportSize({ height: 720, width: 1280 });
     await page.goto(`${origin}emergency`);
     await mountRetry("content");
-    await page.keyboard.press("Tab");
+    const contentDesktopPress = await checkPointerPress("emergency-content-desktop-pressed");
+    await page.keyboard.press("ArrowRight");
     await nextPaint(page);
     const contentWidth = await retryWidth(retry);
     assert(Math.abs(contentWidth.width - contentWidth.labelWidth - contentWidth.edges) < 0.5);
@@ -530,6 +569,10 @@ try {
     const contentFocus = await control(retry);
     assert(contentFocus.focusVisible && contentFocus.outline.style === "none");
     await save(page, "emergency-content-width");
+
+    await page.setViewportSize({ height: 360, width: 720 });
+    await page.mouse.click(1, 1);
+    const contentCompactPress = await checkPointerPress("emergency-content-compact-pressed");
 
     await page.setViewportSize({ height: 100, width: 620 });
     const short = await retryWidth(retry);
@@ -572,15 +615,19 @@ try {
         crashSummary,
         pointerSummary,
         retryPointer,
+        retryPressed,
         retryStablePointer,
         retryReturn,
         forcedCrashButton,
         forcedSummary,
         fallback,
         forcedFallback,
+        forcedPressed,
         numeric,
         unconfigured,
         contentWidth,
+        contentDesktopPress,
+        contentCompactPress,
         short,
         narrow,
         unsupported,

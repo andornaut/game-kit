@@ -312,6 +312,42 @@ it("skips pointer refusal in the modal focus order and restores the caller's tab
   }
 });
 
+it("contains native pointer refusal when the current action is out of scope", () => {
+  const activate = vi.fn();
+  const refuse = vi.fn();
+  let inScope = true;
+  const view = createButton(document, {
+    content: { kind: "text", label: "Next" },
+    getAction: () => (inScope ? { activate } : null),
+    getState: () => ({ availability: { kind: "pointer-refusal" } }),
+    onPointerRefusal: refuse,
+    rule,
+  });
+  document.body.append(view.element);
+  const click = () =>
+    view.element.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }),
+    );
+  try {
+    const held = view.holdAction()!;
+    inScope = false;
+    expect(view.holdAction()).toBeNull();
+    expect(held.available()).toBe(false);
+    held.activate();
+    expect(click()).toBe(false);
+    expect(refuse).not.toHaveBeenCalled();
+
+    inScope = true;
+    view.element.click();
+    expect(refuse).not.toHaveBeenCalled();
+    expect(click()).toBe(false);
+    expect(refuse).toHaveBeenCalledOnce();
+    expect(activate).not.toHaveBeenCalled();
+  } finally {
+    view.dispose();
+  }
+});
+
 it.each(["native-click", "pointer-release"] as const)(
   "dispatches one pointer refusal with the root binding in %s mode",
   (mode) => {

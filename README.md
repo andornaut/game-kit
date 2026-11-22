@@ -53,6 +53,10 @@ Shared runtime contracts have dedicated paths: `runtime/art/rgbaImage` provides 
 
 Every legacy API path remains available unchanged as a deprecated compatibility alias to the same implementation as its canonical replacement. This includes CSS and the type-only `buildInfo` declaration. Use canonical paths for new imports and migrate existing imports according to this mapping; aliases are not removed by this alignment. Internal helpers and private fixtures are not additional APIs. Older migration sections and the source inventory below retain legacy names under this compatibility policy. These package paths do not establish consumer adoption or game integration.
 
+## Refusal admission and Retry press cues in 0.62.1
+
+Pointer refusal runs only when the caller resolves a current action. Configured loading-safe Retry shows a non-ring press cue for fixed or content width, including forced colours.
+
 ## Obsolete update offers and local checks in 0.62.0
 
 - A superseded update rejects with `ObsoleteUpdateOfferError` from `runtime/web/pwa/buildContract`. Close only the matching displayed prompt. The error names the version that started the switch. Genuine failures keep the existing error path.

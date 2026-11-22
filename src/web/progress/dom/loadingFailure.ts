@@ -481,7 +481,7 @@ export function mountLoadingFailure(
   retry.addEventListener("click", onClick);
   render();
   parent.append(element);
-  const focus = paintRetryFocus(retry);
+  const focus = paintRetryFocus(retry, presentation !== undefined);
   const view: LoadingFailureView = {
     dispose() {
       disposed = true;

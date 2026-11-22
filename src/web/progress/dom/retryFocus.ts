@@ -1,5 +1,8 @@
-// Keep the keyboard cue available under Retry's inline reset and without stylesheets.
-export function paintRetryFocus(button: HTMLButtonElement): {
+// Paint native button states under Retry's inline reset and without stylesheets.
+export function paintRetryFocus(
+  button: HTMLButtonElement,
+  paintPress: boolean,
+): {
   clear(): void;
   dispose(): void;
   refresh(): void;
@@ -18,33 +21,42 @@ export function paintRetryFocus(button: HTMLButtonElement): {
     return { clear() {}, dispose() {}, refresh() {} };
   }
   let frame: number | undefined;
+  let pressed = false;
   const { style } = button;
   let restore: (() => void) | undefined;
   const clear = () => {
     restore?.();
     restore = undefined;
+    pressed = false;
   };
   const paint = () => {
     clear();
-    if (document.activeElement !== button || !button.matches(":focus-visible")) {
+    const focused = document.activeElement === button && button.matches(":focus-visible");
+    pressed = paintPress && !button.disabled && button.matches(":active");
+    if (!focused && !pressed) {
       return;
     }
     if (forced.matches && !view.CSS.supports("forced-color-adjust", "none")) {
       return;
     }
+    // Reuse the caller's colour pair so both cues retain its text-to-face contrast.
+    const invert = focused !== pressed;
+    const systemFill = focused ? "Highlight" : "ButtonFace";
+    const systemText = focused ? "HighlightText" : "ButtonText";
     const properties: Record<string, string> = forced.matches
       ? {
-          "background-color": "Highlight",
+          "background-color": pressed ? systemText : systemFill,
           "border-color": "ButtonBorder",
           "box-shadow": "none",
-          color: "HighlightText",
+          color: pressed ? systemFill : systemText,
           "forced-color-adjust": "none",
           outline: "none",
         }
       : {
-          "background-color": style.color,
-          color: style.backgroundColor,
+          "background-color": invert ? style.color : style.backgroundColor,
+          color: invert ? style.backgroundColor : style.color,
           outline: "none",
+          ...(pressed ? { "text-decoration": "underline" } : {}),
         };
     const previous = Object.keys(properties).map((name) => ({
       name,
@@ -65,15 +77,20 @@ export function paintRetryFocus(button: HTMLButtonElement): {
       }
     };
   };
-  const schedule = () => {
+  const schedule = (event?: Event) => {
     // Native focus-visible can change on a key or pointer event with stable DOM focus.
-    if (frame === undefined && document.activeElement === button) {
+    if (
+      frame === undefined &&
+      (document.activeElement === button ||
+        (paintPress && (pressed || event?.composedPath().includes(button))))
+    ) {
       frame = view.requestAnimationFrame(() => {
         frame = undefined;
         paint();
       });
     }
   };
+  const releaseEvents = ["pointerup", "pointercancel", "pointerout", "dragstart", "keyup"] as const;
   const blur = () => {
     if (frame !== undefined) {
       view.cancelAnimationFrame(frame);
@@ -86,6 +103,12 @@ export function paintRetryFocus(button: HTMLButtonElement): {
   view.addEventListener("keydown", schedule, true);
   view.addEventListener("pointerdown", schedule, true);
   view.addEventListener("focus", schedule);
+  if (paintPress) {
+    for (const type of releaseEvents) {
+      view.addEventListener(type, schedule, true);
+    }
+    view.addEventListener("blur", blur);
+  }
   forced.addEventListener("change", schedule);
   schedule();
   return {
@@ -96,6 +119,12 @@ export function paintRetryFocus(button: HTMLButtonElement): {
       view.removeEventListener("keydown", schedule, true);
       view.removeEventListener("pointerdown", schedule, true);
       view.removeEventListener("focus", schedule);
+      if (paintPress) {
+        for (const type of releaseEvents) {
+          view.removeEventListener(type, schedule, true);
+        }
+        view.removeEventListener("blur", blur);
+      }
       forced.removeEventListener("change", schedule);
       blur();
     },
