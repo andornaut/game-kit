@@ -92,7 +92,6 @@ const JSON_TYPE = { "content-type": "application/json; charset=utf-8" };
 class FakeServer {
   readonly fetched: string[] = [];
   readonly headers = new Map<string, Record<string, string>>();
-  readonly statuses = new Map<string, number>();
   offline = false;
 
   constructor(readonly files: Record<string, string>) {}
@@ -105,7 +104,7 @@ class FakeServer {
     }
     const response = new Response(this.files[path] ?? "missing", {
       headers: this.headers.get(path) ?? (path.endsWith(".json") ? JSON_TYPE : {}),
-      status: this.statuses.get(path) ?? (path in this.files ? 200 : 404),
+      status: path in this.files ? 200 : 404,
     });
     Object.defineProperty(response, "url", { value: request.url });
     return Promise.resolve(response);
@@ -803,17 +802,57 @@ describe("evicted files", () => {
     expect(server.fetched).toEqual(["/app.js"]);
   });
 
-  it("serves but never stores network bytes that do not match, or a partial response", async () => {
-    const server = new FakeServer({ ...V1, "/app.js": "app v2" });
-    const worker = startWorker(server);
-    await worker.saveBuild(manifestOf("v1", V1), V1, { omit: ["/app.js", "/sound/hit.ogg"] });
+  it.each([
+    { body: "app", case: "a different size", status: 200 },
+    { body: "app v2", case: "a different digest at the same size", status: 200 },
+    { body: "app v1", case: "a redirect", redirected: true, status: 200 },
+    { body: "app v1", case: "partial content", status: 206 },
+    {
+      body: "app v1",
+      case: "a 200 response with Content-Range",
+      range: "bytes 0-5/8",
+      status: 200,
+    },
+  ])(
+    "rejects a listed network response with $case",
+    async ({ body, range, redirected, status }) => {
+      const server = new FakeServer(V2);
+      const worker = startWorker(server);
+      await worker.saveBuild(manifestOf("v1", V1), V1, { omit: ["/app.js"] });
+      await worker.saveBuild(manifestOf("v2", V2), V2);
+      await worker.setRecord(ACTIVE, "v2");
+      await worker.setRecord(pinKey("doc"), "v1");
+      const cache = await worker.storage.open(buildCacheName(POLICY, "v1"));
+      const response = new Response(body, {
+        headers: range === undefined ? {} : { "content-range": range },
+        status,
+      });
+      Object.defineProperty(response, "redirected", { value: redirected ?? false });
+      worker.fetches.mockResolvedValueOnce(response);
+
+      await expect(worker.get("/app.js", "doc")).rejects.toThrow(TypeError);
+      expect(worker.fetches).toHaveBeenCalledTimes(1);
+      expect(cache.entries.has("/app.js")).toBe(false);
+    },
+  );
+
+  it("returns the original verified response when writing it to the cache fails", async () => {
+    const worker = startWorker(new FakeServer(V1));
+    await worker.saveBuild(manifestOf("v1", V1), V1, { omit: ["/app.js"] });
     await worker.setRecord(ACTIVE, "v1");
-    expect(await (await worker.get("/app.js", "doc"))!.text()).toBe("app v2");
-    server.statuses.set("/sound/hit.ogg", 206);
-    expect((await worker.get("/sound/hit.ogg", "doc"))!.status).toBe(206);
     const cache = await worker.storage.open(buildCacheName(POLICY, "v1"));
+    const write = vi.spyOn(cache, "put").mockRejectedValueOnce(new Error("Cache write failed"));
+    const response = new Response(V1["/app.js"], {
+      headers: { "content-type": "text/javascript" },
+    });
+    worker.fetches.mockResolvedValueOnce(response);
+
+    const answer = await worker.get("/app.js", "doc");
+    expect(answer).toBe(response);
+    expect(answer?.headers.get("content-type")).toBe("text/javascript");
+    expect(await answer?.text()).toBe(V1["/app.js"]);
+    expect(write).toHaveBeenCalledOnce();
     expect(cache.entries.has("/app.js")).toBe(false);
-    expect(cache.entries.has("/sound/hit.ogg")).toBe(false);
   });
 
   it("refetches an entry whose digest header does not name the manifest's file", async () => {

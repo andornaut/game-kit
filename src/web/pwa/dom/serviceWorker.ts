@@ -374,18 +374,6 @@ export function runServiceWorker(policy: BuildPolicy): void {
     });
   };
 
-  // Stores a network copy of an evicted file only where its bytes match the manifest.
-  const storeVerified = async (cache: Cache, file: BuildFile, response: Response) => {
-    if (response.status !== 200 || response.redirected) {
-      return;
-    }
-    const body = await response.arrayBuffer();
-    if (body.byteLength !== file.byteSize || (await sha256Hex(body)) !== file.sha256) {
-      return;
-    }
-    await cache.put(file.url, storedCopy(file, body, response));
-  };
-
   // A verified JSON network response: credentials omitted, redirects refused, and its source,
   // headers, size and full SHA-256 checked before it answers or is stored.
   const fetchVerifiedJson = async (
@@ -450,7 +438,7 @@ export function runServiceWorker(policy: BuildPolicy): void {
   };
 
   // A stored entry is served by presence and its digest header. A missing one, such as an
-  // evicted file, is fetched from the network and served, and stored if it matches.
+  // evicted file, is served and stored only after verifying the network response.
   const serve = async (
     event: FetchRequestEvent,
     build: Build,
@@ -466,7 +454,14 @@ export function runServiceWorker(policy: BuildPolicy): void {
       return stored;
     }
     const response = await fetch(event.request);
-    event.waitUntil(storeVerified(cache, file, response.clone()).catch(() => undefined));
+    if (response.status !== 200 || response.redirected || response.headers.has("content-range")) {
+      throw new TypeError(`Expected a complete, non-redirected response for ${file.url}`);
+    }
+    const body = await response.clone().arrayBuffer();
+    if (body.byteLength !== file.byteSize || (await sha256Hex(body)) !== file.sha256) {
+      throw new TypeError(`Response does not match the build for ${file.url}`);
+    }
+    event.waitUntil(cache.put(file.url, storedCopy(file, body, response)).catch(() => undefined));
     return response;
   };
 
