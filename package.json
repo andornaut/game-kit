@@ -37,7 +37,7 @@
     "vite": "^8.3.5",
     "vitest": "^5.0.5"
   },
-  "version": "0.67.0",
+  "version": "0.68.0",
   "peerDependencies": {
     "phaser": "^4.2.1",
     "typescript": "^6.0.3",
@@ -160,6 +160,7 @@
     "./runtime/web/pwa/appWindow": "./src/web/pwa/appWindow.ts",
     "./runtime/web/pwa/backNavigation": "./src/web/pwa/backNavigation.ts",
     "./runtime/web/pwa/buildContract": "./src/web/pwa/buildContract.ts",
+    "./runtime/web/pwa/buildGroupRecipes": "./src/web/pwa/buildGroupRecipes.ts",
     "./runtime/web/pwa/buildIdentity": "./src/web/pwa/buildIdentity.ts",
     "./runtime/web/pwa/cachePolicy": "./src/web/pwa/cachePolicy.ts",
     "./runtime/web/pwa/dom/audioUnlock": "./src/web/pwa/dom/audioUnlock.ts",
@@ -172,6 +173,7 @@
     "./runtime/web/pwa/dom/launch": "./src/web/pwa/dom/launch.ts",
     "./runtime/web/pwa/dom/originMemberReader": "./src/web/pwa/dom/originMemberReader.ts",
     "./runtime/web/pwa/dom/serviceWorker": "./src/web/pwa/dom/serviceWorker.ts",
+    "./runtime/web/pwa/dom/updateGroupArchiveReader": "./src/web/pwa/dom/updateGroupArchiveReader.ts",
     "./runtime/web/pwa/dom/visibility": "./src/web/pwa/dom/visibility.ts",
     "./runtime/web/pwa/dom/wakeLock": "./src/web/pwa/dom/wakeLock.ts",
     "./runtime/web/pwa/originMemberIndex": "./src/web/pwa/originMemberIndex.ts",

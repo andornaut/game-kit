@@ -32,3 +32,4 @@ Reference: [Build output](../../README.md#build-output).
 | gk-0043 | Verify listed network responses before serving                              | [gk-0043.md](../work/gk-0043.md) |
 | gk-0044 | Download grouped updates with independently reusable archives               | [gk-0044.md](../work/gk-0044.md) |
 | gk-0045 | Serve packed origin members at their original URLs                          | [gk-0045.md](../work/gk-0045.md) |
+| gk-0046 | Reconstruct verified update archives from origin member bodies              | [gk-0046.md](../work/gk-0046.md) |

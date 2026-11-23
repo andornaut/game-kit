@@ -155,6 +155,27 @@ Origin packing works for direct HTTP requests without a service worker. It
 preserves the logical URL inventory and leaves update mode and update counts
 unchanged.
 
+## Reconstructing update archives at the origin
+
+Set `emitUpdateGroupRecipes: true` alongside `updateGroup` in
+`build/precachePlugin`. The build emits one additional JSON file at
+`updateGroupRecipesPath(version)`, exported by
+`runtime/web/pwa/buildGroupRecipes`. The pointer, manifest and raw archives
+are unchanged.
+
+For a version whose backing files are selected, pass its recipe to
+`createUpdateGroupArchiveReader({ readMember }, recipe)` from
+`runtime/web/pwa/dom/updateGroupArchiveReader`. The callback reads an exact
+body stream from that version’s immutable storage or verified origin member
+reader. Use that storage directly to avoid routing back into the assembler.
+`reader.read(path)` reconstructs a known archive at its existing URL after
+checking member and archive bytes. Unknown paths return `undefined`. Known
+paths with missing or invalid bytes reject.
+
+The host owns method handling, HTTP cache policy, storage lifetime and
+selection of retained builds. Keep the raw archives available until the
+assembled route is qualified on that host.
+
 ## Refusal admission and Retry press cues in 0.62.1
 
 Pointer refusal runs only when the caller resolves a current action. Configured loading-safe Retry shows a non-ring press cue for fixed or content width, including forced colours.
