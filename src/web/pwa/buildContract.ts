@@ -15,6 +15,11 @@ export function buildManifestUrl(version: string): string {
 // Keep emitted static assets below the 25 MiB deployment limit.
 export const BUILD_ARCHIVE_PART_BYTES = 24 * 1024 * 1024;
 
+export const MAX_UPDATE_UNITS = 100;
+
+// A group's bytes and digest must stay independent of the build that uses it.
+export const GROUP_ARCHIVE_IDENTITY = "group";
+
 export interface BuildArchiveReference {
   readonly schema: 1;
   readonly byteSize: number;
@@ -39,6 +44,7 @@ export interface BuildPointer {
   // buildManifestUrl(version).
   readonly manifest: string;
   readonly archive?: BuildArchiveReference;
+  readonly groups?: readonly BuildArchiveReference[];
 }
 
 // One file of a build, under the logical URL pages request. sha256 is the full lowercase hex

@@ -4,6 +4,7 @@
 // any other, so a pointer, manifest or record that a later kit version wrote stays readable.
 // buildManifest's validators are the strict build-time checks.
 import {
+  BUILD_ARCHIVE_PART_BYTES,
   type BuildArchiveReference,
   type BuildFile,
   type BuildManifest,
@@ -11,6 +12,7 @@ import {
   type BuildPack,
   type BuildPointer,
   type InstalledManifest,
+  MAX_UPDATE_UNITS,
 } from "./buildContract.ts";
 import { validateVerifiedJsonBodies, type VerifiedJsonBody } from "./verifiedJsonBody.ts";
 
@@ -71,6 +73,24 @@ export function parseBuildPointer(value: unknown): BuildPointer {
   }
   if (pointer.archive !== undefined) {
     parseBuildArchiveReference(pointer.archive);
+  }
+  if (pointer.groups !== undefined) {
+    if (
+      pointer.archive !== undefined ||
+      !Array.isArray(pointer.groups) ||
+      pointer.groups.length < 1 ||
+      pointer.groups.length > MAX_UPDATE_UNITS
+    ) {
+      throw new TypeError("Invalid build groups");
+    }
+    const seen = new Set<string>();
+    for (const value of pointer.groups) {
+      const group = parseBuildArchiveReference(value);
+      if (group.byteSize > BUILD_ARCHIVE_PART_BYTES || seen.has(group.sha256)) {
+        throw new TypeError("Invalid or duplicate build group");
+      }
+      seen.add(group.sha256);
+    }
   }
   return pointer as BuildPointer;
 }
