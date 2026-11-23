@@ -4,6 +4,7 @@ import {
   parseUpdateGroupRecipes,
   type UpdateGroupRecipe,
 } from "../buildGroupRecipes.ts";
+import { checkArchiveDigest, readExactArchiveBytes } from "./verifiedArchiveBytes.ts";
 
 interface UpdateGroupArchiveReaderContext {
   readonly readMember: (url: string) => Promise<ReadableStream<Uint8Array> | undefined>;
@@ -22,39 +23,7 @@ async function readExactMember(
   if (source === undefined) {
     throw new TypeError(`Missing update group member ${url}`);
   }
-  const reader = source.getReader();
-  let offset = 0;
-  try {
-    for (;;) {
-      // Read and check each chunk before copying it into the bounded archive buffer.
-      // eslint-disable-next-line no-await-in-loop
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      if (value.byteLength > target.byteLength - offset) {
-        throw new RangeError(`Update group member ${url} exceeds its declared size`);
-      }
-      target.set(value, offset);
-      offset += value.byteLength;
-    }
-  } catch (error) {
-    void reader.cancel(error).catch(() => undefined);
-    throw error;
-  } finally {
-    reader.releaseLock();
-  }
-  if (offset !== target.byteLength) {
-    throw new RangeError(`Update group member ${url} does not match its declared size`);
-  }
-}
-
-async function checkDigest(bytes: Uint8Array<ArrayBuffer>, expected: string, label: string) {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-  const hex = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
-  if (hex !== expected) {
-    throw new TypeError(`${label} checksum mismatch`);
-  }
+  await readExactArchiveBytes(source, target, `Update group member ${url}`);
 }
 
 async function reconstruct(
@@ -72,13 +41,13 @@ async function reconstruct(
     // eslint-disable-next-line no-await-in-loop
     await readExactMember(context, url, member);
     // eslint-disable-next-line no-await-in-loop
-    await checkDigest(member, sha256, `Update group member ${url}`);
+    await checkArchiveDigest(member, sha256, `Update group member ${url}`);
     offset = end;
   }
   if (offset !== bytes.byteLength) {
     throw new RangeError("Update group does not match the archive size");
   }
-  await checkDigest(bytes, archive.sha256, "Update group archive");
+  await checkArchiveDigest(bytes, archive.sha256, "Update group archive");
   return new Response(bytes, {
     headers: {
       "content-length": String(bytes.byteLength),
