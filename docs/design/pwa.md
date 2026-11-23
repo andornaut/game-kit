@@ -31,3 +31,4 @@ Reference: [Build output](../../README.md#build-output).
 | gk-0042 | Preserve plain-text assets in whole-build archives                          | [gk-0042.md](../work/gk-0042.md) |
 | gk-0043 | Verify listed network responses before serving                              | [gk-0043.md](../work/gk-0043.md) |
 | gk-0044 | Download grouped updates with independently reusable archives               | [gk-0044.md](../work/gk-0044.md) |
+| gk-0045 | Serve packed origin members at their original URLs                          | [gk-0045.md](../work/gk-0045.md) |

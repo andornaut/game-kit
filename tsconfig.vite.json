@@ -15,6 +15,7 @@
     "src/web/headers/vite/securityHeadersPlugin.ts",
     "src/web/pwa/vite/classicWorker.ts",
     "src/web/pwa/vite/hashedIconsPlugin.ts",
+    "src/web/pwa/vite/originMemberPacks.ts",
     "src/web/pwa/vite/precachePlugin.ts"
   ]
 }

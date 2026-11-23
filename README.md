@@ -135,6 +135,26 @@ other website output and older deployed builds have their own layout. The
 existing `wholeBuild: true` transport remains available for migration and cannot
 be combined with `updateGroup`.
 
+## Packed origin files
+
+Use `build/originMemberPacks` to collect selected original paths in
+content-addressed gzip archives. Explicit aliases must use the same bytes and
+media type. The returned schema-1 index at `runtime/web/pwa/originMemberIndex`
+records archive and member SHA-256, byte sizes, member offsets and media types.
+Emit the returned archives at their supplied paths. Both encoded and decoded
+archive sizes are bounded at 24 MiB.
+
+At the origin, pass the index and an archive body storage callback to
+`createOriginMemberReader` from `runtime/web/pwa/dom/originMemberReader`.
+Resolve the request pathname with `reader.read(path)`. An unknown path returns
+`undefined` so the host can try ordinary assets or a retained root. A known
+path with a missing or invalid archive rejects. The host owns root ordering,
+HTTP method and cache policy, and how failures are served.
+
+Origin packing works for direct HTTP requests without a service worker. It
+preserves the logical URL inventory and leaves update mode and update counts
+unchanged.
+
 ## Refusal admission and Retry press cues in 0.62.1
 
 Pointer refusal runs only when the caller resolves a current action. Configured loading-safe Retry shows a non-ring press cue for fixed or content width, including forced colours.

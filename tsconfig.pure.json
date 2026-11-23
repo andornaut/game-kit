@@ -80,6 +80,7 @@
     "src/web/pwa/cachePolicy.ts",
     "src/web/pwa/hashedIcons.ts",
     "src/web/pwa/installState.ts",
+    "src/web/pwa/originMemberIndex.ts",
     "src/web/pwa/precacheList.ts",
     "src/web/pwa/storagePersistence.ts",
     "src/web/pwa/verifiedJsonBody.ts",
