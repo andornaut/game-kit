@@ -6,7 +6,11 @@ import type { Plugin, ResolvedConfig } from "vite";
 import { isBuildId } from "../../build/buildVersion.ts";
 import { contentHash } from "../../build/vite/contentHash.ts";
 import { gitBuildMetadata } from "../../build/vite/gitHead.ts";
-import { type BuildArchiveIdentity, encodeBuildArchiveIndex } from "../buildArchive.ts";
+import {
+  type BuildArchiveFile,
+  type BuildArchiveIdentity,
+  encodeBuildArchiveIndex,
+} from "../buildArchive.ts";
 import {
   BUILD_ARCHIVE_PART_BYTES,
   BUILD_POINTER_URL,
@@ -18,6 +22,11 @@ import {
   GROUP_ARCHIVE_IDENTITY,
   MAX_UPDATE_UNITS,
 } from "../buildContract.ts";
+import {
+  parseUpdateGroupRecipes,
+  type UpdateGroupRecipes,
+  updateGroupRecipesPath,
+} from "../buildGroupRecipes.ts";
 import { createBuildManifest, createBuildPointer, UNKNOWN_BUILD_ID } from "../buildManifest.ts";
 import { packContentType, soundFormatOf } from "../buildRecords.ts";
 import { cacheKeyFor, type CachePolicy, isHashedAssetUrl } from "../cachePolicy.ts";
@@ -61,6 +70,8 @@ export interface PrecachePluginOptions {
   readonly wholeBuild?: true;
   // Assign each canonical offline URL to a stable update group.
   readonly updateGroup?: (url: string) => string;
+  // Emit versioned reconstruction recipes alongside the raw update group archives.
+  readonly emitUpdateGroupRecipes?: true;
   // Explicit public, URL-independent JSON families selected from final emitted discovery.
   readonly verifiedJsonBodies?: (files: HashedFiles) => readonly VerifiedJsonFamilySelection[];
   // The hashed files beyond what the page links, read once the bundle is written: bundleFile
@@ -116,10 +127,15 @@ function archiveFiles(
   listed: ReadonlyMap<string, Uint8Array>,
   urls: readonly string[],
   maxBytes?: number,
-): { archive: BuildArchiveReference; parts: Uint8Array[] } {
+): { archive: BuildArchiveReference; files: readonly BuildArchiveFile[]; parts: Uint8Array[] } {
+  const files = urls.map((url): BuildArchiveFile => [
+    url,
+    listed.get(url)!.byteLength,
+    archiveContentType(url),
+  ]);
   const prefix = encodeBuildArchiveIndex({
     ...identity,
-    files: urls.map((url) => [url, listed.get(url)!.byteLength, archiveContentType(url)]),
+    files,
   });
   const bodies = urls.map((url) => listed.get(url)!);
   const byteSize = bodies.reduce((size, bytes) => size + bytes.byteLength, prefix.byteLength);
@@ -145,13 +161,17 @@ function archiveFiles(
       offset += length;
     }
   }
-  return { archive: { byteSize, schema: 1, sha256: hash.digest("hex") }, parts };
+  return { archive: { byteSize, schema: 1, sha256: hash.digest("hex") }, files, parts };
 }
 
 function groupedArchives(
   updateGroup: NonNullable<PrecachePluginOptions["updateGroup"]>,
   listed: ReadonlyMap<string, Uint8Array>,
-): { archive: BuildArchiveReference; source: Uint8Array }[] {
+): {
+  archive: BuildArchiveReference;
+  files: readonly BuildArchiveFile[];
+  source: Uint8Array;
+}[] {
   const groups = new Map<string, string[]>();
   for (const url of [...listed.keys()].sort()) {
     const id = updateGroup(url);
@@ -173,13 +193,13 @@ function groupedArchives(
   const identity = { buildId: GROUP_ARCHIVE_IDENTITY, version: GROUP_ARCHIVE_IDENTITY };
   return [...groups.keys()].sort().map((id) => {
     try {
-      const { archive, parts } = archiveFiles(
+      const { archive, files, parts } = archiveFiles(
         identity,
         listed,
         groups.get(id)!,
         BUILD_ARCHIVE_PART_BYTES,
       );
-      return { archive, source: parts[0]! };
+      return { archive, files, source: parts[0]! };
     } catch (error) {
       throw new TypeError(`update group ${JSON.stringify(id)}: ${(error as Error).message}`, {
         cause: error,
@@ -268,6 +288,7 @@ function packFiles(
 export function precachePlugin({
   boot,
   buildId,
+  emitUpdateGroupRecipes,
   hashedFiles = () => ({ sounds: {}, urls: [] }),
   packs,
   pageHtmlFile,
@@ -283,6 +304,9 @@ export function precachePlugin({
   }
   if (updateGroup !== undefined && wholeBuild === true) {
     throw new TypeError("precache: choose updateGroup or wholeBuild");
+  }
+  if (emitUpdateGroupRecipes === true && updateGroup === undefined) {
+    throw new TypeError("precache: emitUpdateGroupRecipes requires updateGroup");
   }
   let root: string;
   let config: ResolvedConfig;
@@ -530,7 +554,7 @@ export function precachePlugin({
             this.error(`precache: ${(error as Error).message}`);
           }
         }
-        const archiveAssets = [
+        const updateAssets = [
           ...(archive?.parts.map((source, index) => ({
             fileName: buildArchivePartUrl(archive.archive, index).slice(1),
             source,
@@ -542,13 +566,32 @@ export function precachePlugin({
             type: "asset" as const,
           })) ?? []),
         ];
+        if (emitUpdateGroupRecipes === true && grouped !== undefined) {
+          const recipes: UpdateGroupRecipes = {
+            groups: grouped.map(({ archive, files }) => ({
+              archive,
+              files: files.map(([url, byteSize, contentType]) => [
+                url,
+                byteSize,
+                contentType,
+                sha256s.get(url)!,
+              ]),
+            })),
+            schema: 1,
+          };
+          updateAssets.push({
+            fileName: updateGroupRecipesPath(manifest.version).slice(1),
+            source: encoder.encode(JSON.stringify(parseUpdateGroupRecipes(recipes))),
+            type: "asset",
+          });
+        }
         const manifestFileName = buildManifestUrl(manifest.version).slice(1);
         const pointerFileName = BUILD_POINTER_URL.slice(1);
         for (const fileName of [
           manifestFileName,
           pointerFileName,
           ...packIndex.map(({ url }) => url.slice(1)),
-          ...archiveAssets.map(({ fileName }) => fileName),
+          ...updateAssets.map(({ fileName }) => fileName),
         ]) {
           if (fileName in bundle) {
             this.error(`precache: ${fileName} is reserved for the build manifest`);
@@ -561,7 +604,7 @@ export function precachePlugin({
             type: "asset",
           });
         }
-        for (const asset of archiveAssets) {
+        for (const asset of updateAssets) {
           this.emitFile(asset);
         }
         this.emitFile({

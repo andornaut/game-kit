@@ -22,6 +22,7 @@ import {
   type BuildPointer,
   GROUP_ARCHIVE_IDENTITY,
 } from "../buildContract.ts";
+import { updateGroupRecipesPath } from "../buildGroupRecipes.ts";
 import { UNKNOWN_BUILD_ID, validateBuildManifest, validateBuildPointer } from "../buildManifest.ts";
 import { installedManifest, parseBuildPointer } from "../buildRecords.ts";
 import type { CachePolicy } from "../cachePolicy.ts";
@@ -89,6 +90,7 @@ interface Build {
   readonly boot?: PrecachePluginOptions["boot"];
   readonly packs?: PrecachePluginOptions["packs"];
   readonly buildId?: string | undefined;
+  readonly emitUpdateGroupRecipes?: PrecachePluginOptions["emitUpdateGroupRecipes"];
   readonly verifiedJsonBodies?: PrecachePluginOptions["verifiedJsonBodies"];
   readonly lateEmitted?: Readonly<Record<string, string>>;
   // Files a plugin before the precache writes into the build output, by file name.
@@ -129,6 +131,7 @@ function fileMap(manifest: BuildManifest) {
 async function precache({
   boot,
   buildId,
+  emitUpdateGroupRecipes,
   emitted = {},
   hashedFiles,
   lateEmitted = {},
@@ -159,6 +162,7 @@ async function precache({
       precachePlugin({
         ...(boot === undefined ? {} : { boot }),
         buildId,
+        ...(emitUpdateGroupRecipes === undefined ? {} : { emitUpdateGroupRecipes }),
         ...(hashedFiles === undefined ? {} : { hashedFiles }),
         pageHtmlFile: "index.html",
         ...(packs === undefined ? {} : { packs }),
@@ -392,6 +396,21 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
       ...nextSite,
       hashedFiles: () => ({ sounds: {}, urls: ["/art/a.svg", "/art/body.fnt", "/art/z.svg"] }),
     });
+    const withRecipes = await precache({
+      ...options,
+      ...nextSite,
+      emitUpdateGroupRecipes: true,
+      hashedFiles: () => ({ sounds: {}, urls: ["/art/a.svg", "/art/body.fnt", "/art/z.svg"] }),
+    });
+    const recipeName = updateGroupRecipesPath(next.manifest.version).slice(1);
+    expect(next.output.has(recipeName)).toBe(false);
+    expect([...withRecipes.output.keys()].filter((name) => !next.output.has(name))).toEqual([
+      recipeName,
+    ]);
+    expect(new Map([...withRecipes.output].filter(([name]) => name !== recipeName))).toEqual(
+      next.output,
+    );
+
     expect(initial.pointer.buildId).not.toBe(next.pointer.buildId);
     expect(initial.pointer.version).not.toBe(next.pointer.version);
     expect(initial.pointer).not.toHaveProperty("archive");
@@ -407,22 +426,25 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     expect(bytesOf(next, art!)).toEqual(bytesOf(initial, art!));
     const identity = { buildId: GROUP_ARCHIVE_IDENTITY, version: GROUP_ARCHIVE_IDENTITY };
     const files = fileMap(next.manifest);
-    const urls = next.pointer.groups!.map((group) => {
+    const recipes = next.pointer.groups!.map((group) => {
       const bytes = bytesOf(next, group);
       expect(group).toEqual({ byteSize: bytes.byteLength, schema: 1, sha256: sha256(bytes) });
       const index = parseBuildArchiveIndex(identity, bytes.byteLength, bytes);
-      for (const { byteSize, contentType, offset, url } of index.files) {
+      const entries = index.files.map(({ byteSize, contentType, offset, url }) => {
         if (url === "/art/body.fnt") {
           expect(contentType).toBe("text/xml; charset=utf-8");
         }
-        expect({
-          byteSize,
-          sha256: sha256(bytes.subarray(offset, offset + byteSize)),
-          url,
-        }).toEqual(files.get(url));
-      }
-      return index.files.map(({ url }) => url);
+        const digest = sha256(bytes.subarray(offset, offset + byteSize));
+        expect({ byteSize, sha256: digest, url }).toEqual(files.get(url));
+        return [url, byteSize, contentType, digest] as const;
+      });
+      return { archive: group, files: entries };
     });
+    expect(JSON.parse(Buffer.from(withRecipes.output.get(recipeName)!).toString())).toEqual({
+      groups: recipes,
+      schema: 1,
+    });
+    const urls = recipes.map(({ files }) => files.map(([url]) => url));
     expect(urls[0]).toContain("/");
     expect(urls[1]).toEqual(["/art/a.svg", "/art/body.fnt", "/art/z.svg"]);
     expect(urls.flat().sort()).toEqual([...files.keys()].sort());
@@ -778,6 +800,11 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
       "a missing update group identifier",
       { updateGroup: () => "" },
       /updateGroup\("\/"\) must return a nonempty group identifier/,
+    ],
+    [
+      "update group recipes without update groups",
+      { emitUpdateGroupRecipes: true },
+      "precache: emitUpdateGroupRecipes requires updateGroup",
     ],
     [
       "grouped and whole-build modes together",
