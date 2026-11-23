@@ -6,7 +6,7 @@ registration, policies and copy.
 
 The first install downloads and verifies the complete build from the page under the one loading screen; updates stage in the background and switch silently at launch or through the game's Update now. See the [install and update design](../install-and-update.md).
 
-Reference: [Classic service-worker output](../../README.md#classic-service-worker-output).
+Reference: [Build output](../../README.md#build-output).
 
 ## Work items
 
