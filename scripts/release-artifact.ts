@@ -102,11 +102,16 @@ import { isBuildId } from '@andornaut/game-kit/runtime/web/pwa/buildIdentity';
 import { runServiceWorker } from '@andornaut/game-kit/runtime/web/pwa/dom/serviceWorker';
 const previousSelf = globalThis.self;
 try {
-  const listeners = [];
+  const listeners = new Map();
   globalThis.self = {location:{origin:'https://fixture.invalid'},
-    addEventListener(type){listeners.push(type);}};
+    addEventListener(type, callback){listeners.set(type, callback);}};
   runServiceWorker({cacheNamePrefix:'proof-',hashedAssetPrefix:'/assets/'});
-  assert.deepEqual(listeners,['install','activate','fetch']);
+  assert.deepEqual([...listeners.keys()],['install','activate','message','fetch']);
+  const replies = [];
+  const ports = [{postMessage(value){replies.push(value);}}];
+  listeners.get('message')({data:'unrelated',ports});
+  listeners.get('message')({data:'game-kit:archive-router:1',ports});
+  assert.deepEqual(replies,['game-kit:archive-router:1']);
 } finally {
   if (previousSelf === undefined) delete globalThis.self; else globalThis.self = previousSelf;
 }
