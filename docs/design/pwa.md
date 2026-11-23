@@ -34,4 +34,4 @@ Reference: [Build output](../../README.md#build-output).
 | gk-0045 | Serve packed origin members at their original URLs                          | [gk-0045.md](../work/gk-0045.md) |
 | gk-0046 | Reconstruct verified update archives from origin member bodies              | [gk-0046.md](../work/gk-0046.md) |
 | gk-0047 | Remove redundant delivery paths from grouped packing                        | [gk-0047.md](../work/gk-0047.md) |
-| gk-0048 | Use prebuilt groups for install and updates                                  | [gk-0048.md](../work/gk-0048.md) |
+| gk-0048 | Use prebuilt groups for install and updates                                 | [gk-0048.md](../work/gk-0048.md) |
