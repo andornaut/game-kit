@@ -373,7 +373,17 @@ describe("whole-build updates", () => {
     f.store.state.active = V1.pointer.version;
     f.deploy(build);
     f.routes.set(archivePath, () => new Response(body));
+    f.visibility.set("hidden");
     await expect(f.launch.run()).resolves.toBe("play");
+    await vi.waitFor(() =>
+      expect(f.updates).toContainEqual({
+        phase: "staging",
+        value: 0,
+        version: build.pointer.version,
+      }),
+    );
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([BUILD_POINTER_URL]);
+    f.visibility.set("visible");
     await vi.waitFor(() => expect(f.offers).toHaveLength(1));
     expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([
       BUILD_POINTER_URL,

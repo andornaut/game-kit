@@ -894,6 +894,22 @@ export function createLaunch(
     }
   };
 
+  let resumeArchiveTransfer: (() => void) | undefined;
+  const waitForArchiveTransfer = (signal: AbortSignal): Promise<void> => {
+    if (visible || signal.aborted) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const resume = () => {
+        signal.removeEventListener("abort", resume);
+        resumeArchiveTransfer = undefined;
+        resolve();
+      };
+      resumeArchiveTransfer = resume;
+      signal.addEventListener("abort", resume, { once: true });
+    });
+  };
+
   const stageArchive = async (
     pointer: BuildPointer,
     state: BuildState,
@@ -907,6 +923,7 @@ export function createLaunch(
       reportUpdate({ phase: "staging", value: 0, version });
       const body = await downloadBuildArchive(
         {
+          beforePart: waitForArchiveTransfer,
           clearTimeout: installContext.clearTimeout,
           fetch: installContext.fetch,
           inactivityMs: FOREGROUND_INSTALL.inactivityMs,
@@ -1167,6 +1184,7 @@ export function createLaunch(
         cancelRetry();
         return;
       }
+      resumeArchiveTransfer?.();
       if (required || retryMs !== 0) {
         if (!check(false)) {
           armRetry();

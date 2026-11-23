@@ -97,6 +97,24 @@ original URL. Sparse updates, unavailable packs and unavailable decoding use
 individual files. See the [install and update design](docs/install-and-update.md)
 for HTTP representation and transfer qualification.
 
+## Optional whole-build updates
+
+Set `wholeBuild: true` in `precachePlugin` to download a complete archive when
+the build version changes. Use it for games where copying thousands of cached
+files costs more than downloading the build again. Omit the option for
+ordinary delta staging. The option cannot be combined with `packs`.
+
+The pointer identifies one archive by size and SHA-256. Parts are capped at
+24 MiB to fit static hosting limits. The updater verifies the complete archive
+once and stores it intact. The worker serves each pinned build by logical URL
+from the archive index. A version match downloads nothing.
+
+First install uses the existing bootstrap. The build continues to emit its
+manifest and individual files so previously installed clients can migrate.
+Whole-build staging waits for a controlling worker that supports the archive
+format. Existing in-session consent, cold-launch activation and required-save
+recovery apply to complete archives.
+
 ## Refusal admission and Retry press cues in 0.62.1
 
 Pointer refusal runs only when the caller resolves a current action. Configured loading-safe Retry shows a non-ring press cue for fixed or content width, including forced colours.

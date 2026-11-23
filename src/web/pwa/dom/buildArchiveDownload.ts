@@ -6,6 +6,7 @@ import {
 import type { BuildInstallContext } from "./buildInstaller.ts";
 
 interface ArchiveDownloadContext extends Pick<BuildInstallContext, "fetch" | "now" | "setTimeout"> {
+  readonly beforePart?: (signal: AbortSignal) => Promise<void>;
   readonly clearTimeout: (handle: unknown) => void;
   readonly inactivityMs: number;
   readonly signal: AbortSignal;
@@ -17,7 +18,8 @@ export async function downloadBuildArchive(
   context: ArchiveDownloadContext,
   archive: BuildArchiveReference,
 ): Promise<Blob> {
-  const { clearTimeout, fetch, inactivityMs, now, onBytes, setTimeout, signal } = context;
+  const { beforePart, clearTimeout, fetch, inactivityMs, now, onBytes, setTimeout, signal } =
+    context;
   signal.throwIfAborted();
   if (!Number.isSafeInteger(inactivityMs) || inactivityMs <= 0) {
     throw new RangeError("Invalid build archive inactivity timeout");
@@ -40,11 +42,19 @@ export async function downloadBuildArchive(
       }
     }, ms);
   };
-  arm(inactivityMs);
   let body: Blob;
   try {
     body = await readArchive(
       {
+        beginPart: async () => {
+          clearTimeout(timer);
+          if (beforePart !== undefined) {
+            await Promise.race([beforePart(run.signal), stopped]);
+          }
+          run.signal.throwIfAborted();
+          last = now();
+          arm(inactivityMs);
+        },
         fetch,
         onBytes,
         signal: run.signal,
@@ -71,17 +81,20 @@ export async function downloadBuildArchive(
 
 async function readArchive(
   context: Pick<ArchiveDownloadContext, "fetch" | "signal"> & {
+    readonly beginPart: () => Promise<void>;
     readonly onBytes: ArchiveDownloadContext["onBytes"];
     readonly stopped: Promise<never>;
     readonly touch: () => void;
   },
   archive: BuildArchiveReference,
 ): Promise<Blob> {
-  const { fetch, onBytes, signal, stopped, touch } = context;
+  const { beginPart, fetch, onBytes, signal, stopped, touch } = context;
   const chunks: BlobPart[] = [];
   let received = 0;
   for (let index = 0; received < archive.byteSize; index += 1) {
-    signal.throwIfAborted();
+    // A background download waits for visibility between parts.
+    // eslint-disable-next-line no-await-in-loop
+    await beginPart();
     const target = Math.min(received + BUILD_ARCHIVE_PART_BYTES, archive.byteSize);
     // Parts must be concatenated in their published order.
     // eslint-disable-next-line no-await-in-loop
