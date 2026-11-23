@@ -17,10 +17,11 @@ import {
 import { buildDeployment, type Deployment, type FixtureSize, VARIANTS } from "./build.ts";
 import { connectBrowserNetwork, type NetworkConditions } from "./cdp.ts";
 import type { E2eState } from "./fixture/play/main.ts";
-import { POLICY } from "./fixture/policy.ts";
+import { POLICY, SAVE_MS } from "./fixture/policy.ts";
 import { type RequestRecord, startServer } from "./server.ts";
 
 const LONG = process.argv.includes("--long");
+const WHOLE_BUILD = process.argv.includes("--whole-build");
 const SIZE: FixtureSize = LONG
   ? { fileBytes: 10_000, files: 4500 }
   : { fileBytes: 4000, files: 400 };
@@ -35,8 +36,6 @@ const THROTTLE: NetworkConditions = {
 const CPU_SLOWDOWN = 4;
 const SINGLE_EVENT_LIMIT_MS = 300_000;
 const CDP_PORT = 9333;
-// The fixture's save duration (fixture/play/main.ts SAVE_MS).
-const SAVE_MS = 1500;
 const BUILD_CACHE_PREFIX = `${POLICY.cacheNamePrefix}build-`;
 
 if (!existsSync("/.dockerenv")) {
@@ -514,7 +513,10 @@ async function main(): Promise<number> {
   return failedCount;
 }
 
-main().then(
+const run = WHOLE_BUILD
+  ? import("./wholeBuild.ts").then(({ runWholeBuildAcceptance }) => runWholeBuildAcceptance())
+  : main();
+run.then(
   (failedCount) => {
     process.exitCode = failedCount === 0 ? 0 : 1;
   },
@@ -525,9 +527,11 @@ main().then(
       console.error(`Stopped: ${error.message}`);
     }
     const failedCount = results.filter((r) => !r.ok).length;
-    console.log(
-      `e2e ${LONG ? "long" : "short"}: stopped after ${results.length - failedCount} passed, ${failedCount} failed`,
-    );
+    if (!WHOLE_BUILD) {
+      console.log(
+        `e2e ${LONG ? "long" : "short"}: stopped after ${results.length - failedCount} passed, ${failedCount} failed`,
+      );
+    }
     process.exitCode = 1;
   },
 );

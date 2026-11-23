@@ -8,8 +8,13 @@ import { fileURLToPath } from "node:url";
 
 import { build, type Plugin } from "vite";
 
-import { BUILD_POINTER_URL, type BuildManifest } from "../../src/web/pwa/buildContract.ts";
+import {
+  BUILD_POINTER_URL,
+  type BuildManifest,
+  type BuildPointer,
+} from "../../src/web/pwa/buildContract.ts";
 import { validateBuildManifest, validateBuildPointer } from "../../src/web/pwa/buildManifest.ts";
+import { parseBuildPointer } from "../../src/web/pwa/buildRecords.ts";
 import { precachePlugin } from "../../src/web/pwa/vite/precachePlugin.ts";
 import { POLICY } from "./fixture/policy.ts";
 
@@ -32,6 +37,7 @@ export interface Deployment {
   readonly variant: Variant;
   readonly directory: string;
   readonly manifest: BuildManifest;
+  readonly pointer: BuildPointer;
 }
 
 const LEVELS = 8;
@@ -129,12 +135,16 @@ function fixtureFiles(
 
 export function readDeployment(variant: Variant, directory: string): Deployment {
   const json = (url: string): unknown => JSON.parse(readFileSync(join(directory, url), "utf8"));
-  const pointer = validateBuildPointer(json(BUILD_POINTER_URL));
-  return { directory, manifest: validateBuildManifest(json(pointer.manifest)), variant };
+  const { archive, ...legacyPointer } = parseBuildPointer(json(BUILD_POINTER_URL));
+  const pointer = {
+    ...validateBuildPointer(legacyPointer),
+    ...(archive === undefined ? {} : { archive }),
+  };
+  return { directory, manifest: validateBuildManifest(json(pointer.manifest)), pointer, variant };
 }
 
 export async function buildDeployment(
-  context: { readonly outRoot: string; readonly size: FixtureSize },
+  context: { readonly outRoot: string; readonly size: FixtureSize; readonly wholeBuild?: true },
   variant: Variant,
 ): Promise<Deployment> {
   const directory = join(context.outRoot, variant);
@@ -164,6 +174,7 @@ export async function buildDeployment(
         policy: POLICY,
         serviceWorkerSource: join(FIXTURE, "sw.ts"),
         verifiedJsonBodies: () => [SHARED_JSON],
+        ...(context.wholeBuild === true ? { wholeBuild: true } : {}),
       }),
     ],
     publicDir: false,

@@ -3,13 +3,11 @@
 // runner reads and drives window.e2e.
 import type { UpdateOffer } from "../../../../src/web/pwa/buildContract.ts";
 import { browserLaunchContext, createLaunch } from "../../../../src/web/pwa/dom/launch.ts";
-import { POLICY } from "../policy.ts";
+import { POLICY, SAVE_MS } from "../policy.ts";
 
 declare const __VARIANT__: string;
 
 export const SAVE_KEY = "e2e-save";
-// How long the fixture's save takes, so the runner can see updateNow wait for it.
-export const SAVE_MS = 1500;
 
 export interface E2eState {
   // The build this document's code is from.
