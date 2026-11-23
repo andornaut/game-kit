@@ -226,9 +226,6 @@ export function precachePlugin({
   verifiedJsonBodies,
   wholeBuild,
 }: PrecachePluginOptions): Plugin {
-  if (wholeBuild === true && packs !== undefined) {
-    throw new TypeError("precache: wholeBuild and packs cannot be used together");
-  }
   if (packs !== undefined && (!Number.isSafeInteger(packs.maxBytes) || packs.maxBytes < 1)) {
     throw new RangeError("precache: packs.maxBytes must be a positive safe integer");
   }

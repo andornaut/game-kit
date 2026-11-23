@@ -1,6 +1,12 @@
+import { createHash } from "node:crypto";
+
 import { expect, it, vi } from "vitest";
 
-import { buildArchivePartUrl, type BuildArchiveReference } from "../buildContract.ts";
+import {
+  BUILD_ARCHIVE_PART_BYTES,
+  buildArchivePartUrl,
+  type BuildArchiveReference,
+} from "../buildContract.ts";
 import { downloadBuildArchive } from "./buildArchiveDownload.ts";
 
 const archive: BuildArchiveReference = {
@@ -41,6 +47,31 @@ it("rejects shorter, longer and same-size corrupt downloads", async () => {
       downloadBuildArchive({ ...timing, fetch: async () => new Response(body), signal }, archive),
     ).rejects.toThrow(message);
   }
+});
+
+it("joins two hosting-sized parts under one checksum", async () => {
+  const first = new Uint8Array(BUILD_ARCHIVE_PART_BYTES);
+  first[first.length - 1] = 7;
+  const second = new Uint8Array([9, 3]);
+  const reference = {
+    byteSize: first.length + second.length,
+    schema: 1,
+    sha256: createHash("sha256").update(first).update(second).digest("hex"),
+  } as const;
+  const fetch = vi.fn();
+  fetch.mockResolvedValueOnce(new Response(first)).mockResolvedValueOnce(new Response(second));
+  const result = await downloadBuildArchive(
+    { ...timing, fetch, signal: new AbortController().signal },
+    reference,
+  );
+  expect(result.size).toBe(reference.byteSize);
+  expect([...new Uint8Array(await result.slice(first.length - 1).arrayBuffer())]).toEqual([
+    7, 9, 3,
+  ]);
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+    buildArchivePartUrl(reference, 0),
+    buildArchivePartUrl(reference, 1),
+  ]);
 });
 
 it("fails a stalled transport without waiting for a response body", async () => {

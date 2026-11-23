@@ -304,6 +304,7 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
       "art/hit.ogg": new Uint8Array([4, 5, 6]),
       "assets/data.json": '{"ok":true}',
       "assets/empty.bin": new Uint8Array(),
+      "assets/extra.json": JSON.stringify({ value: "a".repeat(200) }),
       "assets/font.woff2": "font",
       "assets/layout.css": "body { color: black; }",
       "assets/spanning.bin": new Uint8Array(BUILD_ARCHIVE_PART_BYTES + 1).fill(0xa5),
@@ -317,6 +318,7 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
           .filter((name) => name.startsWith("assets/"))
           .map((name) => `/${name}`),
       }),
+      packs: { maxBytes: 1024 },
       root,
     };
     const legacy = await precache(options);
@@ -324,6 +326,7 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     expect(legacy.pointer).not.toHaveProperty("archive");
     expect(pointer.version).not.toBe(legacy.pointer.version);
     expect(manifest).toEqual({ ...legacy.manifest, version: pointer.version });
+    expect(manifest.packs?.length).toBeGreaterThan(0);
     const { archive } = pointer;
     expect(archive).toBeDefined();
     const partNames = [0, 1].map((index) => buildArchivePartUrl(archive!, index).slice(1));
@@ -663,11 +666,6 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
       "a build file in the reserved manifest directory",
       { emitted: { ".game-kit/build.json": "{}" } },
       "precache: .game-kit/build.json is reserved for the build manifest",
-    ],
-    [
-      "whole-build and pack transports selected together",
-      { packs: { maxBytes: 504 }, wholeBuild: true },
-      "precache: wholeBuild and packs cannot be used together",
     ],
     [
       "an archive file with an unknown media type",
