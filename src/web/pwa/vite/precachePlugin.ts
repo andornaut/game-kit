@@ -67,7 +67,7 @@ export interface PrecachePluginOptions {
   readonly wholeBuild?: true;
   // Assign each canonical offline URL to a stable update group.
   readonly updateGroup?: (url: string) => string;
-  // Emit versioned reconstruction recipes alongside the raw update group archives.
+  // Use a versioned reconstruction recipe as the hosted update group transport.
   readonly emitUpdateGroupRecipes?: true;
   // Explicit public, URL-independent JSON families selected from final emitted discovery.
   readonly verifiedJsonBodies?: (files: HashedFiles) => readonly VerifiedJsonFamilySelection[];
@@ -557,11 +557,6 @@ export function precachePlugin({
             source,
             type: "asset" as const,
           })) ?? []),
-          ...(grouped?.map(({ archive, source }) => ({
-            fileName: buildArchivePartUrl(archive, 0).slice(1),
-            source,
-            type: "asset" as const,
-          })) ?? []),
         ];
         if (emitUpdateGroupRecipes === true && grouped !== undefined) {
           const recipes: UpdateGroupRecipes = {
@@ -581,6 +576,14 @@ export function precachePlugin({
             source: encoder.encode(JSON.stringify(parseUpdateGroupRecipes(recipes))),
             type: "asset",
           });
+        } else if (grouped !== undefined) {
+          updateAssets.push(
+            ...grouped.map(({ archive, source }) => ({
+              fileName: buildArchivePartUrl(archive, 0).slice(1),
+              source,
+              type: "asset" as const,
+            })),
+          );
         }
         const manifestFileName = buildManifestUrl(manifest.version).slice(1);
         const pointerFileName = BUILD_POINTER_URL.slice(1);

@@ -407,8 +407,14 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     expect([...withRecipes.output.keys()].filter((name) => !next.output.has(name))).toEqual([
       recipeName,
     ]);
+    const groupPartNames = new Set(
+      next.pointer.groups!.map((group) => buildArchivePartUrl(group, 0).slice(1)),
+    );
+    expect([...next.output.keys()].filter((name) => !withRecipes.output.has(name)).sort()).toEqual(
+      [...groupPartNames].sort(),
+    );
     expect(new Map([...withRecipes.output].filter(([name]) => name !== recipeName))).toEqual(
-      next.output,
+      new Map([...next.output].filter(([name]) => !groupPartNames.has(name))),
     );
 
     expect(initial.pointer.buildId).not.toBe(next.pointer.buildId);
