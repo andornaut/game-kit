@@ -86,8 +86,8 @@ above, including in mocks, CSS and generated references.
 
 `runtime/web/pwa/dom/launch` no longer exports `LAUNCH_RELOAD_KEY`,
 `LAUNCH_PROGRESS_KEY`, `legacyRoutingCacheName` or `legacyGroupDatabaseName`.
-Use the launch lifecycle and `bootProgress()` for recovery. Launch still
-recognises existing persisted keys and migrates older installed builds.
+Use the launch lifecycle and `bootProgress()` for recovery. Version 0.69 removes
+the pre-router cache migration.
 
 ## Optional install packs in 0.63.0
 
