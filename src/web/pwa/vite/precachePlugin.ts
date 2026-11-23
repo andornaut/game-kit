@@ -67,6 +67,8 @@ export interface PrecachePluginOptions {
   readonly wholeBuild?: true;
   // Assign each canonical offline URL to a stable update group.
   readonly updateGroup?: (url: string) => string;
+  // Install from the prebuilt groups and omit selected logical URLs from the loose output.
+  readonly groupedFirstInstall?: { readonly archiveOnly: (url: string) => boolean };
   // Use a versioned reconstruction recipe as the hosted update group transport.
   readonly emitUpdateGroupRecipes?: true;
   // Explicit public, URL-independent JSON families selected from final emitted discovery.
@@ -286,6 +288,7 @@ export function precachePlugin({
   boot,
   buildId,
   emitUpdateGroupRecipes,
+  groupedFirstInstall,
   hashedFiles = () => ({ sounds: {}, urls: [] }),
   packs,
   pageHtmlFile,
@@ -298,6 +301,16 @@ export function precachePlugin({
 }: PrecachePluginOptions): Plugin {
   if (packs !== undefined && (!Number.isSafeInteger(packs.maxBytes) || packs.maxBytes < 1)) {
     throw new RangeError("precache: packs.maxBytes must be a positive safe integer");
+  }
+  if (groupedFirstInstall !== undefined) {
+    if (updateGroup === undefined) {
+      throw new TypeError("precache: groupedFirstInstall requires updateGroup");
+    }
+    if (packs !== undefined || emitUpdateGroupRecipes === true || wholeBuild === true) {
+      throw new TypeError(
+        "precache: groupedFirstInstall cannot be combined with packs, emitUpdateGroupRecipes or wholeBuild",
+      );
+    }
   }
   if (updateGroup !== undefined && wholeBuild === true) {
     throw new TypeError("precache: choose updateGroup or wholeBuild");
@@ -457,6 +470,79 @@ export function precachePlugin({
           }
         }
         const groups = grouped?.map(({ archive }) => archive);
+        const archiveOnlyFiles: string[] = [];
+        if (groupedFirstInstall !== undefined) {
+          const directUrls = new Set(
+            [...pageUrls, ...linkedUrls, `/${pageHtmlFile}`, `/${serviceWorkerFileName}`].map(
+              cacheKeyFor,
+            ),
+          );
+          // Find the direct closure of all emitted entry pages, excluding lazy imports.
+          const staticBundle: Record<string, BundleFile> = Object.create(null);
+          const entryFiles: string[] = [];
+          for (const [fileName, file] of Object.entries(bundle)) {
+            if (file.type === "chunk") {
+              staticBundle[fileName] = {
+                imports: file.imports,
+                type: file.type,
+                ...(file.viteMetadata === undefined ? {} : { viteMetadata: file.viteMetadata }),
+              };
+              if (file.isEntry) {
+                entryFiles.push(fileName);
+              }
+            } else {
+              staticBundle[fileName] = { type: file.type };
+              if (fileName.endsWith(".html")) {
+                directUrls.add(cacheKeyFor(`/${fileName}`));
+                const html =
+                  typeof file.source === "string" ? file.source : decoder.decode(file.source);
+                for (const url of rootRelativeUrls(html)) {
+                  directUrls.add(cacheKeyFor(url));
+                }
+              }
+            }
+          }
+          const staticFiles = bundleDependencies(staticBundle, [
+            ...entryFiles,
+            ...[...directUrls].map((url) => url.slice(1)),
+          ]);
+          for (const fileName of staticFiles) {
+            directUrls.add(cacheKeyFor(`/${fileName}`));
+          }
+
+          for (const url of [...listed.keys()].sort()) {
+            if (!groupedFirstInstall.archiveOnly(url)) {
+              continue;
+            }
+            if (directUrls.has(url)) {
+              this.error(`precache: groupedFirstInstall must serve bootstrap URL ${url} directly`);
+            }
+            const fileName = url.slice(1);
+            if (!Object.hasOwn(bundle, fileName)) {
+              this.error(
+                `precache: groupedFirstInstall cannot prune ${url} outside the Rollup output`,
+              );
+            }
+            archiveOnlyFiles.push(fileName);
+          }
+          if (publicDir && config.build.copyPublicDir) {
+            await Promise.all(
+              archiveOnlyFiles.map(async (fileName) => {
+                try {
+                  await this.fs.lstat(`${publicDir}/${fileName}`);
+                } catch (error) {
+                  if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+                    return;
+                  }
+                  throw error;
+                }
+                this.error(
+                  `precache: groupedFirstInstall cannot prune /${fileName} also copied from publicDir`,
+                );
+              }),
+            );
+          }
+        }
         const byteSizes = new Map([...listed].map(([url, bytes]) => [url, bytes.byteLength]));
         const sha256s = new Map([...listed].map(([url, bytes]) => [url, sha256Hex(bytes)]));
         const bootUrls = [...(boot?.(discovery) ?? [])];
@@ -512,6 +598,7 @@ export function precachePlugin({
         const identity = JSON.stringify({
           boot: bootUrls,
           buildId: recordedBuildId,
+          ...(groupedFirstInstall === undefined ? {} : { groupedFirstInstall: true }),
           ...(groups === undefined ? {} : { groups }),
           ...(packIndex.length === 0 ? {} : { packs: packIndex }),
           sounds,
@@ -597,6 +684,9 @@ export function precachePlugin({
             this.error(`precache: ${fileName} is reserved for the build manifest`);
           }
         }
+        for (const fileName of archiveOnlyFiles) {
+          delete bundle[fileName];
+        }
         for (const { pack, source } of packAssets) {
           this.emitFile({
             fileName: pack.url.slice(1),
@@ -617,6 +707,7 @@ export function precachePlugin({
           source: JSON.stringify({
             ...createBuildPointer(manifest),
             ...(archive === undefined ? {} : { archive: archive.archive }),
+            ...(groupedFirstInstall === undefined ? {} : { groupedFirstInstall: true }),
             ...(groups === undefined ? {} : { groups }),
           }),
           type: "asset",

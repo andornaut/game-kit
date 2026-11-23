@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -91,6 +91,7 @@ interface Build {
   readonly packs?: PrecachePluginOptions["packs"];
   readonly buildId?: string | undefined;
   readonly emitUpdateGroupRecipes?: PrecachePluginOptions["emitUpdateGroupRecipes"];
+  readonly groupedFirstInstall?: PrecachePluginOptions["groupedFirstInstall"];
   readonly verifiedJsonBodies?: PrecachePluginOptions["verifiedJsonBodies"];
   readonly lateEmitted?: Readonly<Record<string, string>>;
   // Files a plugin before the precache writes into the build output, by file name.
@@ -102,6 +103,7 @@ interface Build {
   readonly unreadable?: string;
   readonly updateGroup?: PrecachePluginOptions["updateGroup"];
   readonly wholeBuild?: PrecachePluginOptions["wholeBuild"];
+  readonly write?: boolean;
   // An existing site to build again, as Vite's output names depend on the root.
   readonly root?: string;
 }
@@ -133,6 +135,7 @@ async function precache({
   buildId,
   emitUpdateGroupRecipes,
   emitted = {},
+  groupedFirstInstall,
   hashedFiles,
   lateEmitted = {},
   missing,
@@ -142,6 +145,7 @@ async function precache({
   updateGroup,
   verifiedJsonBodies,
   wholeBuild,
+  write = false,
 }: Build): Promise<Built> {
   if (missing !== undefined) {
     rmSync(join(root, "public", missing));
@@ -151,7 +155,7 @@ async function precache({
     mkdirSync(join(root, "public", unreadable));
   }
   const result = await build({
-    build: { minify: false, write: false },
+    build: { minify: false, write },
     configFile: false,
     define: {
       __BUILD_ID__: JSON.stringify(gitBuildMetadata(root, process.env).buildId) ?? "undefined",
@@ -163,6 +167,7 @@ async function precache({
         ...(boot === undefined ? {} : { boot }),
         buildId,
         ...(emitUpdateGroupRecipes === undefined ? {} : { emitUpdateGroupRecipes }),
+        ...(groupedFirstInstall === undefined ? {} : { groupedFirstInstall }),
         ...(hashedFiles === undefined ? {} : { hashedFiles }),
         pageHtmlFile: "index.html",
         ...(packs === undefined ? {} : { packs }),
@@ -187,12 +192,13 @@ async function precache({
   );
   const json = (fileName: string): unknown =>
     JSON.parse(Buffer.from(output.get(fileName) ?? "null").toString());
-  const { archive, groups, ...legacyPointer } = parseBuildPointer(json(BUILD_POINTER_URL.slice(1)));
-  const pointer = {
-    ...validateBuildPointer(legacyPointer),
-    ...(archive === undefined ? {} : { archive }),
-    ...(groups === undefined ? {} : { groups }),
-  };
+  const pointer = parseBuildPointer(json(BUILD_POINTER_URL.slice(1)));
+  validateBuildPointer({
+    buildId: pointer.buildId,
+    manifest: pointer.manifest,
+    schema: pointer.schema,
+    version: pointer.version,
+  });
   const manifest = validateBuildManifest(json(pointer.manifest.slice(1)));
   return { manifest, output, pointer };
 }
@@ -463,6 +469,105 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     });
     expect(regrouped.pointer.version).not.toBe(next.pointer.version);
     expect(regrouped.manifest.files).toEqual(next.manifest.files);
+  });
+
+  it("uses the same full groups for first install and omits selected loose outputs", async () => {
+    const root = site("icon");
+    writeFileSync(join(root, "main.js"), 'globalThis.loadGame = () => import("./lazy.js");');
+    writeFileSync(join(root, "lazy.js"), "export const game = true;");
+    const options: Build = {
+      emitted: { "art/archive.png": "archive only", "art/direct.png": "also loose" },
+      hashedFiles: () => ({ sounds: {}, urls: ["/art/archive.png", "/art/direct.png"] }),
+      root,
+      updateGroup: (url) => (url.startsWith("/art/") ? "art" : "boot"),
+    };
+    const archiveOnly = (url: string) =>
+      url === "/art/archive.png" || /^\/assets\/lazy-.*\.js$/.test(url);
+    const plain = await precache(options);
+    const cold = await precache({ ...options, groupedFirstInstall: { archiveOnly }, write: true });
+    expect(plain.pointer).not.toHaveProperty("groupedFirstInstall");
+    expect(cold.pointer).toMatchObject({ groupedFirstInstall: true, groups: plain.pointer.groups });
+    expect(cold.pointer.version).not.toBe(plain.pointer.version);
+    expect(cold.manifest.files).toEqual(plain.manifest.files);
+    const omitted = plain.manifest.files.map(({ url }) => url).filter(archiveOnly);
+    expect(omitted).toHaveLength(2);
+    for (const url of omitted) {
+      expect(plain.output.has(url.slice(1))).toBe(true);
+      expect(cold.output.has(url.slice(1))).toBe(false);
+      expect(existsSync(join(root, "dist", url.slice(1)))).toBe(false);
+    }
+    for (const name of [
+      "index.html",
+      "sw.js",
+      "art/direct.png",
+      "favicon.png",
+      "manifest.webmanifest",
+    ]) {
+      expect(existsSync(join(root, "dist", name))).toBe(true);
+    }
+
+    const identity = { buildId: GROUP_ARCHIVE_IDENTITY, version: GROUP_ARCHIVE_IDENTITY };
+    const archived = cold.pointer.groups!.flatMap((group) => {
+      const name = buildArchivePartUrl(group, 0).slice(1);
+      const bytes = cold.output.get(name)!;
+      expect(existsSync(join(root, "dist", name))).toBe(true);
+      expect(bytes).toEqual(plain.output.get(name));
+      expect(sha256(bytes)).toBe(group.sha256);
+      return parseBuildArchiveIndex(identity, bytes.byteLength, bytes).files.map(
+        ({ byteSize, offset, url }) => ({
+          byteSize,
+          sha256: sha256(bytes.subarray(offset, offset + byteSize)),
+          url,
+        }),
+      );
+    });
+    expect(fileMap({ ...cold.manifest, files: archived })).toEqual(fileMap(plain.manifest));
+    expect(archived).toHaveLength(plain.manifest.files.length);
+  });
+
+  it.each(["/", "/icon.png", "/sw.js", "entry CSS", "entry script"] as const)(
+    "keeps the direct bootstrap %s hosted",
+    async (protectedFile) => {
+      const root = site("icon");
+      writeFileSync(
+        join(root, "main.js"),
+        'import "./main.css"; import { boot } from "./boot.js"; boot();',
+      );
+      writeFileSync(join(root, "main.css"), "body { color: red; }");
+      writeFileSync(join(root, "boot.js"), "export const boot = () => console.log('boot');");
+      const plain = await precache({ root });
+      const target =
+        protectedFile === "entry CSS"
+          ? plain.manifest.files.find(({ url }) => url.endsWith(".css"))?.url
+          : protectedFile === "entry script"
+            ? plain.manifest.files.find(({ url }) => /^\/assets\/index-.*\.js$/.test(url))?.url
+            : protectedFile;
+      expect(target).toBeDefined();
+      await expect(
+        precache({
+          groupedFirstInstall: { archiveOnly: (url) => url === target },
+          ...(protectedFile === "/sw.js"
+            ? { hashedFiles: () => ({ sounds: {}, urls: ["/sw.js"] }) }
+            : {}),
+          root,
+          updateGroup: () => "group",
+        }),
+      ).rejects.toThrow(`groupedFirstInstall must serve bootstrap URL ${target} directly`);
+    },
+  );
+
+  it("rejects pruning a bundle file also copied from publicDir", async () => {
+    const root = site("icon");
+    writeFileSync(join(root, "public", "shadow.png"), "public copy");
+    await expect(
+      precache({
+        emitted: { "shadow.png": "bundle copy" },
+        groupedFirstInstall: { archiveOnly: (url) => url === "/shadow.png" },
+        hashedFiles: () => ({ sounds: {}, urls: ["/shadow.png"] }),
+        root,
+        updateGroup: () => "group",
+      }),
+    ).rejects.toThrow("groupedFirstInstall cannot prune /shadow.png also copied from publicDir");
   });
 
   it.each(["specific-file updates", "groups"] as const)(
@@ -807,6 +912,22 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
       { updateGroup: () => "" },
       /updateGroup\("\/"\) must return a nonempty group identifier/,
     ],
+    [
+      "grouped first install without update groups",
+      { groupedFirstInstall: { archiveOnly: () => false } },
+      "precache: groupedFirstInstall requires updateGroup",
+    ],
+    ...(
+      [
+        { packs: { maxBytes: 1024 } },
+        { emitUpdateGroupRecipes: true },
+        { wholeBuild: true },
+      ] as const
+    ).map((options): [string, Build, string] => [
+      `grouped first install with ${Object.keys(options)[0]}`,
+      { ...options, groupedFirstInstall: { archiveOnly: () => false }, updateGroup: () => "group" },
+      "precache: groupedFirstInstall cannot be combined with packs, emitUpdateGroupRecipes or wholeBuild",
+    ]),
     [
       "update group recipes without update groups",
       { emitUpdateGroupRecipes: true },
