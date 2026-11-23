@@ -57,10 +57,25 @@ function checkWithFakes(name: string, listing: string) {
     '#!/bin/sh\ntouch "$(dirname "$0")/git.container-started"\necho "container started" >&2\nexit 99\n',
     { mode: 0o755 },
   );
-  const result = spawnSync(process.execPath, [join(root, "scripts/check.ts")], {
-    encoding: "utf8",
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
-  });
+  const loadFixture = join(root, "test-load.mjs");
+  // The fake Docker path exercises fingerprint errors independently of host admission.
+  writeFileSync(
+    loadFixture,
+    [
+      'import os from "node:os";',
+      'import { syncBuiltinESMExports } from "node:module";',
+      "os.loadavg = () => [0, 0, 0];",
+      "syncBuiltinESMExports();",
+    ].join("\n"),
+  );
+  const result = spawnSync(
+    process.execPath,
+    ["--import", loadFixture, join(root, "scripts/check.ts")],
+    {
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    },
+  );
   return { result, root: realpathSync(root) };
 }
 
