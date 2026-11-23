@@ -30,7 +30,7 @@ import {
 } from "../buildRecords.ts";
 
 const PIN_PREFIX = pinRecordPath("");
-const MANIFEST_PATH = /^\/\.game-kit\/manifest-([^/]+)\.json$/;
+const BUILD_RECORD_PATH = /^\/\.game-kit\/(?:manifest|archive-record)-([^/]+)\.json$/;
 
 // How many entries a metadata scan reads at once.
 const SCAN_CONCURRENCY = 32;
@@ -329,7 +329,7 @@ export function createBuildStore(
       const stale = (await cache.keys())
         .map((request) => keyPath(request.url))
         .filter((path) => {
-          const version = MANIFEST_PATH.exec(path)?.[1];
+          const version = BUILD_RECORD_PATH.exec(path)?.[1];
           return version !== undefined && !kept.has(decodeURIComponent(version));
         });
       await Promise.all(stale.map((path) => cache.delete(keyOf(path))));
