@@ -473,6 +473,11 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
 
   it("uses the same full groups for first install and omits selected loose outputs", async () => {
     const root = site("icon");
+    writeFileSync(
+      join(root, "index.html"),
+      INDEX.replace("</head>", '<link rel="stylesheet" href="/site.css"></head>'),
+    );
+    writeFileSync(join(root, "public", "site.css"), 'body { background: url("/art/direct.png"); }');
     writeFileSync(join(root, "main.js"), 'globalThis.loadGame = () => import("./lazy.js");');
     writeFileSync(join(root, "lazy.js"), "export const game = true;");
     const options: Build = {
@@ -502,6 +507,7 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
       "art/direct.png",
       "favicon.png",
       "manifest.webmanifest",
+      "site.css",
     ]) {
       expect(existsSync(join(root, "dist", name))).toBe(true);
     }
@@ -573,6 +579,20 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
       ).rejects.toThrow(`groupedFirstInstall must serve bootstrap URL ${target} directly`);
     },
   );
+
+  it("keeps an asset linked from another emitted page hosted", async () => {
+    await expect(
+      precache({
+        emitted: {
+          "art/gallery.png": "gallery image",
+          "gallery/index.html": '<img src="/art/gallery.png">',
+        },
+        groupedFirstInstall: { archiveOnly: (url) => url === "/art/gallery.png" },
+        hashedFiles: () => ({ sounds: {}, urls: ["/art/gallery.png"] }),
+        updateGroup: () => "group",
+      }),
+    ).rejects.toThrow("groupedFirstInstall must serve bootstrap URL /art/gallery.png directly");
+  });
 
   it("rejects pruning a bundle file also copied from publicDir", async () => {
     const root = site("icon");
