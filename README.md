@@ -70,6 +70,9 @@ Apply the mapping to JavaScript and TypeScript imports, test mocks and configura
 - Pass `installCrashScreen(options, page)`. Register it at the same early
   startup point.
 
+A timer-held touch that dismisses a dialog now protects restored focus from
+the matching touch-derived mousedown on the exposed view.
+
 ## Installed-window update discovery in 0.64.1
 
 Window focus now requests an ordinary update check even when the installed
