@@ -169,12 +169,13 @@ function parseBuild(version: string, value: unknown): Build | undefined {
 // navigation.
 export function runServiceWorker(policy: BuildPolicy): void {
   const worker = self as unknown as WorkerScope;
-  const archiveStore = createBuildArchiveStore({ caches, origin: worker.location.origin, policy });
+  let archiveStore: ReturnType<typeof createBuildArchiveStore> | undefined;
   // Manifests are immutable per version, and a pin never changes for its client.
   const builds = new Map<string, Promise<Build | undefined>>();
   const pins = new Map<string, string>();
 
   const readArchive = async (version: string): Promise<RoutedArchive | undefined> => {
+    archiveStore ??= createBuildArchiveStore({ caches, origin: worker.location.origin, policy });
     const stored = await archiveStore.read(version);
     if (stored.kind === "unknown") {
       return undefined;
