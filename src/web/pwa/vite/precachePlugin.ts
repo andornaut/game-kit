@@ -84,6 +84,7 @@ function sha256Hex(bytes: Uint8Array): string {
 const ARCHIVE_CONTENT_TYPES = new Map([
   ["bin", "application/octet-stream"],
   ["css", "text/css; charset=utf-8"],
+  ["fnt", "text/xml; charset=utf-8"],
   ["gif", "image/gif"],
   ["htm", "text/html; charset=utf-8"],
   ["html", "text/html; charset=utf-8"],

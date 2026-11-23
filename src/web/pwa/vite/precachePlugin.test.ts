@@ -377,11 +377,12 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     const nextSite = cleanSite("next icon");
     const emitted = {
       "art/a.svg": `<svg>${"a".repeat(300)}</svg>`,
+      "art/body.fnt": '<font><info face="Bitmap" /></font>',
       "art/z.svg": `<svg>${"z".repeat(300)}</svg>`,
     };
     const options: Build = {
       emitted,
-      hashedFiles: () => ({ sounds: {}, urls: ["/art/z.svg", "/art/a.svg"] }),
+      hashedFiles: () => ({ sounds: {}, urls: ["/art/z.svg", "/art/body.fnt", "/art/a.svg"] }),
       packs: { maxBytes: 1024 },
       updateGroup: (url) => (url.startsWith("/art/") ? "a-art" : "Z-core"),
     };
@@ -389,7 +390,7 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     const next = await precache({
       ...options,
       ...nextSite,
-      hashedFiles: () => ({ sounds: {}, urls: ["/art/a.svg", "/art/z.svg"] }),
+      hashedFiles: () => ({ sounds: {}, urls: ["/art/a.svg", "/art/body.fnt", "/art/z.svg"] }),
     });
     expect(initial.pointer.buildId).not.toBe(next.pointer.buildId);
     expect(initial.pointer.version).not.toBe(next.pointer.version);
@@ -410,7 +411,10 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
       const bytes = bytesOf(next, group);
       expect(group).toEqual({ byteSize: bytes.byteLength, schema: 1, sha256: sha256(bytes) });
       const index = parseBuildArchiveIndex(identity, bytes.byteLength, bytes);
-      for (const { byteSize, offset, url } of index.files) {
+      for (const { byteSize, contentType, offset, url } of index.files) {
+        if (url === "/art/body.fnt") {
+          expect(contentType).toBe("text/xml; charset=utf-8");
+        }
         expect({
           byteSize,
           sha256: sha256(bytes.subarray(offset, offset + byteSize)),
@@ -420,7 +424,7 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
       return index.files.map(({ url }) => url);
     });
     expect(urls[0]).toContain("/");
-    expect(urls[1]).toEqual(["/art/a.svg", "/art/z.svg"]);
+    expect(urls[1]).toEqual(["/art/a.svg", "/art/body.fnt", "/art/z.svg"]);
     expect(urls.flat().sort()).toEqual([...files.keys()].sort());
     expect(Buffer.from(next.output.get("art/a.svg")!).toString()).toBe(emitted["art/a.svg"]);
 
