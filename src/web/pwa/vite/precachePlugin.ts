@@ -6,8 +6,12 @@ import type { Plugin, ResolvedConfig } from "vite";
 import { isBuildId } from "../../build/buildVersion.ts";
 import { contentHash } from "../../build/vite/contentHash.ts";
 import { gitBuildMetadata } from "../../build/vite/gitHead.ts";
+import { encodeBuildArchiveIndex } from "../buildArchive.ts";
 import {
+  BUILD_ARCHIVE_PART_BYTES,
   BUILD_POINTER_URL,
+  buildArchivePartUrl,
+  type BuildArchiveReference,
   type BuildManifest,
   buildManifestUrl,
   type BuildPack,
@@ -51,6 +55,8 @@ export interface PrecachePluginOptions {
   readonly boot?: (files: HashedFiles) => readonly string[];
   // Opt in to transport packs with an explicit raw byte ceiling per pack.
   readonly packs?: { readonly maxBytes: number };
+  // Emit a whole-build archive alongside the files and manifest used by earlier installers.
+  readonly wholeBuild?: true;
   // Explicit public, URL-independent JSON families selected from final emitted discovery.
   readonly verifiedJsonBodies?: (files: HashedFiles) => readonly VerifiedJsonFamilySelection[];
   // The hashed files beyond what the page links, read once the bundle is written: bundleFile
@@ -69,6 +75,66 @@ export interface PrecachePluginOptions {
 
 function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+const ARCHIVE_CONTENT_TYPES = new Map([
+  ["bin", "application/octet-stream"],
+  ["css", "text/css; charset=utf-8"],
+  ["gif", "image/gif"],
+  ["htm", "text/html; charset=utf-8"],
+  ["html", "text/html; charset=utf-8"],
+  ["ico", "image/vnd.microsoft.icon"],
+  ["js", "text/javascript; charset=utf-8"],
+  ["mjs", "text/javascript; charset=utf-8"],
+  ["otf", "font/otf"],
+  ["ttf", "font/ttf"],
+  ["wasm", "application/wasm"],
+  ["webmanifest", "application/manifest+json"],
+  ["woff", "font/woff"],
+  ["woff2", "font/woff2"],
+]);
+
+function archiveContentType(url: string): string {
+  // Cache keys ending in / are the canonical URLs for index.html files.
+  const path = url.toLowerCase();
+  const extension = path.endsWith("/") ? "html" : soundFormatOf(path);
+  const contentType = ARCHIVE_CONTENT_TYPES.get(extension ?? "") ?? packContentType(path);
+  if (contentType === undefined) {
+    throw new TypeError(`Unknown build archive content type for ${url}`);
+  }
+  return contentType;
+}
+
+function archiveFiles(
+  manifest: BuildManifest,
+  listed: ReadonlyMap<string, Uint8Array>,
+): { archive: BuildArchiveReference; parts: Uint8Array[] } {
+  const prefix = encodeBuildArchiveIndex({
+    buildId: manifest.buildId,
+    files: manifest.files.map(({ byteSize, url }) => [url, byteSize, archiveContentType(url)]),
+    version: manifest.version,
+  });
+  const byteSize = manifest.files.reduce((size, file) => size + file.byteSize, prefix.byteLength);
+  const hash = createHash("sha256");
+  const parts: Uint8Array[] = [];
+  let offset = 0;
+  for (const bytes of [prefix, ...manifest.files.map(({ url }) => listed.get(url)!)]) {
+    hash.update(bytes);
+    for (let start = 0; start < bytes.byteLength;) {
+      const index = Math.floor(offset / BUILD_ARCHIVE_PART_BYTES);
+      const partOffset = offset % BUILD_ARCHIVE_PART_BYTES;
+      let part = parts[index];
+      if (part === undefined) {
+        part = new Uint8Array(Math.min(BUILD_ARCHIVE_PART_BYTES, byteSize - offset));
+        parts.push(part);
+      }
+      const length = Math.min(bytes.byteLength - start, part.byteLength - partOffset);
+      part.set(bytes.subarray(start, start + length), partOffset);
+      start += length;
+      offset += length;
+    }
+  }
+  return { archive: { byteSize, schema: 1, sha256: hash.digest("hex") }, parts };
 }
 
 function packFiles(
@@ -158,7 +224,11 @@ export function precachePlugin({
   serviceWorkerFileName = "sw.js",
   serviceWorkerSource,
   verifiedJsonBodies,
+  wholeBuild,
 }: PrecachePluginOptions): Plugin {
+  if (wholeBuild === true && packs !== undefined) {
+    throw new TypeError("precache: wholeBuild and packs cannot be used together");
+  }
   if (packs !== undefined && (!Number.isSafeInteger(packs.maxBytes) || packs.maxBytes < 1)) {
     throw new RangeError("precache: packs.maxBytes must be a positive safe integer");
   }
@@ -356,6 +426,7 @@ export function precachePlugin({
           buildId: recordedBuildId,
           ...(packIndex.length === 0 ? {} : { packs: packIndex }),
           sounds,
+          ...(wholeBuild === true ? { wholeBuild } : {}),
         });
         const fingerprint = `${precacheFingerprint(policy, contentHashes, byteSizes, verified)}\n${identity}`;
 
@@ -379,12 +450,27 @@ export function precachePlugin({
           }
         };
         const manifest = createManifest();
+        let archive: ReturnType<typeof archiveFiles> | undefined;
+        if (wholeBuild === true) {
+          try {
+            archive = archiveFiles(manifest, listed);
+          } catch (error) {
+            this.error(`precache: ${(error as Error).message}`);
+          }
+        }
+        const archiveAssets =
+          archive?.parts.map((source, index) => ({
+            fileName: buildArchivePartUrl(archive.archive, index).slice(1),
+            source,
+            type: "asset" as const,
+          })) ?? [];
         const manifestFileName = buildManifestUrl(manifest.version).slice(1);
         const pointerFileName = BUILD_POINTER_URL.slice(1);
         for (const fileName of [
           manifestFileName,
           pointerFileName,
           ...packIndex.map(({ url }) => url.slice(1)),
+          ...archiveAssets.map(({ fileName }) => fileName),
         ]) {
           if (fileName in bundle) {
             this.error(`precache: ${fileName} is reserved for the build manifest`);
@@ -397,6 +483,9 @@ export function precachePlugin({
             type: "asset",
           });
         }
+        for (const asset of archiveAssets) {
+          this.emitFile(asset);
+        }
         this.emitFile({
           fileName: manifestFileName,
           source: JSON.stringify(manifest),
@@ -404,7 +493,10 @@ export function precachePlugin({
         });
         this.emitFile({
           fileName: pointerFileName,
-          source: JSON.stringify(createBuildPointer(manifest)),
+          source: JSON.stringify({
+            ...createBuildPointer(manifest),
+            ...(archive === undefined ? {} : { archive: archive.archive }),
+          }),
           type: "asset",
         });
       },

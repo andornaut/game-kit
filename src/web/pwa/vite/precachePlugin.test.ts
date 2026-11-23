@@ -12,14 +12,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CI_COMMIT_VARIABLE } from "../../build/buildVersion.ts";
 import { gitBuildMetadata, gitHead } from "../../build/vite/gitHead.ts";
+import { parseBuildArchiveIndex, readBuildArchivePrefixSize } from "../buildArchive.ts";
 import {
+  BUILD_ARCHIVE_PART_BYTES,
   BUILD_POINTER_URL,
+  buildArchivePartUrl,
   type BuildManifest,
   buildManifestUrl,
   type BuildPointer,
 } from "../buildContract.ts";
 import { UNKNOWN_BUILD_ID, validateBuildManifest, validateBuildPointer } from "../buildManifest.ts";
-import { installedManifest } from "../buildRecords.ts";
+import { installedManifest, parseBuildPointer } from "../buildRecords.ts";
 import type { CachePolicy } from "../cachePolicy.ts";
 import { assertClassicWorker } from "./classicWorker.ts";
 import { precachePlugin, type PrecachePluginOptions } from "./precachePlugin.ts";
@@ -94,6 +97,7 @@ interface Build {
   readonly missing?: string;
   // A public file to replace with a directory, which the build cannot read.
   readonly unreadable?: string;
+  readonly wholeBuild?: PrecachePluginOptions["wholeBuild"];
   // An existing site to build again, as Vite's output names depend on the root.
   readonly root?: string;
 }
@@ -131,6 +135,7 @@ async function precache({
   root = site("icon"),
   unreadable,
   verifiedJsonBodies,
+  wholeBuild,
 }: Build): Promise<Built> {
   if (missing !== undefined) {
     rmSync(join(root, "public", missing));
@@ -157,6 +162,7 @@ async function precache({
         policy: POLICY,
         serviceWorkerSource: join(root, "sw.js"),
         ...(verifiedJsonBodies === undefined ? {} : { verifiedJsonBodies }),
+        ...(wholeBuild === undefined ? {} : { wholeBuild }),
       }),
       { ...emitPlugin(lateEmitted), enforce: "post", name: "late-art-json" },
     ],
@@ -173,7 +179,11 @@ async function precache({
   );
   const json = (fileName: string): unknown =>
     JSON.parse(Buffer.from(output.get(fileName) ?? "null").toString());
-  const pointer = validateBuildPointer(json(BUILD_POINTER_URL.slice(1)));
+  const { archive, ...legacyPointer } = parseBuildPointer(json(BUILD_POINTER_URL.slice(1)));
+  const pointer = {
+    ...validateBuildPointer(legacyPointer),
+    ...(archive === undefined ? {} : { archive }),
+  };
   const manifest = validateBuildManifest(json(pointer.manifest.slice(1)));
   return { manifest, output, pointer };
 }
@@ -278,6 +288,78 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     expect(
       installedManifest("ogg", packed.manifest).packs?.flatMap(({ members }) => members),
     ).not.toContain("/art/one.m4a");
+  });
+
+  it("emits bounded parts of one verified archive covering every legacy manifest file", async () => {
+    const root = site("icon");
+    writeFileSync(
+      join(root, "index.html"),
+      INDEX.replace("</head>", '<link href="/guide/index.html"></head>'),
+    );
+    mkdirSync(join(root, "public/guide"));
+    const guide = "<!doctype html><p>Guide</p>";
+    writeFileSync(join(root, "public/guide/index.html"), guide);
+    const emitted = {
+      "art/hit.m4a": new Uint8Array([1, 2, 3]),
+      "art/hit.ogg": new Uint8Array([4, 5, 6]),
+      "assets/data.json": '{"ok":true}',
+      "assets/empty.bin": new Uint8Array(),
+      "assets/font.woff2": "font",
+      "assets/layout.css": "body { color: black; }",
+      "assets/spanning.bin": new Uint8Array(BUILD_ARCHIVE_PART_BYTES + 1).fill(0xa5),
+    };
+    const options: Build = {
+      boot: () => ["/assets/data.json"],
+      emitted,
+      hashedFiles: () => ({
+        sounds: { "/art/hit": ["/art/hit.ogg", "/art/hit.m4a"] },
+        urls: Object.keys(emitted)
+          .filter((name) => name.startsWith("assets/"))
+          .map((name) => `/${name}`),
+      }),
+      root,
+    };
+    const legacy = await precache(options);
+    const { manifest, output, pointer } = await precache({ ...options, wholeBuild: true });
+    expect(legacy.pointer).not.toHaveProperty("archive");
+    expect(pointer.version).not.toBe(legacy.pointer.version);
+    expect(manifest).toEqual({ ...legacy.manifest, version: pointer.version });
+    const { archive } = pointer;
+    expect(archive).toBeDefined();
+    const partNames = [0, 1].map((index) => buildArchivePartUrl(archive!, index).slice(1));
+    expect(
+      [...output.keys()].filter((name) => name.startsWith(".game-kit/archive-")).sort(),
+    ).toEqual(partNames);
+    const parts = partNames.map((name) => output.get(name)!);
+    expect(parts.map((part) => part.byteLength)).toEqual([
+      BUILD_ARCHIVE_PART_BYTES,
+      archive!.byteSize - BUILD_ARCHIVE_PART_BYTES,
+    ]);
+    const bytes = Buffer.concat(parts);
+    expect(archive).toEqual({ byteSize: bytes.byteLength, schema: 1, sha256: sha256(bytes) });
+    const prefixSize = readBuildArchivePrefixSize(bytes.byteLength, bytes);
+    const index = parseBuildArchiveIndex(pointer, bytes.byteLength, bytes.subarray(0, prefixSize));
+    expect(index.files.map(({ url }) => url)).toEqual(manifest.files.map(({ url }) => url));
+    const media = new Map(index.files.map(({ contentType, url }) => [url, contentType]));
+    expect(Object.fromEntries(media)).toMatchObject({
+      "/": "text/html; charset=utf-8",
+      "/art/hit.m4a": "audio/mp4",
+      "/art/hit.ogg": "audio/ogg",
+      "/assets/data.json": "application/json",
+      "/assets/font.woff2": "font/woff2",
+      "/assets/layout.css": "text/css; charset=utf-8",
+      "/guide/": "text/html; charset=utf-8",
+      "/manifest.webmanifest": "application/manifest+json",
+    });
+    const script = index.files.find(({ url }) => url.endsWith(".js"))!;
+    expect(script.contentType).toBe("text/javascript; charset=utf-8");
+    expect(output.get(script.url.slice(1))).toEqual(legacy.output.get(script.url.slice(1)));
+    const files = fileMap(manifest);
+    for (const { byteSize, offset, url } of index.files) {
+      expect({ byteSize, sha256: sha256(bytes.subarray(offset, offset + byteSize)), url }).toEqual(
+        files.get(url),
+      );
+    }
   });
 
   it("records the full SHA-256 and exact size of every file, hashed build output included", async () => {
@@ -581,6 +663,29 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
       "a build file in the reserved manifest directory",
       { emitted: { ".game-kit/build.json": "{}" } },
       "precache: .game-kit/build.json is reserved for the build manifest",
+    ],
+    [
+      "whole-build and pack transports selected together",
+      { packs: { maxBytes: 504 }, wholeBuild: true },
+      "precache: wholeBuild and packs cannot be used together",
+    ],
+    [
+      "an archive file with an unknown media type",
+      {
+        emitted: { "art/a.unknown": "art" },
+        hashedFiles: () => ({ sounds: {}, urls: ["/art/a.unknown"] }),
+        wholeBuild: true,
+      },
+      "precache: Unknown build archive content type for /art/a.unknown",
+    ],
+    [
+      "a noncanonical archive URL",
+      {
+        emitted: { "art/%61.png": "art" },
+        hashedFiles: () => ({ sounds: {}, urls: ["/art/%61.png"] }),
+        wholeBuild: true,
+      },
+      "precache: Invalid or duplicate build archive path",
     ],
   ])("fails the build for %s", async (_, options, message) => {
     await expect(precache(options)).rejects.toThrow(message);
