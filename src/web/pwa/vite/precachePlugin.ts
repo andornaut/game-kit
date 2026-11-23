@@ -63,7 +63,7 @@ export interface PrecachePluginOptions {
   readonly boot?: (files: HashedFiles) => readonly string[];
   // Opt in to transport packs with an explicit raw byte ceiling per pack.
   readonly packs?: { readonly maxBytes: number };
-  // Emit a whole-build archive alongside the files and manifest used by earlier installers.
+  // Emit a whole-build archive alongside the current first-install files and manifest.
   readonly wholeBuild?: true;
   // Assign each canonical offline URL to a stable update group.
   readonly updateGroup?: (url: string) => string;
