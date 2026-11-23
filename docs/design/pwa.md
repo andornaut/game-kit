@@ -27,3 +27,4 @@ Reference: [Build output](../../README.md#build-output).
 | gk-0032 | Recover from stale update offers and failed startup storage reads           | [gk-0032.md](../work/gk-0032.md) |
 | gk-0036 | Close an obsolete update prompt                                             | [gk-0036.md](../work/gk-0036.md) |
 | gk-0039 | Check for updates when the installed window regains focus                   | [gk-0039.md](../work/gk-0039.md) |
+| gk-0041 | Stage an update as one verified build archive                               | [gk-0041.md](../work/gk-0041.md) |
