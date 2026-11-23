@@ -482,17 +482,53 @@ describe("grouped updates", () => {
     f.launch.dispose();
   });
 
-  it("uses the ordinary manifest when a legacy router cannot serve grouped caches", async () => {
-    const f = fixture();
-    f.container.claim();
+  it("reports a verification failure without staging when the current router cannot serve groups", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const complete = vi.fn(async () => false);
+    const put = vi.fn();
+    const reuse = vi.fn();
+    const seal = vi.fn();
+    const f = fixture({
+      groupStore: {
+        complete,
+        put,
+        read: async () => ({ kind: "unknown" }),
+        reuse,
+        seal,
+      },
+    });
+    const probe = vi.fn((_message: string, [port]: MessagePort[]) => port?.close());
+    f.container.claim(probe);
     f.store.state.active = V1.pointer.version;
     f.deploy(build);
-    await expect(f.launch.run()).resolves.toBe("play");
-    await vi.waitFor(() => expect(f.offers).toHaveLength(1));
-    expect(f.fetch.mock.calls.map(([url]) => url)).toContain(build.pointer.manifest);
-    expect(f.fetch.mock.calls.map(([url]) => url)).not.toContain(changedPath);
-    expect(f.installBuild).toHaveBeenCalledOnce();
-    f.launch.dispose();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await expect(f.launch.run()).resolves.toBe("play");
+      await settle();
+      expect(probe).toHaveBeenCalledExactlyOnceWith(BUILD_GROUP_ROUTER_PROBE, [
+        expect.any(MessagePort),
+      ]);
+      await vi.advanceTimersByTimeAsync(CONTROL_WAIT_MS);
+      expect(warn).toHaveBeenCalledWith(
+        "Background update failed.",
+        expect.objectContaining({ reason: "verification" }),
+      );
+      expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([BUILD_POINTER_URL]);
+      expect(f.updates).toEqual([{ phase: "failed", version: build.pointer.version }]);
+      expect(f.failures).toEqual([]);
+      expect(f.offers).toEqual([]);
+      expect(f.installBuild).not.toHaveBeenCalled();
+      expect(complete).not.toHaveBeenCalled();
+      expect(reuse).not.toHaveBeenCalled();
+      expect(put).not.toHaveBeenCalled();
+      expect(seal).not.toHaveBeenCalled();
+      expect(f.store.calls).toEqual([`reclaim ${V1.pointer.version}`]);
+      expect(f.store.state).toEqual({ active: V1.pointer.version });
+      expect(f.reload).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      f.launch.dispose();
+    }
   });
 });
 

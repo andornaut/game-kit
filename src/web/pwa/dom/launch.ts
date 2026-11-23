@@ -975,6 +975,9 @@ export function createLaunch(
     if (groupStore === undefined || groups === undefined) {
       throw new LaunchError("verification", "Grouped build storage unavailable");
     }
+    if (!(await archiveRouterReady(BUILD_GROUP_ROUTER_PROBE))) {
+      throw new LaunchError("verification", "The controlling worker cannot serve grouped builds");
+    }
     if (!(await groupStore.complete(version, pointer))) {
       const missing: BuildArchiveReference[] = [];
       for (const group of groups) {
@@ -1038,12 +1041,11 @@ export function createLaunch(
     }
     const { version } = pointer;
     attempt.version = version;
-    const groupCapable =
-      pointer.groups !== undefined && (await archiveRouterReady(BUILD_GROUP_ROUTER_PROBE));
-    if (pointer.archive !== undefined || groupCapable) {
-      const result = groupCapable
-        ? await stageGroups(pointer, state)
-        : await stageArchive(pointer, state);
+    if (pointer.archive !== undefined || pointer.groups !== undefined) {
+      const result =
+        pointer.groups !== undefined
+          ? await stageGroups(pointer, state)
+          : await stageArchive(pointer, state);
       if (result === "changed") {
         if (restarts + 1 >= MAX_RESTARTS) {
           throw new LaunchError("verification", "The deployed build kept changing during staging");
