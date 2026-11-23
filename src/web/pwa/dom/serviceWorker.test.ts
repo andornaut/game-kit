@@ -364,6 +364,19 @@ describe("archive routing", () => {
     expect(await worker.readRecord(pinKey("doc"))).toBeUndefined();
   });
 
+  it("does not look up archive markers for every file in a pinned legacy document", async () => {
+    const server = new FakeServer(V2);
+    const worker = startWorker(server);
+    await worker.saveBuild(manifestOf("v1", V1), V1);
+    await worker.setRecord(ACTIVE, "v1");
+    await worker.navigate("/play/", "doc");
+    const match = vi.spyOn(worker.storage, "match");
+    await worker.get("/app.js", "doc");
+    await worker.get("/app.js", "doc");
+    expect(match).not.toHaveBeenCalled();
+    expect(server.fetched).toEqual([]);
+  });
+
   it("does not use a retained snapshot as evidence that a staged archive is complete", async () => {
     const worker = startWorker(new FakeServer(V2));
     await worker.saveBuild(manifestOf("v1", V1), V1);

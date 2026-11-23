@@ -482,8 +482,12 @@ export function runServiceWorker(policy: BuildPolicy): void {
     if (version === undefined) {
       return fetch(request);
     }
-    const archive = await loadArchive(version);
-    const build = archive === undefined ? await loadBuild(records, version) : undefined;
+    // The legacy manifest already identifies this document's immutable build. Check for an
+    // archive again on navigation, when another context may have staged that version.
+    const legacy = navigation ? undefined : await builds.get(version);
+    const archive = legacy === undefined ? await loadArchive(version) : undefined;
+    const build =
+      archive === undefined ? (legacy ?? (await loadBuild(records, version))) : undefined;
     const path = cacheKeyFor(new URL(request.url).pathname);
     const entry = archive?.files.get(path);
     const file = build?.files.get(path);
