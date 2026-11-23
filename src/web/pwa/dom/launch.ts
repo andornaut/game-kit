@@ -21,6 +21,9 @@ import {
 } from "../buildContract.ts";
 import { installedManifest, parseBuildManifest, parseBuildPointer } from "../buildRecords.ts";
 import { verifiedJsonAliasCachePrefix } from "../verifiedJsonBody.ts";
+import { downloadBuildArchive } from "./buildArchiveDownload.ts";
+import { supportsBuildArchive } from "./buildArchiveRouter.ts";
+import { type BuildArchiveStore, createBuildArchiveStore } from "./buildArchiveStore.ts";
 import { BACKGROUND_INSTALL, FOREGROUND_INSTALL, installBuild } from "./buildInstaller.ts";
 import { type BuildStore, createBuildStore, withBuildStateLock } from "./buildStore.ts";
 import { type VisibilitySource, watchVisibility } from "./visibility.ts";
@@ -29,7 +32,10 @@ export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 
 // The service worker container, as far as launch uses it.
 export interface LaunchContainer extends EventTarget {
-  readonly controller: { readonly scriptURL: string } | null;
+  readonly controller: {
+    readonly scriptURL: string;
+    postMessage?(message: string, transfer: MessagePort[]): void;
+  } | null;
   register(url: string, options: { scope: string; updateViaCache: "none" }): Promise<unknown>;
 }
 
@@ -73,6 +79,7 @@ export interface LaunchPage {
 }
 
 export interface LaunchContext {
+  readonly archiveStore?: BuildArchiveStore;
   readonly installBuild: typeof installBuild;
   readonly page: LaunchPage;
   // The game's cache policy, which scopes the store's caches and the legacy caches launch deletes.
@@ -379,8 +386,10 @@ export function browserLaunchContext(policy: BuildPolicy): LaunchContext | undef
     },
     visibility: document,
   };
-  const store = createBuildStore({ caches, origin: window.location.origin }, policy);
-  return { installBuild, page, policy, store };
+  const origin = window.location.origin;
+  const store = createBuildStore({ caches, origin }, policy);
+  const archiveStore = createBuildArchiveStore({ caches, origin, policy });
+  return { archiveStore, installBuild, page, policy, store };
 }
 
 // Call run() once at document boot. With no active build it installs the deployed build in the
@@ -753,7 +762,31 @@ export function createLaunch(
 
   let switching: Promise<void> | undefined;
 
+  const archiveRouterReady = async () => {
+    const controller = page.container.controller;
+    if (
+      controller?.scriptURL !== routerUrl ||
+      controller.postMessage === undefined ||
+      typeof MessageChannel === "undefined"
+    ) {
+      return false;
+    }
+    const ready = await supportsBuildArchive(
+      {
+        clearTimeout: (handle) => page.timers.clearTimeout(handle),
+        setTimeout: (callback, ms) => page.timers.setTimeout(callback, ms),
+        signal: aborts.signal,
+      },
+      CONTROL_WAIT_MS,
+      { postMessage: (message, transfer) => controller.postMessage!(message, transfer) },
+    );
+    return ready && page.container.controller === controller;
+  };
+
   const completeBuild = async (version: string): Promise<boolean> => {
+    if ((await context.archiveStore?.complete(version)) === true && (await archiveRouterReady())) {
+      return true;
+    }
     const manifest = await store.readManifest(version);
     return manifest !== undefined && (await store.complete(manifest));
   };
@@ -829,8 +862,15 @@ export function createLaunch(
   };
 
   // A download can finish after another context stages or activates a different build.
-  const publishStaged = async (previous: BuildState, version: string): Promise<void> => {
+  const publishStaged = async (
+    previous: BuildState,
+    version: string,
+    archive?: BuildPointer,
+  ): Promise<void> => {
     const published = await withBuildStateLock(policy, async () => {
+      if (archive !== undefined && !(await context.archiveStore?.complete(version, archive))) {
+        return false;
+      }
       const current = await store.readState();
       if (
         disposed ||
@@ -854,6 +894,41 @@ export function createLaunch(
     }
   };
 
+  const stageArchive = async (
+    pointer: BuildPointer,
+    state: BuildState,
+  ): Promise<"complete" | "changed"> => {
+    const archiveStore = context.archiveStore;
+    const { archive, version } = pointer;
+    if (archiveStore === undefined || archive === undefined || !(await archiveRouterReady())) {
+      throw new LaunchError("verification", "The controlling worker cannot serve build archives");
+    }
+    if (!(await archiveStore.complete(version, pointer))) {
+      reportUpdate({ phase: "staging", value: 0, version });
+      const body = await downloadBuildArchive(
+        {
+          clearTimeout: installContext.clearTimeout,
+          fetch: installContext.fetch,
+          inactivityMs: FOREGROUND_INSTALL.inactivityMs,
+          now: installContext.now,
+          onBytes: (received, total) =>
+            reportUpdate({ phase: "staging", value: received / total, version }),
+          setTimeout: installContext.setTimeout,
+          signal: aborts.signal,
+        },
+        archive,
+      );
+      // A content-addressed transfer can finish even after a later release deploys.
+      const deployed = await readPointer();
+      if (deployed.version !== version || deployed.archive?.sha256 !== archive.sha256) {
+        return "changed";
+      }
+      await archiveStore.put(pointer, body, aborts.signal);
+    }
+    await publishStaged(state, version, pointer);
+    return "complete";
+  };
+
   // Stages the build the pointer names; a redeploy mid-staging restarts on the new manifest.
   // Records in attempt the version it tries, so a failure can name it.
   const stageDeployed = async (restarts: number, attempt: { version?: string }): Promise<void> => {
@@ -874,6 +949,15 @@ export function createLaunch(
     }
     const { version } = pointer;
     attempt.version = version;
+    if (pointer.archive !== undefined) {
+      if ((await stageArchive(pointer, state)) === "changed") {
+        if (restarts + 1 >= MAX_RESTARTS) {
+          throw new LaunchError("verification", "The deployed build kept changing during staging");
+        }
+        await stageDeployed(restarts + 1, attempt);
+      }
+      return;
+    }
     const manifest = await readPinnedManifest(pointer);
     if (state.staged === version && (await store.complete(manifest))) {
       await publishStaged(state, version);
@@ -1123,8 +1207,7 @@ export function createLaunch(
       } catch {
         target = staged;
       }
-      const manifest = target === staged ? undefined : await store.readManifest(staged);
-      if (manifest !== undefined && (await store.complete(manifest))) {
+      if (target !== staged && (await completeBuild(staged))) {
         return { reloadVersion: staged, state };
       }
     }

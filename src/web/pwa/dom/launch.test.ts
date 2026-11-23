@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BUILD_HASH_HEADER,
   BUILD_POINTER_URL,
+  buildArchivePartUrl,
   type BuildFile,
   type BuildManifest,
   buildManifestUrl,
@@ -19,6 +20,8 @@ import {
   type UpdateState,
 } from "../buildContract.ts";
 import { installedManifest } from "../buildRecords.ts";
+import { BUILD_ARCHIVE_ROUTER_PROBE } from "./buildArchiveRouter.ts";
+import type { BuildArchiveStore } from "./buildArchiveStore.ts";
 import type { BuildInstallOptions, installBuild } from "./buildInstaller.ts";
 import type { BuildStore } from "./buildStore.ts";
 import {
@@ -168,11 +171,14 @@ class FakeSession implements SessionLike {
 }
 
 class FakeContainer extends EventTarget {
-  controller: { scriptURL: string } | null = null;
+  controller: LaunchPage["container"]["controller"] = null;
   readonly register = vi.fn(async () => ({}));
 
-  claim() {
-    this.controller = { scriptURL: `${ORIGIN}${ROUTER}` };
+  claim(postMessage?: (message: string, ports: MessagePort[]) => void) {
+    this.controller = {
+      ...(postMessage === undefined ? {} : { postMessage }),
+      scriptURL: `${ORIGIN}${ROUTER}`,
+    };
     this.dispatchEvent(new Event("controllerchange"));
   }
 }
@@ -185,7 +191,10 @@ class FakeDocument extends EventTarget {
   }
 }
 
-function fixture({ soundFormat }: { soundFormat?: string } = {}) {
+function fixture({
+  archiveStore,
+  soundFormat,
+}: { archiveStore?: BuildArchiveStore; soundFormat?: string } = {}) {
   const container = new FakeContainer();
   const visibility = new FakeDocument();
   const window = new EventTarget();
@@ -250,7 +259,13 @@ function fixture({ soundFormat }: { soundFormat?: string } = {}) {
   const updates: UpdateState[] = [];
   const required: RequiredUpdateState[] = [];
   const launch = createLaunch(
-    { installBuild: install, page, policy: POLICY, store },
+    {
+      ...(archiveStore === undefined ? {} : { archiveStore }),
+      installBuild: install,
+      page,
+      policy: POLICY,
+      store,
+    },
     {
       onFailure: (failure) => failures.push(failure),
       onNetworkPlay: (notice) => networkPlay.push(notice),
@@ -330,6 +345,74 @@ const failedInstall = () =>
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe("whole-build updates", () => {
+  const body = "verified archive";
+  const archive = { byteSize: body.length, schema: 1, sha256: sha(body) } as const;
+  const build = { ...V2, pointer: { ...V2.pointer, archive } };
+  const archivePath = buildArchivePartUrl(archive, 0);
+
+  it("stages only the archive, then waits for explicit consent to activate it", async () => {
+    let stored = false;
+    const put = vi.fn(async () => {
+      stored = true;
+    });
+    const f = fixture({
+      archiveStore: {
+        complete: async () => stored,
+        put,
+        read: async () => ({ kind: "unknown" }),
+      },
+    });
+    f.container.claim((message, [port]) => {
+      if (message === BUILD_ARCHIVE_ROUTER_PROBE) {
+        port?.postMessage(message);
+      }
+    });
+    f.store.state.active = V1.pointer.version;
+    f.deploy(build);
+    f.routes.set(archivePath, () => new Response(body));
+    await expect(f.launch.run()).resolves.toBe("play");
+    await vi.waitFor(() => expect(f.offers).toHaveLength(1));
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([
+      BUILD_POINTER_URL,
+      archivePath,
+      BUILD_POINTER_URL,
+    ]);
+    expect(f.installBuild).not.toHaveBeenCalled();
+    expect(put).toHaveBeenCalledOnce();
+    expect(f.store.state).toEqual({ active: V1.pointer.version, staged: build.pointer.version });
+    expect(f.reload).not.toHaveBeenCalled();
+    const save = vi.fn();
+    await f.offers[0]!.updateNow(save);
+    expect(save).toHaveBeenCalledOnce();
+    expect(f.store.state).toEqual({ active: build.pointer.version });
+    expect(f.reload).toHaveBeenCalledOnce();
+    f.launch.dispose();
+  });
+
+  it("does not download or stage an archive under a legacy controlling router", async () => {
+    const put = vi.fn();
+    const f = fixture({
+      archiveStore: {
+        complete: async () => false,
+        put,
+        read: async () => ({ kind: "unknown" }),
+      },
+    });
+    f.container.claim();
+    f.store.state.active = V1.pointer.version;
+    f.deploy(build);
+    await f.launch.run();
+    await settle();
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([BUILD_POINTER_URL]);
+    expect(put).not.toHaveBeenCalled();
+    expect(f.installBuild).not.toHaveBeenCalled();
+    expect(f.offers).toEqual([]);
+    expect(f.store.state).toEqual({ active: V1.pointer.version });
+    f.launch.dispose();
+  });
 });
 
 describe("first install", () => {
