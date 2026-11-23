@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { chromium, type Page, type Response } from "playwright-core";
@@ -321,16 +321,30 @@ export async function runWholeBuildAcceptance(mode: "grouped" | "whole-build"): 
   const outRoot = join(process.env.TMPDIR ?? "/scratch", `e2e-${mode}`);
   mkdirSync(outRoot, { recursive: true });
   const build = { outRoot, size: { fileBytes: 2000, files: 40 } };
-  const baseline = await buildDeployment(build, "a");
+  const archiveOnly = (url: string) => /^\/(?:assets\/[fs]\/|data\/)/.test(url);
   // Sound bodies and URLs stay fixed while the page, code and data change between deployments.
   const transport =
     mode === "grouped"
-      ? { updateGroup: (url: string) => (url.startsWith("/assets/s/") ? "audio" : "game") }
+      ? {
+          groupedFirstInstall: { archiveOnly },
+          updateGroup: (url: string) => (url.startsWith("/assets/s/") ? "audio" : "game"),
+        }
       : { wholeBuild: true as const };
+  const baseline = await buildDeployment(
+    mode === "grouped" ? { ...build, ...transport } : build,
+    "a",
+  );
   const accepted = await buildDeployment({ ...build, ...transport }, "b");
   const canceled = await buildDeployment({ ...build, ...transport }, "c");
   assert.equal(baseline.pointer.archive, undefined);
-  assert.equal(baseline.pointer.groups, undefined);
+  assert.equal(baseline.pointer.groupedFirstInstall, mode === "grouped" ? true : undefined);
+  if (mode === "grouped") {
+    for (const { directory, manifest } of [baseline, accepted, canceled]) {
+      const hidden = manifest.files.filter(({ url }) => archiveOnly(url));
+      assert(hidden.length > 0);
+      assert(hidden.every(({ url }) => !existsSync(join(directory, url))));
+    }
+  }
 
   const browser = await chromium.launch({ channel: "chromium", headless: true });
   try {
@@ -371,11 +385,30 @@ export async function runWholeBuildAcceptance(mode: "grouped" | "whole-build"): 
           (await (await caches.open(name)).keys()).map((entry) => new URL(entry.url).pathname),
         buildCacheName(POLICY, baseline.pointer.version),
       );
-      assert(legacyKeys.includes("/play/") && legacyKeys.some((path) => path.endsWith(".ogg")));
+      if (mode === "grouped") {
+        await verifyStoredTransport(page, baseline);
+        const partRequests = server.log.filter(({ path }) =>
+          path.startsWith("/.game-kit/archive-"),
+        );
+        assert.deepEqual(
+          partRequests.map(({ path }) => path),
+          baseline.pointer.groups!.map((group) => buildArchivePartUrl(group, 0)),
+        );
+        assert(partRequests.every(({ status }) => status === 200));
+        assert(!server.log.some(({ path }) => archiveOnly(path)));
+        assert(!legacyKeys.some(archiveOnly));
+      } else {
+        assert(legacyKeys.includes("/play/") && legacyKeys.some((path) => path.endsWith(".ogg")));
+      }
       assert(!legacyKeys.includes(BODY_PATH));
       await offline(true);
-      await page.reload();
+      const firstOffline = await page.reload();
       await playing(page, baseline);
+      if (mode === "grouped") {
+        assert(firstOffline);
+        await offlineFiles(page, firstOffline, baseline);
+        console.log("PASS cold install and offline reload use prebuilt archive-only members");
+      }
 
       const lane = { offline, page, requests, server };
       const offered = await stage(lane, baseline, accepted);

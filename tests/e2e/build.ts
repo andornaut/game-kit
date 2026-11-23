@@ -15,7 +15,10 @@ import {
 } from "../../src/web/pwa/buildContract.ts";
 import { validateBuildManifest, validateBuildPointer } from "../../src/web/pwa/buildManifest.ts";
 import { parseBuildPointer } from "../../src/web/pwa/buildRecords.ts";
-import { precachePlugin } from "../../src/web/pwa/vite/precachePlugin.ts";
+import {
+  precachePlugin,
+  type PrecachePluginOptions,
+} from "../../src/web/pwa/vite/precachePlugin.ts";
 import { POLICY } from "./fixture/policy.ts";
 
 const FIXTURE = fileURLToPath(new URL("fixture/", import.meta.url));
@@ -135,10 +138,13 @@ function fixtureFiles(
 
 export function readDeployment(variant: Variant, directory: string): Deployment {
   const json = (url: string): unknown => JSON.parse(readFileSync(join(directory, url), "utf8"));
-  const { archive, groups, ...legacyPointer } = parseBuildPointer(json(BUILD_POINTER_URL));
+  const { archive, groupedFirstInstall, groups, ...legacyPointer } = parseBuildPointer(
+    json(BUILD_POINTER_URL),
+  );
   const pointer = {
     ...validateBuildPointer(legacyPointer),
     ...(archive === undefined ? {} : { archive }),
+    ...(groupedFirstInstall === undefined ? {} : { groupedFirstInstall }),
     ...(groups === undefined ? {} : { groups }),
   };
   return { directory, manifest: validateBuildManifest(json(pointer.manifest)), pointer, variant };
@@ -146,6 +152,7 @@ export function readDeployment(variant: Variant, directory: string): Deployment 
 
 export async function buildDeployment(
   context: {
+    readonly groupedFirstInstall?: PrecachePluginOptions["groupedFirstInstall"];
     readonly outRoot: string;
     readonly size: FixtureSize;
     readonly updateGroup?: (url: string) => string;
@@ -175,6 +182,9 @@ export async function buildDeployment(
           ...urls.filter((url) => url.startsWith("/data/level-")),
           ...SHARED_JSON,
         ],
+        ...(context.groupedFirstInstall === undefined
+          ? {}
+          : { groupedFirstInstall: context.groupedFirstInstall }),
         hashedFiles: () => ({ sounds, urls }),
         pageHtmlFile: "play/index.html",
         policy: POLICY,
