@@ -95,7 +95,7 @@ export function parseBuildPointer(value: unknown): BuildPointer {
   return pointer as BuildPointer;
 }
 
-function parseBuildArchiveReference(value: unknown): BuildArchiveReference {
+export function parseBuildArchiveReference(value: unknown): BuildArchiveReference {
   const archive = value as Partial<BuildArchiveReference> | null;
   if (
     typeof archive !== "object" ||
