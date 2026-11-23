@@ -21,8 +21,8 @@ import {
   buildManifestUrl,
   type BuildPointer,
   GROUP_ARCHIVE_IDENTITY,
+  updateGroupRecipesPath,
 } from "../buildContract.ts";
-import { updateGroupRecipesPath } from "../buildGroupRecipes.ts";
 import { UNKNOWN_BUILD_ID, validateBuildManifest, validateBuildPointer } from "../buildManifest.ts";
 import { installedManifest, parseBuildPointer } from "../buildRecords.ts";
 import type { CachePolicy } from "../cachePolicy.ts";

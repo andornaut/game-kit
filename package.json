@@ -160,7 +160,6 @@
     "./runtime/web/pwa/appWindow": "./src/web/pwa/appWindow.ts",
     "./runtime/web/pwa/backNavigation": "./src/web/pwa/backNavigation.ts",
     "./runtime/web/pwa/buildContract": "./src/web/pwa/buildContract.ts",
-    "./runtime/web/pwa/buildGroupRecipes": "./src/web/pwa/buildGroupRecipes.ts",
     "./runtime/web/pwa/buildIdentity": "./src/web/pwa/buildIdentity.ts",
     "./runtime/web/pwa/cachePolicy": "./src/web/pwa/cachePolicy.ts",
     "./runtime/web/pwa/dom/audioUnlock": "./src/web/pwa/dom/audioUnlock.ts",

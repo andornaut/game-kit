@@ -24,13 +24,6 @@ export interface UpdateGroupRecipes {
   readonly schema: 1;
 }
 
-export function updateGroupRecipesPath(version: string): string {
-  if (!/^[a-zA-Z0-9._-]+$/.test(version)) {
-    throw new TypeError("Invalid update group recipe version");
-  }
-  return `/.game-kit/group-recipes-${version}.json`;
-}
-
 export function encodeUpdateGroupRecipePrefix(
   files: readonly UpdateGroupRecipeFile[],
 ): Uint8Array<ArrayBuffer> {

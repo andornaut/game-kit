@@ -21,12 +21,9 @@ import {
   type BuildPack,
   GROUP_ARCHIVE_IDENTITY,
   MAX_UPDATE_UNITS,
-} from "../buildContract.ts";
-import {
-  parseUpdateGroupRecipes,
-  type UpdateGroupRecipes,
   updateGroupRecipesPath,
-} from "../buildGroupRecipes.ts";
+} from "../buildContract.ts";
+import { parseUpdateGroupRecipes, type UpdateGroupRecipes } from "../buildGroupRecipes.ts";
 import { createBuildManifest, createBuildPointer, UNKNOWN_BUILD_ID } from "../buildManifest.ts";
 import { packContentType, soundFormatOf } from "../buildRecords.ts";
 import { cacheKeyFor, type CachePolicy, isHashedAssetUrl } from "../cachePolicy.ts";

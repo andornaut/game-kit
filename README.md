@@ -160,7 +160,7 @@ unchanged.
 Set `emitUpdateGroupRecipes: true` alongside `updateGroup` in
 `build/precachePlugin`. The build emits one additional JSON file at
 `updateGroupRecipesPath(version)`, exported by
-`runtime/web/pwa/buildGroupRecipes`. The pointer, manifest and raw archives
+`runtime/web/pwa/buildContract`. The pointer, manifest and raw archives
 are unchanged.
 
 For a version whose backing files are selected, pass its recipe to

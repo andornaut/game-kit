@@ -1,12 +1,15 @@
 import { expect, it } from "vitest";
 
 import { encodeBuildArchiveIndex } from "./buildArchive.ts";
-import { BUILD_ARCHIVE_PART_BYTES, MAX_UPDATE_UNITS } from "./buildContract.ts";
+import {
+  BUILD_ARCHIVE_PART_BYTES,
+  MAX_UPDATE_UNITS,
+  updateGroupRecipesPath,
+} from "./buildContract.ts";
 import {
   encodeUpdateGroupRecipePrefix,
   parseUpdateGroupRecipes,
   type UpdateGroupRecipeFile,
-  updateGroupRecipesPath,
 } from "./buildGroupRecipes.ts";
 
 const files: readonly UpdateGroupRecipeFile[] = [

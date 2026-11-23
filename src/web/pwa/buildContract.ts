@@ -11,6 +11,13 @@ export function buildManifestUrl(version: string): string {
   return `/.game-kit/manifest-${encodeURIComponent(version)}.json`;
 }
 
+export function updateGroupRecipesPath(version: string): string {
+  if (!/^[a-zA-Z0-9._-]+$/.test(version)) {
+    throw new TypeError("Invalid update group recipe version");
+  }
+  return `/.game-kit/group-recipes-${version}.json`;
+}
+
 // Transport parts are byte ranges of one archive. The checksum covers their concatenation.
 // Keep emitted static assets below the 25 MiB deployment limit.
 export const BUILD_ARCHIVE_PART_BYTES = 24 * 1024 * 1024;
