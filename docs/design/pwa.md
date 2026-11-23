@@ -26,4 +26,4 @@ Reference: [Classic service-worker output](../../README.md#classic-service-worke
 | gk-0030 | Check for updates on return to Start                                        | [gk-0030.md](../work/gk-0030.md) |
 | gk-0032 | Recover from stale update offers and failed startup storage reads           | [gk-0032.md](../work/gk-0032.md) |
 | gk-0036 | Close an obsolete update prompt                                             | [gk-0036.md](../work/gk-0036.md) |
-| gk-0039 | Check for updates when the installed window regains focus                    | [gk-0039.md](../work/gk-0039.md) |
+| gk-0039 | Check for updates when the installed window regains focus                   | [gk-0039.md](../work/gk-0039.md) |
