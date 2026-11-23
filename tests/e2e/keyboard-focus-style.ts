@@ -319,7 +319,11 @@ try {
             text: "#f1dba7",
           },
           dev: true,
-          words: { body: "An error interrupted play.", reload: "Reload", title: "Play interrupted" },
+          words: {
+            body: "An error interrupted play.",
+            reload: "Reload",
+            title: "Play interrupted",
+          },
         },
         window,
       );
