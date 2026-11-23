@@ -1,6 +1,6 @@
 // The router service worker. A game's worker entry calls runServiceWorker with its cache policy,
 // and vite/precachePlugin builds the entry to one classic script. The page downloads, verifies
-// and stores each build and its manifest, and writes the active and staged records
+// and stores each build's archive or manifest and files, and writes the active and staged records
 // (buildContract). The worker downloads nothing: it serves each window the build its pin names,
 // or the active build, from that build's cache, and deletes the pins of closed clients, so the
 // page's reclaim keeps only builds a live window runs. The worker runs in a
@@ -10,6 +10,7 @@
 // CLEANUP (added 2026-11-18): remove once all three games deploy the router. Version caches and
 // routing records an earlier kit's worker wrote are left in place for the page to migrate and
 // delete; the router never reads or serves them.
+import type { BuildArchiveEntry } from "../buildArchive.ts";
 import {
   ACTIVE_RECORD_PATH,
   BUILD_HASH_HEADER,
@@ -29,6 +30,8 @@ import {
 } from "../buildRecords.ts";
 import { cacheKeyFor } from "../cachePolicy.ts";
 import type { VerifiedJsonBody } from "../verifiedJsonBody.ts";
+import { BUILD_ARCHIVE_ROUTER_PROBE } from "./buildArchiveRouter.ts";
+import { createBuildArchiveStore } from "./buildArchiveStore.ts";
 import { readCachedVersion, withBuildStateLock } from "./buildStore.ts";
 import {
   isDataProfile,
@@ -58,6 +61,7 @@ interface WorkerScope {
   };
   addEventListener(type: "activate" | "install", listener: (event: LifecycleEvent) => void): void;
   addEventListener(type: "fetch", listener: (event: FetchRequestEvent) => void): void;
+  addEventListener(type: "message", listener: (event: MessageEvent<unknown>) => void): void;
   readonly location: { readonly origin: string };
   skipWaiting(): Promise<void>;
 }
@@ -71,6 +75,7 @@ const versionRecord = (version: string) =>
 
 // How many cache entries a completeness check reads at once.
 const CHECK_CONCURRENCY = 16;
+const RETAINED_ARCHIVES = 2;
 
 // The shortest time between pin prunes that navigations start. A pin this worker wrote within it
 // is never pruned, because a navigation's client is not listed until its document runs.
@@ -84,6 +89,11 @@ interface Build {
   readonly files: ReadonlyMap<string, BuildFile>;
   // The verified JSON family of each member URL.
   readonly families: ReadonlyMap<string, VerifiedJsonBody>;
+}
+
+interface RoutedArchive {
+  readonly blob: Blob;
+  readonly files: ReadonlyMap<string, BuildArchiveEntry>;
 }
 
 const JSON_HEADERS = {
@@ -130,11 +140,7 @@ async function mapBounded<T, R>(
 
 // A version record's version, or undefined for a missing or malformed record.
 async function readVersion(records: Cache, url: string): Promise<string | undefined> {
-  try {
-    return await readCachedVersion(await records.match(url));
-  } catch {
-    return undefined;
-  }
+  return readCachedVersion(await records.match(url));
 }
 
 // The build of a saved manifest, or undefined where it is missing or invalid.
@@ -163,16 +169,52 @@ function parseBuild(version: string, value: unknown): Build | undefined {
 // navigation.
 export function runServiceWorker(policy: BuildPolicy): void {
   const worker = self as unknown as WorkerScope;
+  const archiveStore = createBuildArchiveStore({ caches, origin: worker.location.origin, policy });
   // Manifests are immutable per version, and a pin never changes for its client.
   const builds = new Map<string, Promise<Build | undefined>>();
   const pins = new Map<string, string>();
 
-  const openRecords = async (): Promise<Cache | undefined> => {
-    try {
-      return await caches.open(recordsCacheName(policy));
-    } catch {
+  const readArchive = async (version: string): Promise<RoutedArchive | undefined> => {
+    const stored = await archiveStore.read(version);
+    if (stored.kind === "unknown") {
       return undefined;
     }
+    if (stored.kind === "unavailable") {
+      throw new TypeError(`Build archive unavailable for ${version}`);
+    }
+    return {
+      blob: stored.blob,
+      files: new Map(stored.index.files.map((file) => [file.url, file])),
+    };
+  };
+
+  // Keep recent verified snapshots, including concurrent reads of the same version. Only
+  // successful reads stay cached, so the page can still install or repair an archive.
+  const archives = new Map<string, Promise<RoutedArchive | undefined>>();
+  const rememberArchive = (version: string, archive: Promise<RoutedArchive | undefined>) => {
+    archives.delete(version);
+    archives.set(version, archive);
+    if (archives.size > RETAINED_ARCHIVES) {
+      archives.delete(archives.keys().next().value!);
+    }
+  };
+  const loadArchive = (version: string) => {
+    const cached = archives.get(version);
+    const archive = cached ?? readArchive(version);
+    rememberArchive(version, archive);
+    if (cached === undefined) {
+      const remove = () => {
+        if (archives.get(version) === archive) {
+          archives.delete(version);
+        }
+      };
+      void archive.then((loaded) => {
+        if (loaded === undefined) {
+          remove();
+        }
+      }, remove);
+    }
+    return archive;
   };
 
   const loadBuild = (records: Cache, version: string): Promise<Build | undefined> => {
@@ -298,13 +340,15 @@ export function runServiceWorker(policy: BuildPolicy): void {
   // that loads game code is answered. An incomplete one stays staged for the page to repair.
   const promoteStaged = async (records: Cache) => {
     // A transient read refusal is a routing fallback, never permission to write active.
-    const versionAt = async (path: string) => readCachedVersion(await records.match(path));
+    const versionAt = (path: string) => readVersion(records, path);
     const staged = await versionAt(STAGED_RECORD_PATH);
     if (staged === undefined) {
       return;
     }
     const active = await versionAt(ACTIVE_RECORD_PATH);
-    if (staged !== active) {
+    // Check persisted completeness, even if the worker holds a previously read snapshot.
+    const archive = await readArchive(staged);
+    if (archive === undefined && staged !== active) {
       const build = await loadBuild(records, staged);
       if (build === undefined || !(await complete(build))) {
         return;
@@ -323,11 +367,11 @@ export function runServiceWorker(policy: BuildPolicy): void {
       if ((await versionAt(STAGED_RECORD_PATH)) === staged) {
         await records.delete(STAGED_RECORD_PATH);
       }
+      if (archive !== undefined) {
+        rememberArchive(staged, Promise.resolve(archive));
+      }
     });
   };
-
-  const fileFor = (build: Build, request: Request) =>
-    build.files.get(cacheKeyFor(new URL(request.url).pathname));
 
   // Stores a network copy of an evicted file only where its bytes match the manifest.
   const storeVerified = async (cache: Cache, file: BuildFile, response: Response) => {
@@ -427,10 +471,7 @@ export function runServiceWorker(policy: BuildPolicy): void {
 
   const route = async (event: FetchRequestEvent): Promise<Response> => {
     const { clientId, request, resultingClientId } = event;
-    const records = await openRecords();
-    if (records === undefined) {
-      return fetch(request);
-    }
+    const records = await caches.open(recordsCacheName(policy));
     const navigation = request.mode === "navigate";
     const client = navigation ? resultingClientId : clientId;
     const pinned = client ? await readPin(records, client) : undefined;
@@ -438,26 +479,47 @@ export function runServiceWorker(policy: BuildPolicy): void {
       await promoteStaged(records).catch(() => undefined);
     }
     const version = pinned ?? (await readVersion(records, ACTIVE_RECORD_PATH));
-    const build = version === undefined ? undefined : await loadBuild(records, version);
-    if (build === undefined) {
+    if (version === undefined) {
       return fetch(request);
     }
-    const file = fileFor(build, request);
-    if (navigation && file === undefined) {
+    const archive = await loadArchive(version);
+    const build = archive === undefined ? await loadBuild(records, version) : undefined;
+    const path = cacheKeyFor(new URL(request.url).pathname);
+    const entry = archive?.files.get(path);
+    const file = build?.files.get(path);
+    if (
+      (archive === undefined && build === undefined) ||
+      (navigation && entry === undefined && file === undefined)
+    ) {
       return fetch(request);
     }
     // A document's pin is stored before its response, so its first subresource finds it. A
     // document with no pin, such as a first install's, is pinned at its first request.
     if (client && pinned === undefined) {
-      await writePin(records, client, build.version);
+      await writePin(records, client, version);
     }
-    return file === undefined ? fetch(request) : serve(event, build, file);
+    if (archive !== undefined && entry !== undefined) {
+      const { byteSize, contentType, offset } = entry;
+      return new Response(archive.blob.slice(offset, offset + byteSize, contentType), {
+        headers: {
+          "content-length": String(byteSize),
+          "content-type": contentType,
+          "x-content-type-options": "nosniff",
+        },
+      });
+    }
+    return build !== undefined && file !== undefined ? serve(event, build, file) : fetch(request);
   };
 
   worker.addEventListener("install", (event) => event.waitUntil(worker.skipWaiting()));
   worker.addEventListener("activate", (event) =>
     event.waitUntil(worker.clients.claim().then(() => prune(true))),
   );
+  worker.addEventListener("message", (event) => {
+    if (event.data === BUILD_ARCHIVE_ROUTER_PROBE) {
+      event.ports[0]?.postMessage(BUILD_ARCHIVE_ROUTER_PROBE);
+    }
+  });
   worker.addEventListener("fetch", (event) => {
     const { request } = event;
     // A no-store request, such as the page installer's download of a newer build's unhashed file

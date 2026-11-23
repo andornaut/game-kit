@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { encodeBuildArchiveIndex } from "../buildArchive.ts";
 import {
   BUILD_HASH_HEADER,
   buildCacheName,
@@ -12,6 +13,8 @@ import {
 } from "../buildContract.ts";
 import { installedManifest } from "../buildRecords.ts";
 import type { VerifiedJsonBody } from "../verifiedJsonBody.ts";
+import { BUILD_ARCHIVE_ROUTER_PROBE } from "./buildArchiveRouter.ts";
+import { createBuildArchiveStore } from "./buildArchiveStore.ts";
 import { createBuildStore } from "./buildStore.ts";
 import { PIN_PRUNE_MS, runServiceWorker } from "./serviceWorker.ts";
 
@@ -19,6 +22,7 @@ const ORIGIN = "https://game.test";
 const POLICY: BuildPolicy = { cacheNamePrefix: "game-", hashedAssetPrefix: "/assets/" };
 const RECORDS = recordsCacheName(POLICY);
 const ACTIVE = "/.game-kit/records/active";
+const ARCHIVE_BODY = "/.game-kit/records/archive-body";
 const STAGED = "/.game-kit/records/staged";
 const pinKey = (id: string) => `/.game-kit/records/pin/${encodeURIComponent(id)}`;
 
@@ -69,6 +73,10 @@ class FakeCaches {
 
   keys(): Promise<string[]> {
     return Promise.resolve([...this.named.keys()]);
+  }
+
+  async match(key: Request | string, { cacheName }: { cacheName: string }) {
+    return this.named.get(cacheName)?.match(key);
   }
 
   open(name: string): Promise<FakeCache> {
@@ -241,16 +249,173 @@ function startWorker(server: FakeServer, storage = new FakeCaches()) {
 const V1 = { "/app.js": "app v1", "/play/": "page v1", "/sound/hit.ogg": "hit" };
 const V2 = { "/app.js": "app v2", "/play/": "page v2", "/sound/hit.ogg": "hit" };
 
+const ARCHIVED_FILES = {
+  "/app.js": ["text/javascript; charset=utf-8", "app from archive"],
+  "/play/": ["text/html; charset=utf-8", "<p>Archive</p>"],
+  "/sound/hit.ogg": ["audio/ogg", "hit from archive"],
+  "/style.css": ["text/css; charset=utf-8", "body { color: black; }"],
+} as const;
+
+async function saveArchive(storage: FakeCaches, version: string, script?: string) {
+  const buildId = "a".repeat(40);
+  const files = Object.entries({
+    ...ARCHIVED_FILES,
+    "/app.js": [ARCHIVED_FILES["/app.js"][0], script ?? ARCHIVED_FILES["/app.js"][1]] as const,
+  });
+  const index = encodeBuildArchiveIndex({
+    buildId,
+    files: files.map(([url, [type, text]]) => [url, Buffer.byteLength(text), type]),
+    version,
+  });
+  const buffer = Buffer.concat([index, ...files.map(([, [, text]]) => Buffer.from(text))]);
+  await createBuildArchiveStore({
+    caches: storage as unknown as CacheStorage,
+    origin: ORIGIN,
+    policy: POLICY,
+  }).put(
+    {
+      archive: {
+        byteSize: buffer.byteLength,
+        schema: 1,
+        sha256: createHash("sha256").update(buffer).digest("hex"),
+      },
+      buildId,
+      manifest: buildManifestUrl(version),
+      schema: 1,
+      version,
+    },
+    new Blob([buffer]),
+  );
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+describe("archive routing", () => {
+  it("promotes an archive, serves its typed slices and keeps an old document pinned", async () => {
+    const server = new FakeServer({ "/api/state": "network state" });
+    const worker = startWorker(server);
+    await worker.saveBuild(manifestOf("v1", V1), V1);
+    await saveArchive(worker.storage, "v2");
+    await worker.setRecord(ACTIVE, "v1");
+    await worker.setRecord(STAGED, "v2");
+    expect(await (await worker.get("/app.js", "old"))!.text()).toBe(V1["/app.js"]);
+    const cache = await worker.storage.open(buildCacheName(POLICY, "v2"));
+    const read = vi.spyOn(cache, "match");
+    const digest = vi.spyOn(crypto.subtle, "digest");
+
+    const page = (await worker.navigate("/play/index.html", "new"))!;
+    expect(await worker.readRecord(ACTIVE)).toBe("v2");
+    expect(await worker.readRecord(STAGED)).toBeUndefined();
+    expect(await worker.readRecord(pinKey("new"))).toBe("v2");
+    await Promise.all(
+      Object.entries(ARCHIVED_FILES).map(async ([url, [type, text]]) => {
+        const response = url === "/play/" ? page : (await worker.get(url, "new"))!;
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toBe(type);
+        expect(response.headers.get("content-length")).toBe(String(Buffer.byteLength(text)));
+        expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+        expect(await response.text()).toBe(text);
+      }),
+    );
+    expect(await (await worker.get("/app.js", "old"))!.text()).toBe(V1["/app.js"]);
+    expect(await (await worker.get("/api/state", "new"))!.text()).toBe("network state");
+    expect(server.fetched).toEqual(["/api/state"]);
+    expect(read).toHaveBeenCalledOnce();
+    expect(digest).not.toHaveBeenCalled();
+  });
+
+  it("leaves an incomplete archive staged even with a complete same-version legacy cache", async () => {
+    const server = new FakeServer(V2);
+    const worker = startWorker(server);
+    await worker.saveBuild(manifestOf("v1", V1), V1);
+    await worker.saveBuild(manifestOf("v2", V2), V2);
+    await saveArchive(worker.storage, "v2");
+    const cache = await worker.storage.open(buildCacheName(POLICY, "v2"));
+    await cache.delete(ARCHIVE_BODY);
+    await worker.setRecord(ACTIVE, "v1");
+    await worker.setRecord(STAGED, "v2");
+    await worker.setRecord(pinKey("archive"), "v2");
+    await expect(worker.get("/app.js", "archive")).rejects.toThrow("Build archive unavailable");
+
+    expect(await (await worker.navigate("/play/", "new"))!.text()).toBe(V1["/play/"]);
+    expect(await worker.readRecord(ACTIVE)).toBe("v1");
+    expect(await worker.readRecord(STAGED)).toBe("v2");
+    await expect(worker.get("/app.js", "archive")).rejects.toThrow("Build archive unavailable");
+    await expect(worker.get("/api/state", "archive")).rejects.toThrow("Build archive unavailable");
+    expect(server.fetched).toEqual([]);
+    await saveArchive(worker.storage, "v2");
+    expect(await (await worker.get("/app.js", "archive"))!.text()).toBe(
+      ARCHIVED_FILES["/app.js"][1],
+    );
+  });
+
+  it("fails closed when reading a selected version's archive marker rejects", async () => {
+    const server = new FakeServer(V2);
+    const worker = startWorker(server);
+    await worker.saveBuild(manifestOf("v1", V1), V1);
+    await worker.setRecord(ACTIVE, "v1");
+    vi.spyOn(worker.storage, "match").mockRejectedValueOnce(new Error("Marker read failed"));
+
+    await expect(worker.get("/app.js", "doc")).rejects.toThrow("Marker read failed");
+    expect(server.fetched).toEqual([]);
+    expect(await worker.readRecord(pinKey("doc"))).toBeUndefined();
+  });
+
+  it("does not use a retained snapshot as evidence that a staged archive is complete", async () => {
+    const worker = startWorker(new FakeServer(V2));
+    await worker.saveBuild(manifestOf("v1", V1), V1);
+    await saveArchive(worker.storage, "v2");
+    await worker.setRecord(pinKey("archive"), "v2");
+    expect(await (await worker.get("/app.js", "archive"))!.text()).toBe(
+      ARCHIVED_FILES["/app.js"][1],
+    );
+    await (await worker.storage.open(buildCacheName(POLICY, "v2"))).delete(ARCHIVE_BODY);
+    await worker.setRecord(ACTIVE, "v1");
+    await worker.setRecord(STAGED, "v2");
+
+    expect(await (await worker.navigate("/play/", "new"))!.text()).toBe(V1["/play/"]);
+    expect(await worker.readRecord(STAGED)).toBe("v2");
+    expect(await worker.readRecord(ACTIVE)).toBe("v1");
+  });
+
+  it("evicts the least recently used archive snapshot without changing its client's pin", async () => {
+    const worker = startWorker(new FakeServer(V1));
+    await Promise.all(
+      ["v1", "v2", "v3"].map(async (version) => {
+        await saveArchive(worker.storage, version, `app for ${version}`);
+        await worker.setRecord(pinKey(version), version);
+      }),
+    );
+    const cache = await worker.storage.open(buildCacheName(POLICY, "v1"));
+    const read = vi.spyOn(cache, "match");
+    expect(await (await worker.get("/app.js", "v1"))!.text()).toBe("app for v1");
+    expect(await (await worker.get("/app.js", "v2"))!.text()).toBe("app for v2");
+    expect(await (await worker.get("/app.js", "v3"))!.text()).toBe("app for v3");
+    expect(await (await worker.get("/app.js", "v1"))!.text()).toBe("app for v1");
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(await worker.readRecord(pinKey("v1"))).toBe("v1");
+  });
+
+  it("echoes the exact capability token only to its transferred port", () => {
+    const worker = startWorker(new FakeServer(V1));
+    const listen = worker.listeners.get("message")!;
+    const reply = vi.fn();
+    listen({ data: { token: BUILD_ARCHIVE_ROUTER_PROBE }, ports: [{ postMessage: reply }] });
+    listen({ data: BUILD_ARCHIVE_ROUTER_PROBE, ports: [] });
+    expect(reply).not.toHaveBeenCalled();
+    listen({ data: BUILD_ARCHIVE_ROUTER_PROBE, ports: [{ postMessage: reply }] });
+    expect(reply).toHaveBeenCalledExactlyOnceWith(BUILD_ARCHIVE_ROUTER_PROBE);
+  });
 });
 
 describe("runServiceWorker's lifecycle", () => {
   it("takes over at once on install and activate and downloads nothing", async () => {
     const server = new FakeServer(V1);
     const worker = startWorker(server);
-    expect([...worker.listeners.keys()]).toEqual(["install", "activate", "fetch"]);
+    expect([...worker.listeners.keys()]).toEqual(["install", "activate", "message", "fetch"]);
     await worker.lifecycle("install");
     expect(worker.skipWaiting).toHaveBeenCalledOnce();
     await worker.lifecycle("activate");
