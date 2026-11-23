@@ -110,9 +110,9 @@ once and stores it intact. The worker serves each pinned build by logical URL
 from the archive index. A version match skips the archive download.
 
 First install uses the existing bootstrap and can still use `packs`.
-Archive updates fetch the archive parts only. The build continues to emit its
-manifest and individual files so previously installed clients can migrate.
-Whole-build staging waits for a controlling worker that supports the archive
+Archive updates fetch the archive parts only. The manifest and current files
+are available for first install. Whole-build staging waits for a controlling
+worker that supports the archive
 format. Existing in-session consent, cold-launch activation and required-save
 recovery apply to complete archives.
 
@@ -127,13 +127,13 @@ An unchanged version skips staging. For a changed version, the page reuses
 verified groups from earlier builds and downloads missing groups one at a time.
 The router serves the pinned version's files from the groups. A complete build
 still has one activation, and interrupted staging preserves the active build.
-First install and older workers can install the ordinary emitted files.
+First install can use the current build’s ordinary files or install packs.
+Grouped staging requires a controller that supports group archives.
 
 The build rejects more than 100 groups in grouped mode or more than 100 listed
 files in specific-file mode. This counts update units. First-install packs,
-other website output and older deployed builds have their own layout. The
-existing `wholeBuild: true` transport remains available for migration and cannot
-be combined with `updateGroup`.
+and other website output have their own layout. The `wholeBuild: true`
+transport is separate from `updateGroup`.
 
 ## Packed origin files
 
@@ -147,9 +147,9 @@ archive sizes are bounded at 24 MiB.
 At the origin, pass the index and an archive body storage callback to
 `createOriginMemberReader` from `runtime/web/pwa/dom/originMemberReader`.
 Resolve the request pathname with `reader.read(path)`. An unknown path returns
-`undefined` so the host can try ordinary assets or a retained root. A known
-path with a missing or invalid archive rejects. The host owns root ordering,
-HTTP method and cache policy, and how failures are served.
+`undefined` so the host can try ordinary current-build assets. A known path
+with a missing or invalid archive rejects. The host owns HTTP method and
+cache policy and controls how failures are served.
 
 Origin packing works for direct HTTP requests without a service worker. It
 preserves the logical URL inventory and leaves update mode and update counts
@@ -158,10 +158,10 @@ unchanged.
 ## Reconstructing update archives at the origin
 
 Set `emitUpdateGroupRecipes: true` alongside `updateGroup` in
-`build/precachePlugin`. The build emits one additional JSON file at
-`updateGroupRecipesPath(version)`, exported by
-`runtime/web/pwa/buildContract`. The pointer, manifest and raw archives
-are unchanged.
+`build/precachePlugin`. Starting in 0.69.0, this emits one JSON recipe at
+`updateGroupRecipesPath(version)` from `runtime/web/pwa/buildContract` and
+omits the raw archive files. The pointer, manifest and requested archive
+URLs stay the same. Omit the flag to serve the emitted archives directly.
 
 For a version whose backing files are selected, pass its recipe to
 `createUpdateGroupArchiveReader({ readMember }, recipe)` from
@@ -172,9 +172,10 @@ reader. Use that storage directly to avoid routing back into the assembler.
 checking member and archive bytes. Unknown paths return `undefined`. Known
 paths with missing or invalid bytes reject.
 
-The host owns method handling, HTTP cache policy, storage lifetime and
-selection of retained builds. Keep the raw archives available until the
-assembled route is qualified on that host.
+Qualify the assembled route against the current build before deployment.
+The host owns method handling and HTTP cache policy. Publish only the
+current build’s required backing files and one representation of each
+archive. Local caches still preserve the active build during staging.
 
 ## Refusal admission and Retry press cues in 0.62.1
 
