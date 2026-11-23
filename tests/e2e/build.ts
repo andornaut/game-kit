@@ -40,7 +40,7 @@ export interface Deployment {
   readonly pointer: BuildPointer;
 }
 
-const LEVELS = 8;
+const LEVELS = 7;
 // Sounds under /assets/s/, each with an alternative per format; the fixture page plays ogg.
 const SOUNDS = 3;
 const SOUND_FORMATS = ["ogg", "m4a"] as const;
@@ -135,16 +135,22 @@ function fixtureFiles(
 
 export function readDeployment(variant: Variant, directory: string): Deployment {
   const json = (url: string): unknown => JSON.parse(readFileSync(join(directory, url), "utf8"));
-  const { archive, ...legacyPointer } = parseBuildPointer(json(BUILD_POINTER_URL));
+  const { archive, groups, ...legacyPointer } = parseBuildPointer(json(BUILD_POINTER_URL));
   const pointer = {
     ...validateBuildPointer(legacyPointer),
     ...(archive === undefined ? {} : { archive }),
+    ...(groups === undefined ? {} : { groups }),
   };
   return { directory, manifest: validateBuildManifest(json(pointer.manifest)), pointer, variant };
 }
 
 export async function buildDeployment(
-  context: { readonly outRoot: string; readonly size: FixtureSize; readonly wholeBuild?: true },
+  context: {
+    readonly outRoot: string;
+    readonly size: FixtureSize;
+    readonly updateGroup?: (url: string) => string;
+    readonly wholeBuild?: true;
+  },
   variant: Variant,
 ): Promise<Deployment> {
   const directory = join(context.outRoot, variant);
@@ -173,6 +179,7 @@ export async function buildDeployment(
         pageHtmlFile: "play/index.html",
         policy: POLICY,
         serviceWorkerSource: join(FIXTURE, "sw.ts"),
+        ...(context.updateGroup === undefined ? {} : { updateGroup: context.updateGroup }),
         verifiedJsonBodies: () => [SHARED_JSON],
         ...(context.wholeBuild === true ? { wholeBuild: true } : {}),
       }),

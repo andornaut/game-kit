@@ -21,10 +21,14 @@ import { POLICY, SAVE_MS } from "./fixture/policy.ts";
 import { type RequestRecord, startServer } from "./server.ts";
 
 const LONG = process.argv.includes("--long");
-const WHOLE_BUILD = process.argv.includes("--whole-build");
+const ARCHIVE_MODE = process.argv.includes("--grouped")
+  ? "grouped"
+  : process.argv.includes("--whole-build")
+    ? "whole-build"
+    : undefined;
 const SIZE: FixtureSize = LONG
-  ? { fileBytes: 10_000, files: 4500 }
-  : { fileBytes: 4000, files: 400 };
+  ? { fileBytes: 850_000, files: 80 }
+  : { fileBytes: 16_000, files: 80 };
 // About 1.6 Mbit/s with 300 ms latency: a slow mobile link.
 const THROTTLE: NetworkConditions = {
   downloadThroughput: 200_000,
@@ -513,9 +517,12 @@ async function main(): Promise<number> {
   return failedCount;
 }
 
-const run = WHOLE_BUILD
-  ? import("./wholeBuild.ts").then(({ runWholeBuildAcceptance }) => runWholeBuildAcceptance())
-  : main();
+const run =
+  ARCHIVE_MODE === undefined
+    ? main()
+    : import("./wholeBuild.ts").then(({ runWholeBuildAcceptance }) =>
+        runWholeBuildAcceptance(ARCHIVE_MODE),
+      );
 run.then(
   (failedCount) => {
     process.exitCode = failedCount === 0 ? 0 : 1;
@@ -527,7 +534,7 @@ run.then(
       console.error(`Stopped: ${error.message}`);
     }
     const failedCount = results.filter((r) => !r.ok).length;
-    if (!WHOLE_BUILD) {
+    if (ARCHIVE_MODE === undefined) {
       console.log(
         `e2e ${LONG ? "long" : "short"}: stopped after ${results.length - failedCount} passed, ${failedCount} failed`,
       );

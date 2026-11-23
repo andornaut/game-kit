@@ -22,7 +22,8 @@ import { type FixtureServer, startServer } from "./server.ts";
 
 const BODY_PATH = "/.game-kit/records/archive-body";
 const ROUTER_PATH = "/sw.js";
-const ROUTER_PROBE = "game-kit:archive-router:1";
+const ARCHIVE_ROUTER_PROBE = "game-kit:archive-router:1";
+const GROUP_ROUTER_PROBE = "game-kit:group-router:1";
 const WAIT = 45_000;
 
 declare global {
@@ -66,42 +67,71 @@ const records = (page: Page) =>
     { active: ACTIVE_RECORD_PATH, cacheName: recordsCacheName(POLICY), staged: STAGED_RECORD_PATH },
   );
 
-async function verifyStoredArchive(page: Page, deployment: Deployment): Promise<void> {
-  const { archive, version } = deployment.pointer;
-  assert(archive);
+const pinnedVariant = (page: Page) =>
+  page.evaluate(async () => {
+    const response = await fetch("/data/index.json", { cache: "reload" });
+    if (!response.ok) {
+      throw new Error(`Pinned document's data failed: ${response.status}`);
+    }
+    return ((await response.json()) as { variant: string }).variant;
+  });
+
+async function verifyStoredTransport(page: Page, deployment: Deployment): Promise<void> {
+  const { archive, groups, version } = deployment.pointer;
+  assert(archive ?? groups);
+  const bodies = groups?.map((group) => ({
+    byteSize: group.byteSize,
+    path: buildArchivePartUrl(group, 0),
+    sha256: group.sha256,
+    stamped: group.sha256,
+  })) ?? [
+    {
+      byteSize: archive!.byteSize,
+      path: BODY_PATH,
+      sha256: archive!.sha256,
+      stamped: archive!.sha256,
+    },
+  ];
+  const markerKind = groups === undefined ? "archive" : "group";
   const stored = await page.evaluate(
-    async ({ body, cacheName, hashHeader, marker, recordsName }) => {
+    async ({ cacheName, hashHeader, marker, paths, recordsName }) => {
       if (!(await caches.has(cacheName))) {
         throw new Error("Missing candidate cache");
       }
       const cache = await caches.open(cacheName);
-      const response = await cache.match(body);
-      if (response === undefined) {
-        throw new Error("Missing verified archive body");
-      }
-      const bytes = await response.arrayBuffer();
-      const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+      const storedBodies = await Promise.all(
+        paths.map(async (path) => {
+          const response = await cache.match(path);
+          if (response === undefined) {
+            throw new Error(`Missing verified archive body at ${path}`);
+          }
+          const bytes = await response.arrayBuffer();
+          const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+          return {
+            byteSize: bytes.byteLength,
+            path,
+            sha256: Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(""),
+            stamped: response.headers.get(hashHeader),
+          };
+        }),
+      );
       return {
-        byteSize: bytes.byteLength,
-        keys: (await cache.keys()).map((key) => new URL(key.url).pathname),
+        bodies: storedBodies,
+        keys: (await cache.keys()).map((key) => new URL(key.url).pathname).sort(),
         marker: (await (await caches.match(marker, { cacheName: recordsName }))?.json()) as unknown,
-        sha256: Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(""),
-        stamped: response.headers.get(hashHeader),
       };
     },
     {
-      body: BODY_PATH,
       cacheName: buildCacheName(POLICY, version),
       hashHeader: BUILD_HASH_HEADER,
-      marker: `/.game-kit/archive-record-${encodeURIComponent(version)}.json`,
+      marker: `/.game-kit/${markerKind}-record-${encodeURIComponent(version)}.json`,
+      paths: bodies.map(({ path }) => path),
       recordsName: recordsCacheName(POLICY),
     },
   );
-  assert.deepEqual(stored.keys, [BODY_PATH]);
+  assert.deepEqual(stored.keys, bodies.map(({ path }) => path).sort());
   assert.deepEqual(stored.marker, deployment.pointer);
-  assert.equal(stored.byteSize, archive.byteSize);
-  assert.equal(stored.sha256, archive.sha256);
-  assert.equal(stored.stamped, archive.sha256);
+  assert.deepEqual(stored.bodies, bodies);
 }
 
 async function stage(
@@ -116,12 +146,21 @@ async function stage(
 ): Promise<E2eState> {
   const { offline, page, requests, server } = context;
   const before = await playing(page, active);
-  const { archive, version } = candidate.pointer;
-  assert(archive);
-  const parts = Array.from(
-    { length: Math.ceil(archive.byteSize / BUILD_ARCHIVE_PART_BYTES) },
-    (_, i) => buildArchivePartUrl(archive, i),
-  );
+  const { archive, groups, version } = candidate.pointer;
+  assert(archive ?? groups);
+  const activeGroups = new Set(active.pointer.groups?.map(({ sha256 }) => sha256));
+  const reused = groups?.filter(({ sha256 }) => activeGroups.has(sha256)) ?? [];
+  const parts =
+    groups === undefined
+      ? Array.from({ length: Math.ceil(archive!.byteSize / BUILD_ARCHIVE_PART_BYTES) }, (_, i) =>
+          buildArchivePartUrl(archive!, i),
+        )
+      : groups
+          .filter(({ sha256 }) => !activeGroups.has(sha256))
+          .map((group) => buildArchivePartUrl(group, 0));
+  if (groups !== undefined && active.pointer.groups !== undefined) {
+    assert(reused.length > 0 && parts.length > 0, "Fixture must reuse and change groups");
+  }
   assert(
     candidate.manifest.files.some((file) =>
       active.manifest.files.some(({ sha256, url }) => url === file.url && sha256 === file.sha256),
@@ -154,9 +193,12 @@ async function stage(
         };
         controller.postMessage(probe, [port2]);
       }),
-    { probe: ROUTER_PROBE, router: server.origin + ROUTER_PATH },
+    {
+      probe: groups === undefined ? ARCHIVE_ROUTER_PROBE : GROUP_ROUTER_PROBE,
+      router: server.origin + ROUTER_PATH,
+    },
   );
-  assert(answersProbe, "Current controlling router must acknowledge archive support");
+  assert(answersProbe, "Current controlling router must acknowledge the selected transport");
   const logStart = server.log.length;
   const requestsStart = requests.length;
   const writesStart = await page.evaluate(() => window.wholeBuildCacheWrites.length);
@@ -176,7 +218,7 @@ async function stage(
   assert.equal(offered.paused, true);
   assert.equal(await page.locator("#prompt").isVisible(), true);
   assert.deepEqual(await records(page), { active: active.pointer.version, staged: version });
-  await verifyStoredArchive(page, candidate);
+  await verifyStoredTransport(page, candidate);
 
   const network = server.log.slice(logStart);
   assert(network.some(({ path, status }) => path === BUILD_POINTER_URL && status === 200));
@@ -194,6 +236,9 @@ async function stage(
     !paths.includes(candidate.pointer.manifest),
     "Legacy manifest requested for archive staging",
   );
+  for (const group of reused) {
+    assert(!paths.includes(buildArchivePartUrl(group, 0)), "Unchanged group requested again");
+  }
   assert.deepEqual(
     paths.filter((path) => filePaths.has(path)),
     [],
@@ -208,16 +253,10 @@ async function stage(
     [],
     "Per-file copy while staging",
   );
-  const pinned = await page.evaluate(async () => {
-    const response = await fetch("/data/index.json", { cache: "reload" });
-    if (!response.ok) {
-      throw new Error(`Old document's data failed: ${response.status}`);
-    }
-    return ((await response.json()) as { variant: string }).variant;
-  });
-  assert.equal(pinned, active.variant);
+  assert.equal(await pinnedVariant(page), active.variant);
   console.log(
-    `PASS ${active.variant} → ${candidate.variant} staged once via ${parts.length} archive part(s)`,
+    `PASS ${active.variant} → ${candidate.variant} staged once via ${parts.length} archive part(s), ` +
+      `${reused.length} group(s) reused`,
   );
   return offered;
 }
@@ -278,14 +317,20 @@ async function offlineFiles(
   console.log(`PASS ${deployment.variant} serves exact HTML, JS, JSON and Ogg bytes offline`);
 }
 
-export async function runWholeBuildAcceptance(): Promise<number> {
-  const outRoot = join(process.env.TMPDIR ?? "/scratch", "e2e-whole-build");
+export async function runWholeBuildAcceptance(mode: "grouped" | "whole-build"): Promise<number> {
+  const outRoot = join(process.env.TMPDIR ?? "/scratch", `e2e-${mode}`);
   mkdirSync(outRoot, { recursive: true });
   const build = { outRoot, size: { fileBytes: 2000, files: 40 } };
   const baseline = await buildDeployment(build, "a");
-  const accepted = await buildDeployment({ ...build, wholeBuild: true }, "b");
-  const canceled = await buildDeployment({ ...build, wholeBuild: true }, "c");
+  // Sound bodies and URLs stay fixed while the page, code and data change between deployments.
+  const transport =
+    mode === "grouped"
+      ? { updateGroup: (url: string) => (url.startsWith("/assets/s/") ? "audio" : "game") }
+      : { wholeBuild: true as const };
+  const accepted = await buildDeployment({ ...build, ...transport }, "b");
+  const canceled = await buildDeployment({ ...build, ...transport }, "c");
   assert.equal(baseline.pointer.archive, undefined);
+  assert.equal(baseline.pointer.groups, undefined);
 
   const browser = await chromium.launch({ channel: "chromium", headless: true });
   try {
@@ -366,17 +411,24 @@ export async function runWholeBuildAcceptance(): Promise<number> {
         staged: canceled.pointer.version,
       });
       await offline(true);
-      const cold = await page.reload();
+      // Keep the previous grouped document open while an unpinned navigation promotes the stage.
+      const coldPage = mode === "grouped" ? await context.newPage() : page;
+      const cold = mode === "grouped" ? await coldPage.goto(url) : await coldPage.reload();
       assert(cold);
-      const promoted = await playing(page, canceled);
+      const promoted = await playing(coldPage, canceled);
       assert(promoted.timeOrigin > dismissed.timeOrigin);
       assert.deepEqual(promoted.lastSave, switched.lastSave);
       assert.deepEqual(promoted.updateReady, []);
-      assert.deepEqual(await records(page), {
+      assert.deepEqual(await records(coldPage), {
         active: canceled.pointer.version,
         staged: undefined,
       });
-      await offlineFiles(page, cold, canceled);
+      await offlineFiles(coldPage, cold, canceled);
+      if (coldPage !== page) {
+        assert.equal((await playing(page, accepted)).timeOrigin, dismissed.timeOrigin);
+        assert.equal(await pinnedVariant(page), accepted.variant);
+        console.log("PASS the older grouped document still serves its pinned data offline");
+      }
       console.log(
         "PASS dismiss retains the running build and the next offline launch promotes the stage",
       );
