@@ -4,7 +4,6 @@ import { getEventListeners } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  BUILD_HASH_HEADER,
   BUILD_POINTER_URL,
   buildArchivePartUrl,
   type BuildFile,
@@ -26,8 +25,6 @@ import type { BuildGroupStore } from "./buildGroupStore.ts";
 import type { BuildInstallOptions, installBuild } from "./buildInstaller.ts";
 import type { BuildStore } from "./buildStore.ts";
 import {
-  type CacheLike,
-  type CacheStorageLike,
   CONTROL_WAIT_MS,
   createLaunch,
   type FetchLike,
@@ -75,9 +72,6 @@ class FakeStore implements BuildStore {
   state: { active?: string; staged?: string } = {};
   readonly manifests = new Map<string, BuildManifest>();
   readonly completeVersions = new Set<string>();
-  // Each version's stored files by URL.
-  readonly files = new Map<string, Map<string, Response>>();
-  missingFiles: BuildFile[] | undefined;
   readonly calls: string[] = [];
 
   async readState(): Promise<BuildState> {
@@ -103,7 +97,7 @@ class FakeStore implements BuildStore {
     this.manifests.set(manifest.version, manifest);
   }
   async missing(manifest: BuildManifest) {
-    return [...(this.missingFiles ?? manifest.files)];
+    return [...manifest.files];
   }
   async complete(manifest: BuildManifest) {
     return this.completeVersions.has(manifest.version);
@@ -115,11 +109,7 @@ class FakeStore implements BuildStore {
   async pinnedVersions() {
     return new Map<string, string>();
   }
-  async putFile(version: string, url: string, response: Response) {
-    const files = this.files.get(version) ?? new Map<string, Response>();
-    files.set(url, response);
-    this.files.set(version, files);
-  }
+  async putFile() {}
   async findByHash() {
     return undefined;
   }
@@ -128,34 +118,6 @@ class FakeStore implements BuildStore {
   }
   async writePin() {}
   async deletePin() {}
-}
-
-class FakeCache implements CacheLike {
-  readonly entries = new Map<string, Response>();
-  async match(url: string) {
-    return this.entries.get(url)?.clone();
-  }
-  async put(url: string, response: Response) {
-    this.entries.set(url, response);
-  }
-}
-
-class FakeCaches implements CacheStorageLike {
-  readonly caches = new Map<string, FakeCache>();
-  async delete(name: string) {
-    return this.caches.delete(name);
-  }
-  async keys() {
-    return [...this.caches.keys()];
-  }
-  async open(name: string) {
-    let cache = this.caches.get(name);
-    if (cache === undefined) {
-      cache = new FakeCache();
-      this.caches.set(name, cache);
-    }
-    return cache;
-  }
 }
 
 class FakeSession implements SessionLike {
@@ -201,8 +163,6 @@ function fixture({
   const visibility = new FakeDocument();
   const window = new EventTarget();
   const session = new FakeSession();
-  const caches = new FakeCaches();
-  const deleteDatabase = vi.fn();
   const reload = vi.fn();
   const routes = new Map<string, () => Response>();
   const fetch = vi.fn<FetchLike>(async (input) => {
@@ -220,7 +180,7 @@ function fixture({
     fetch,
     location: { href: `${ORIGIN}/play/`, reload },
     online: () => online,
-    storage: { caches, indexedDB: { deleteDatabase } as never, manager: undefined, session },
+    storage: { manager: undefined, session },
     timers: {
       clearTimeout: (id) => clearTimeout(id as ReturnType<typeof setTimeout>),
       now: () => now,
@@ -284,9 +244,7 @@ function fixture({
     advance: (ms: number) => {
       now += ms;
     },
-    caches,
     container,
-    deleteDatabase,
     deploy,
     failures,
     fetch,
@@ -758,40 +716,6 @@ describe("first install", () => {
     await settle();
     expect(f.failures.map((failure) => failure.reason)).toEqual(["verification"]);
     expect(f.networkPlay).toEqual([]);
-  });
-});
-
-describe("legacy migration", () => {
-  it("copies verified entries from old version caches, then deletes the old state after setActive", async () => {
-    const f = fixture();
-    f.deploy(V1);
-    f.container.claim();
-    const old = await f.caches.open("game-0123456789abcdef");
-    await old.put(
-      "/a.js",
-      new Response("alpha", { headers: { "content-type": "text/javascript" } }),
-    );
-    await old.put("/play/", new Response("<stale>"));
-    await f.caches.open("game-kit-routing:game-");
-    await f.caches.open("other-cache");
-    let copiedBeforeInstall: string[] = [];
-    f.setResults([
-      async () => {
-        copiedBeforeInstall = [...(f.store.files.get("aaaa")?.keys() ?? [])];
-        expect(await f.caches.keys()).toContain("game-0123456789abcdef");
-        return "complete";
-      },
-    ]);
-    await expect(f.launch.run()).resolves.toBe("play");
-    expect(copiedBeforeInstall).toEqual(["/a.js"]);
-    const copied = f.store.files.get("aaaa")?.get("/a.js");
-    expect(copied?.headers.get(BUILD_HASH_HEADER)).toBe(sha("alpha"));
-    expect(copied?.headers.get("content-type")).toBe("text/javascript");
-    expect(await copied?.text()).toBe("alpha");
-    expect(await f.caches.keys()).not.toContain("game-0123456789abcdef");
-    expect(await f.caches.keys()).not.toContain("game-kit-routing:game-");
-    expect(await f.caches.keys()).toContain("other-cache");
-    expect(f.deleteDatabase).toHaveBeenCalledWith("game-kit-groups:game-");
   });
 });
 

@@ -155,7 +155,7 @@ function load(
     fetch: server.fetch,
     location: { href: `${ORIGIN}/play/`, reload },
     online: () => true,
-    storage: { caches, indexedDB: undefined, manager, session: undefined },
+    storage: { manager, session: undefined },
     timers: {
       clearTimeout: (id) => clearTimeout(id as ReturnType<typeof setTimeout>),
       now: () => Date.now(),

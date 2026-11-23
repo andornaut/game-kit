@@ -3,10 +3,8 @@
 // (docs/install-and-update.md). The page drives every download; the router only serves the
 // recorded active build or a window's pin.
 import {
-  BUILD_HASH_HEADER,
   BUILD_POINTER_URL,
   type BuildArchiveReference,
-  type BuildFile,
   type BuildManifest,
   type BuildPointer,
   type BuildPolicy,
@@ -21,7 +19,6 @@ import {
   type UpdateState,
 } from "../buildContract.ts";
 import { installedManifest, parseBuildManifest, parseBuildPointer } from "../buildRecords.ts";
-import { verifiedJsonAliasCachePrefix } from "../verifiedJsonBody.ts";
 import { downloadBuildArchive } from "./buildArchiveDownload.ts";
 import { BUILD_GROUP_ROUTER_PROBE, supportsBuildArchive } from "./buildArchiveRouter.ts";
 import { type BuildArchiveStore, createBuildArchiveStore } from "./buildArchiveStore.ts";
@@ -47,21 +44,9 @@ export interface LaunchTimers {
   clearTimeout(id: unknown): void;
 }
 
-export interface CacheLike {
-  match(url: string): Promise<Response | undefined>;
-}
-
-export interface CacheStorageLike {
-  delete(name: string): Promise<boolean>;
-  keys(): Promise<string[]>;
-  open(name: string): Promise<CacheLike>;
-}
-
 export type SessionLike = Pick<Storage, "getItem" | "removeItem" | "setItem">;
 
 export interface LaunchStorage {
-  readonly caches: CacheStorageLike | undefined;
-  readonly indexedDB: Pick<IDBFactory, "deleteDatabase"> | undefined;
   // navigator.storage, which the installer asks for persistence and a quota estimate.
   readonly manager: Pick<StorageManager, "estimate" | "persist"> | undefined;
   // The tab's sessionStorage. Without it the fallback launch reload never runs.
@@ -85,7 +70,7 @@ export interface LaunchContext {
   readonly groupStore?: BuildGroupStore;
   readonly installBuild: typeof installBuild;
   readonly page: LaunchPage;
-  // The game's cache policy, which scopes the store's caches and the legacy caches launch deletes.
+  // The game's cache policy, which scopes the store's caches.
   readonly policy: BuildPolicy;
   // createBuildStore over the page's caches, origin and policy.
   readonly store: BuildStore;
@@ -182,10 +167,6 @@ function bootBytesOf(manifest: BuildManifest): number {
   return [...new Set(manifest.boot)].reduce((sum, url) => sum + (sizes.get(url) ?? 0), 0);
 }
 
-function hex(bytes: ArrayBuffer): string {
-  return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 interface ProgressCarry {
   readonly bootBytes: number;
   readonly receivedBytes: number;
@@ -219,116 +200,6 @@ function writeSession(session: SessionLike | undefined, key: string, value: stri
   } catch {
     // Without storage, progress restarts from the boot reads and no fallback reload runs.
   }
-}
-
-// CLEANUP (added 2026-11-18): remove once all three games deploy the router.
-// Pre-router workers kept one cache per version (<prefix><16 hex>), verified JSON alias caches,
-// a routing records cache and an asset-group database.
-const LEGACY_VERSION = /^[0-9a-f]{16}$/;
-
-function legacyAliasPrefix(policy: BuildPolicy): string | undefined {
-  try {
-    return verifiedJsonAliasCachePrefix(policy);
-  } catch {
-    return undefined;
-  }
-}
-
-function legacyVersionCaches(policy: BuildPolicy, names: readonly string[]): string[] {
-  const alias = legacyAliasPrefix(policy);
-  return names.filter(
-    (name) =>
-      (name.startsWith(policy.cacheNamePrefix) &&
-        LEGACY_VERSION.test(name.slice(policy.cacheNamePrefix.length))) ||
-      (alias !== undefined &&
-        name.startsWith(alias) &&
-        LEGACY_VERSION.test(name.slice(alias.length))),
-  );
-}
-
-function legacyRoutingCacheName(policy: BuildPolicy): string {
-  return `game-kit-routing:${policy.cacheNamePrefix}`;
-}
-
-function legacyGroupDatabaseName(policy: BuildPolicy): string {
-  return `game-kit-groups:${policy.cacheNamePrefix}`;
-}
-
-const LEGACY_CONTROL_RELOAD_KEY = "game-kit:control-reload";
-const LEGACY_COPY_LANES = 4;
-
-// Copies each missing file an old version cache holds with the manifest's size and SHA-256 into
-// the new build's cache under its logical URL with its digest header, hashing each copy once.
-async function copyLegacyEntries(
-  storage: LaunchStorage,
-  context: { readonly policy: BuildPolicy; readonly store: BuildStore },
-  manifest: BuildManifest,
-  onCopied: (bytes: number) => void,
-): Promise<void> {
-  const { caches } = storage;
-  if (caches === undefined) {
-    return;
-  }
-  const names = legacyVersionCaches(context.policy, await caches.keys());
-  if (names.length === 0) {
-    return;
-  }
-  const sources = await Promise.all(names.map((name) => caches.open(name)));
-  // Tries each old cache in turn, stopping at the first copy with the manifest's size and hash.
-  const copyFrom = async (file: BuildFile, index: number): Promise<void> => {
-    const source = sources[index];
-    if (source === undefined) {
-      return;
-    }
-    const response = await source.match(file.url);
-    const bytes = await response?.arrayBuffer();
-    if (
-      response === undefined ||
-      bytes === undefined ||
-      bytes.byteLength !== file.byteSize ||
-      hex(await crypto.subtle.digest("SHA-256", bytes)) !== file.sha256
-    ) {
-      await copyFrom(file, index + 1);
-      return;
-    }
-    const headers = new Headers(response.headers);
-    headers.set(BUILD_HASH_HEADER, file.sha256);
-    headers.set("content-length", String(bytes.byteLength));
-    await context.store.putFile(
-      manifest.version,
-      file.url,
-      new Response(bytes, { headers, status: 200 }),
-    );
-    onCopied(bytes.byteLength);
-  };
-  const queue = [...(await context.store.missing(manifest))];
-  const lane = async (): Promise<void> => {
-    const file = queue.shift();
-    if (file !== undefined) {
-      await copyFrom(file, 0);
-      await lane();
-    }
-  };
-  await Promise.all(Array.from({ length: LEGACY_COPY_LANES }, lane));
-}
-
-async function deleteLegacy(storage: LaunchStorage, policy: BuildPolicy): Promise<void> {
-  const { caches } = storage;
-  writeSession(storage.session, LEGACY_CONTROL_RELOAD_KEY, undefined);
-  try {
-    storage.indexedDB?.deleteDatabase(legacyGroupDatabaseName(policy));
-  } catch {
-    // An unavailable database has nothing to delete.
-  }
-  if (caches === undefined) {
-    return;
-  }
-  const names = await caches.keys();
-  await Promise.all(
-    [...legacyVersionCaches(policy, names), legacyRoutingCacheName(policy)]
-      .filter((name) => names.includes(name))
-      .map((name) => caches.delete(name)),
-  );
 }
 
 // The router's registration options. updateViaCache "none" fetches each router update past the
@@ -377,8 +248,6 @@ export function browserLaunchContext(policy: BuildPolicy): LaunchContext | undef
     location: window.location,
     online: () => navigator.onLine,
     storage: {
-      caches,
-      indexedDB: typeof indexedDB === "undefined" ? undefined : indexedDB,
       manager: navigator.storage,
       session,
     },
@@ -584,7 +453,6 @@ export function createLaunch(
     bootVersion ??= pointer.version;
     installingVersion = pointer.version;
     const manifest = await readPinnedManifest(pointer);
-    let copied = 0;
     progress = { ...progress, bootBytes: bootBytesOf(manifest), received: 0, total: 0 };
     const missingBytes = (await store.missing(manifest)).reduce(
       (sum, file) => sum + file.byteSize,
@@ -592,20 +460,14 @@ export function createLaunch(
     );
     progress = { ...progress, total: missingBytes };
     report("installing", 0);
-    // CLEANUP (added 2026-11-18): remove once all three games deploy the router.
-    await copyLegacyEntries(page.storage, { policy, store }, manifest, (bytes) => {
-      copied += bytes;
-      progress = { ...progress, received: copied };
-      report("installing", 0);
-    });
     const result = await install(installContext, {
       ...FOREGROUND_INSTALL,
       manifest,
       onBytes: (receivedBytes, totalBytes) => {
         progress = {
           ...progress,
-          received: copied + receivedBytes,
-          total: copied + totalBytes,
+          received: receivedBytes,
+          total: totalBytes,
         };
         report("installing", 0);
       },
@@ -632,10 +494,6 @@ export function createLaunch(
     }
     progress = { ...progress, received: progress.total, recorded: true };
     report("installing", 0);
-    // CLEANUP (added 2026-11-18): remove once all three games deploy the router.
-    await deleteLegacy(page.storage, policy).catch((error: unknown) =>
-      console.warn("Could not delete legacy offline caches.", error),
-    );
     // A controlled document plays the installed build only when it booted from it. A redeploy
     // mid-install activated a newer build, whose files this document does not reference, so it
     // reloads once into the router's active build.
@@ -722,7 +580,7 @@ export function createLaunch(
     return "play";
   };
 
-  // K4 reclaim and legacy cleanup, then the launch update check. Reclaim keeps the active and
+  // K4 reclaim, then the launch update check. Reclaim keeps the active and
   // staged builds, each build a live window's pin names and this document's build.
   const afterLaunch = async () => {
     try {
@@ -732,8 +590,6 @@ export function createLaunch(
     } catch (error) {
       console.warn("Could not reclaim unused builds.", error);
     }
-    // CLEANUP (added 2026-11-18): remove once all three games deploy the router.
-    await deleteLegacy(page.storage, policy).catch(() => undefined);
     discoveryReady = true;
     check(false);
   };
