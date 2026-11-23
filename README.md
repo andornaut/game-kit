@@ -53,6 +53,12 @@ Move image processing from `art/rgbaImage` to `build/rgbaImage`, which also expo
 
 Apply the mapping to JavaScript and TypeScript imports, test mocks and configuration, and stylesheet imports. Change the old build-info reference to `/// <reference types="@andornaut/game-kit/build/buildInfo" />`. This declaration-only export still provides `__APP_VERSION__`, `__BUILD_ID__` and `__COMMIT__`. Historical migration notes use the subpaths current at the time. The source inventory uses implementation paths relative to `src/`.
 
+## Installed-window update discovery in 0.64.1
+
+Window focus now requests an ordinary update check even when the installed
+document stays visible. The existing 60-second cooldown and explicit
+Update now flow apply. Games only need to update the package pin.
+
 ## Migration to 0.64.0
 
 The deprecated pre-0.47 package subpaths are gone. Use the canonical paths

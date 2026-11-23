@@ -981,7 +981,8 @@ export function createLaunch(
     return true;
   };
 
-  // Resume, reconnect and caller requests share one ordinary wake. Failed attempts keep their own backoff.
+  // Resume, focus, reconnect and caller requests share one ordinary wake.
+  // Failed attempts keep their own backoff.
   const canDiscover = () =>
     discoveryReady &&
     visible &&
@@ -1101,8 +1102,10 @@ export function createLaunch(
   };
   page.eventTarget.addEventListener("online", online);
   page.eventTarget.addEventListener("offline", cancelDiscovery);
+  page.eventTarget.addEventListener("focus", discoverOnWake);
   cleanups.push(() => page.eventTarget.removeEventListener("online", online));
   cleanups.push(() => page.eventTarget.removeEventListener("offline", cancelDiscovery));
+  cleanups.push(() => page.eventTarget.removeEventListener("focus", discoverOnWake));
 
   const readStartup = async () => {
     const state = await store.readState();

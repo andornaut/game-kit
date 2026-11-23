@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { getEventListeners } from "node:events";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -291,6 +292,7 @@ function fixture({ soundFormat }: { soundFormat?: string } = {}) {
     store,
     updates,
     visibility,
+    window,
   };
 }
 
@@ -696,7 +698,7 @@ describe("launch with an active build", () => {
 });
 
 describe("background updates", () => {
-  it("coalesces a caller-requested wake with reconnect and resume and leaves activation explicit", async () => {
+  it("coalesces a caller-requested wake with focus, reconnect and resume and leaves activation explicit", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const f = fixture();
     f.deploy(V1);
@@ -710,10 +712,12 @@ describe("background updates", () => {
     expect(vi.getTimerCount()).toBe(1);
     expect(pointerFetches()).toHaveLength(1);
 
+    f.window.dispatchEvent(new Event("focus"));
     f.setOnline(false);
     f.setOnline(true);
     f.visibility.set("hidden");
     f.visibility.set("visible");
+    f.window.dispatchEvent(new Event("focus"));
     expect(vi.getTimerCount()).toBe(1);
     f.advance(49_999);
     vi.advanceTimersByTime(49_999);
@@ -822,7 +826,33 @@ describe("background updates", () => {
     expect(pointerFetches()).toHaveLength(2);
   });
 
-  it.each(["resume", "reconnect"] as const)(
+  it("discovers on focus when an installed page stays visible", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const f = fixture();
+    f.deploy(V1);
+    await playing(f);
+    f.deploy(V2);
+    f.window.dispatchEvent(new Event("blur"));
+    f.advance(80_029);
+    vi.advanceTimersByTime(80_029);
+    expect(f.visibility.visibilityState).toBe("visible");
+    expect(f.fetch).toHaveBeenCalledTimes(1);
+    expect(f.offers).toEqual([]);
+
+    f.window.dispatchEvent(new Event("focus"));
+    await settle();
+    expect(f.visibility.visibilityState).toBe("visible");
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([
+      BUILD_POINTER_URL,
+      BUILD_POINTER_URL,
+      V2.pointer.manifest,
+    ]);
+    expect(f.offers.map((offer) => offer.version)).toEqual(["bbbb"]);
+    expect(f.store.state).toEqual({ active: "aaaa", staged: "bbbb" });
+    expect(f.reload).not.toHaveBeenCalled();
+  });
+
+  it.each(["resume", "reconnect", "focus"] as const)(
     "coalesces repeated %s events into one check at the cooldown boundary",
     async (event) => {
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -835,9 +865,11 @@ describe("background updates", () => {
         if (event === "resume") {
           f.visibility.set("hidden");
           f.visibility.set("visible");
-        } else {
+        } else if (event === "reconnect") {
           f.setOnline(false);
           f.setOnline(true);
+        } else {
+          f.window.dispatchEvent(new Event("focus"));
         }
       };
       f.advance(10_000);
@@ -1267,20 +1299,22 @@ describe("requireNewer", () => {
   });
 });
 
-it("dispose cancels a deferred discovery check", async () => {
+it("dispose removes the focus listener and cancels its deferred discovery check", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   const f = fixture();
   f.deploy(V1);
   await playing(f);
-  f.visibility.set("hidden");
-  f.visibility.set("visible");
+  expect(getEventListeners(f.window, "focus")).toHaveLength(1);
+  f.window.dispatchEvent(new Event("focus"));
   expect(vi.getTimerCount()).toBe(1);
   f.launch.dispose();
+  expect(getEventListeners(f.window, "focus")).toHaveLength(0);
   expect(vi.getTimerCount()).toBe(0);
   f.setOnline(false);
   f.setOnline(true);
   f.advance(UPDATE_CHECK_MS);
   vi.advanceTimersByTime(UPDATE_CHECK_MS);
+  f.window.dispatchEvent(new Event("focus"));
   await settle();
   expect(f.fetch).toHaveBeenCalledTimes(1);
 });
