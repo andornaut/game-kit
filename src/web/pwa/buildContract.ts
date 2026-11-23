@@ -52,6 +52,8 @@ export interface BuildPointer {
   readonly manifest: string;
   readonly archive?: BuildArchiveReference;
   readonly groups?: readonly BuildArchiveReference[];
+  // Install from groups even on a fresh browser. Some member URLs may only exist in the router.
+  readonly groupedFirstInstall?: true;
 }
 
 // One file of a build, under the logical URL pages request. sha256 is the full lowercase hex

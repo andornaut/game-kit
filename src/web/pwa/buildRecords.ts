@@ -74,6 +74,12 @@ export function parseBuildPointer(value: unknown): BuildPointer {
   if (pointer.archive !== undefined) {
     parseBuildArchiveReference(pointer.archive);
   }
+  if (
+    pointer.groupedFirstInstall !== undefined &&
+    (pointer.groupedFirstInstall !== true || pointer.groups === undefined)
+  ) {
+    throw new TypeError("Grouped first install requires build groups");
+  }
   if (pointer.groups !== undefined) {
     if (
       pointer.archive !== undefined ||

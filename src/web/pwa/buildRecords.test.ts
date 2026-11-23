@@ -105,7 +105,13 @@ describe("parseBuildPointer", () => {
       sha256: index.toString(16).padStart(64, "0"),
     }));
     expect(parseBuildPointer({ ...pointer, groups }).groups).toEqual(groups);
+    expect(parseBuildPointer({ ...pointer, groupedFirstInstall: true, groups })).toHaveProperty(
+      "groupedFirstInstall",
+      true,
+    );
     for (const invalid of [
+      { groupedFirstInstall: true },
+      { groupedFirstInstall: false, groups },
       { groups: [] },
       { groups: [...groups, { ...groups[0], sha256: sha("f") }] },
       { groups: [groups[0], groups[0]] },

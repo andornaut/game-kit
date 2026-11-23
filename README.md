@@ -130,6 +130,15 @@ still has one activation, and interrupted staging preserves the active build.
 First install can use the current build’s ordinary files or install packs.
 Grouped staging requires a controller that supports group archives.
 
+Set `groupedFirstInstall: { archiveOnly }` with `updateGroup` to use the same
+prebuilt group archives for first install and updates. The game supplies an
+`archiveOnly(url)` predicate for emitted members that only need to be served
+inside the installed game. These members stay in the build manifest and group
+archives. Keep bootstrap resources and anything the site serves directly out
+of the predicate. Keep selected members out of any separate public asset copy
+step as well. This option uses static archives and is incompatible with install
+packs, update group recipes, and whole-build archives.
+
 The build rejects more than 100 groups in grouped mode or more than 100 listed
 files in specific-file mode. This counts update units. First-install packs,
 and other website output have their own layout. The `wholeBuild: true`
