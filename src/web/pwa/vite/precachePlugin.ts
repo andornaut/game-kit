@@ -470,7 +470,7 @@ export function precachePlugin({
           }
         }
         const groups = grouped?.map(({ archive }) => archive);
-        const archiveOnlyFiles: string[] = [];
+        const archiveOnlyUrls: string[] = [];
         if (groupedFirstInstall !== undefined) {
           const directUrls = new Set(
             [...pageUrls, ...linkedUrls, `/${pageHtmlFile}`, `/${serviceWorkerFileName}`].map(
@@ -523,13 +523,13 @@ export function precachePlugin({
                 `precache: groupedFirstInstall cannot prune ${url} outside the Rollup output`,
               );
             }
-            archiveOnlyFiles.push(fileName);
+            archiveOnlyUrls.push(url);
           }
           if (publicDir && config.build.copyPublicDir) {
             await Promise.all(
-              archiveOnlyFiles.map(async (fileName) => {
+              archiveOnlyUrls.map(async (url) => {
                 try {
-                  await this.fs.lstat(`${publicDir}/${fileName}`);
+                  await this.fs.lstat(`${publicDir}${url}`);
                 } catch (error) {
                   if ((error as NodeJS.ErrnoException).code === "ENOENT") {
                     return;
@@ -537,7 +537,7 @@ export function precachePlugin({
                   throw error;
                 }
                 this.error(
-                  `precache: groupedFirstInstall cannot prune /${fileName} also copied from publicDir`,
+                  `precache: groupedFirstInstall cannot prune ${url} also copied from publicDir`,
                 );
               }),
             );
@@ -596,6 +596,7 @@ export function precachePlugin({
           ]),
         );
         const identity = JSON.stringify({
+          ...(groupedFirstInstall === undefined ? {} : { archiveOnly: archiveOnlyUrls }),
           boot: bootUrls,
           buildId: recordedBuildId,
           ...(groupedFirstInstall === undefined ? {} : { groupedFirstInstall: true }),
@@ -684,8 +685,8 @@ export function precachePlugin({
             this.error(`precache: ${fileName} is reserved for the build manifest`);
           }
         }
-        for (const fileName of archiveOnlyFiles) {
-          delete bundle[fileName];
+        for (const url of archiveOnlyUrls) {
+          delete bundle[url.slice(1)];
         }
         for (const { pack, source } of packAssets) {
           this.emitFile({

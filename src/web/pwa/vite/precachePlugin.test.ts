@@ -523,6 +523,24 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     });
     expect(fileMap({ ...cold.manifest, files: archived })).toEqual(fileMap(plain.manifest));
     expect(archived).toHaveLength(plain.manifest.files.length);
+
+    const moreDirect = await precache({
+      ...options,
+      groupedFirstInstall: {
+        archiveOnly: (url) => url !== "/art/archive.png" && archiveOnly(url),
+      },
+    });
+    expect(moreDirect.pointer).toMatchObject({
+      groupedFirstInstall: true,
+      groups: cold.pointer.groups,
+    });
+    expect(moreDirect.pointer.version).not.toBe(cold.pointer.version);
+    expect(moreDirect.manifest.files).toEqual(cold.manifest.files);
+    expect(moreDirect.output.get("art/archive.png")).toEqual(plain.output.get("art/archive.png"));
+    for (const group of cold.pointer.groups!) {
+      const name = buildArchivePartUrl(group, 0).slice(1);
+      expect(moreDirect.output.get(name)).toEqual(cold.output.get(name));
+    }
   });
 
   it.each(["/", "/icon.png", "/sw.js", "entry CSS", "entry script"] as const)(
