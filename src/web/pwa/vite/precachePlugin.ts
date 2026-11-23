@@ -6,7 +6,7 @@ import type { Plugin, ResolvedConfig } from "vite";
 import { isBuildId } from "../../build/buildVersion.ts";
 import { contentHash } from "../../build/vite/contentHash.ts";
 import { gitBuildMetadata } from "../../build/vite/gitHead.ts";
-import { encodeBuildArchiveIndex } from "../buildArchive.ts";
+import { type BuildArchiveIdentity, encodeBuildArchiveIndex } from "../buildArchive.ts";
 import {
   BUILD_ARCHIVE_PART_BYTES,
   BUILD_POINTER_URL,
@@ -15,6 +15,8 @@ import {
   type BuildManifest,
   buildManifestUrl,
   type BuildPack,
+  GROUP_ARCHIVE_IDENTITY,
+  MAX_UPDATE_UNITS,
 } from "../buildContract.ts";
 import { createBuildManifest, createBuildPointer, UNKNOWN_BUILD_ID } from "../buildManifest.ts";
 import { packContentType, soundFormatOf } from "../buildRecords.ts";
@@ -57,6 +59,8 @@ export interface PrecachePluginOptions {
   readonly packs?: { readonly maxBytes: number };
   // Emit a whole-build archive alongside the files and manifest used by earlier installers.
   readonly wholeBuild?: true;
+  // Assign each canonical offline URL to a stable update group.
+  readonly updateGroup?: (url: string) => string;
   // Explicit public, URL-independent JSON families selected from final emitted discovery.
   readonly verifiedJsonBodies?: (files: HashedFiles) => readonly VerifiedJsonFamilySelection[];
   // The hashed files beyond what the page links, read once the bundle is written: bundleFile
@@ -107,19 +111,24 @@ function archiveContentType(url: string): string {
 }
 
 function archiveFiles(
-  manifest: BuildManifest,
+  identity: BuildArchiveIdentity,
   listed: ReadonlyMap<string, Uint8Array>,
+  urls: readonly string[],
+  maxBytes?: number,
 ): { archive: BuildArchiveReference; parts: Uint8Array[] } {
   const prefix = encodeBuildArchiveIndex({
-    buildId: manifest.buildId,
-    files: manifest.files.map(({ byteSize, url }) => [url, byteSize, archiveContentType(url)]),
-    version: manifest.version,
+    ...identity,
+    files: urls.map((url) => [url, listed.get(url)!.byteLength, archiveContentType(url)]),
   });
-  const byteSize = manifest.files.reduce((size, file) => size + file.byteSize, prefix.byteLength);
+  const bodies = urls.map((url) => listed.get(url)!);
+  const byteSize = bodies.reduce((size, bytes) => size + bytes.byteLength, prefix.byteLength);
+  if (maxBytes !== undefined && byteSize > maxBytes) {
+    throw new RangeError(`archive exceeds ${maxBytes} bytes including its index. Split the group`);
+  }
   const hash = createHash("sha256");
   const parts: Uint8Array[] = [];
   let offset = 0;
-  for (const bytes of [prefix, ...manifest.files.map(({ url }) => listed.get(url)!)]) {
+  for (const bytes of [prefix, ...bodies]) {
     hash.update(bytes);
     for (let start = 0; start < bytes.byteLength;) {
       const index = Math.floor(offset / BUILD_ARCHIVE_PART_BYTES);
@@ -136,6 +145,46 @@ function archiveFiles(
     }
   }
   return { archive: { byteSize, schema: 1, sha256: hash.digest("hex") }, parts };
+}
+
+function groupedArchives(
+  updateGroup: NonNullable<PrecachePluginOptions["updateGroup"]>,
+  listed: ReadonlyMap<string, Uint8Array>,
+): { archive: BuildArchiveReference; source: Uint8Array }[] {
+  const groups = new Map<string, string[]>();
+  for (const url of [...listed.keys()].sort()) {
+    const id = updateGroup(url);
+    if (typeof id !== "string" || !id || /[^A-Za-z0-9._:-]/.test(id)) {
+      throw new TypeError(
+        `updateGroup(${JSON.stringify(url)}) must return a nonempty group identifier ` +
+          "using letters, digits, '.', '_', ':', or '-'",
+      );
+    }
+    const urls = groups.get(id) ?? [];
+    urls.push(url);
+    groups.set(id, urls);
+  }
+  if (groups.size > MAX_UPDATE_UNITS) {
+    throw new RangeError(
+      `updateGroup selected ${groups.size} groups. Combine groups to stay at or below ${MAX_UPDATE_UNITS}`,
+    );
+  }
+  const identity = { buildId: GROUP_ARCHIVE_IDENTITY, version: GROUP_ARCHIVE_IDENTITY };
+  return [...groups.keys()].sort().map((id) => {
+    try {
+      const { archive, parts } = archiveFiles(
+        identity,
+        listed,
+        groups.get(id)!,
+        BUILD_ARCHIVE_PART_BYTES,
+      );
+      return { archive, source: parts[0]! };
+    } catch (error) {
+      throw new TypeError(`update group ${JSON.stringify(id)}: ${(error as Error).message}`, {
+        cause: error,
+      });
+    }
+  });
 }
 
 function packFiles(
@@ -224,11 +273,15 @@ export function precachePlugin({
   policy,
   serviceWorkerFileName = "sw.js",
   serviceWorkerSource,
+  updateGroup,
   verifiedJsonBodies,
   wholeBuild,
 }: PrecachePluginOptions): Plugin {
   if (packs !== undefined && (!Number.isSafeInteger(packs.maxBytes) || packs.maxBytes < 1)) {
     throw new RangeError("precache: packs.maxBytes must be a positive safe integer");
+  }
+  if (updateGroup !== undefined && wholeBuild === true) {
+    throw new TypeError("precache: choose updateGroup or wholeBuild");
   }
   let root: string;
   let config: ResolvedConfig;
@@ -351,6 +404,12 @@ export function precachePlugin({
           ...contents,
           ...soundUrls.map((url) => [cacheKeyFor(url), requiredBundleBytes(url)] as const),
         ]);
+        if (updateGroup === undefined && wholeBuild !== true && listed.size > MAX_UPDATE_UNITS) {
+          this.error(
+            `precache: specific-file updates list ${listed.size} files. Reduce the list to ` +
+              `${MAX_UPDATE_UNITS} files or provide updateGroup`,
+          );
+        }
         const sounds = Object.fromEntries(
           Object.entries(hashed.sounds)
             .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
@@ -367,6 +426,15 @@ export function precachePlugin({
         if (buildId !== undefined) {
           checkIdentity();
         }
+        let grouped: ReturnType<typeof groupedArchives> | undefined;
+        if (updateGroup !== undefined) {
+          try {
+            grouped = groupedArchives(updateGroup, listed);
+          } catch (error) {
+            this.error(`precache: ${(error as Error).message}`);
+          }
+        }
+        const groups = grouped?.map(({ archive }) => archive);
         const byteSizes = new Map([...listed].map(([url, bytes]) => [url, bytes.byteLength]));
         const sha256s = new Map([...listed].map(([url, bytes]) => [url, sha256Hex(bytes)]));
         const bootUrls = [...(boot?.(discovery) ?? [])];
@@ -422,6 +490,7 @@ export function precachePlugin({
         const identity = JSON.stringify({
           boot: bootUrls,
           buildId: recordedBuildId,
+          ...(groups === undefined ? {} : { groups }),
           ...(packIndex.length === 0 ? {} : { packs: packIndex }),
           sounds,
           ...(wholeBuild === true ? { wholeBuild } : {}),
@@ -451,17 +520,27 @@ export function precachePlugin({
         let archive: ReturnType<typeof archiveFiles> | undefined;
         if (wholeBuild === true) {
           try {
-            archive = archiveFiles(manifest, listed);
+            archive = archiveFiles(
+              manifest,
+              listed,
+              manifest.files.map(({ url }) => url),
+            );
           } catch (error) {
             this.error(`precache: ${(error as Error).message}`);
           }
         }
-        const archiveAssets =
-          archive?.parts.map((source, index) => ({
+        const archiveAssets = [
+          ...(archive?.parts.map((source, index) => ({
             fileName: buildArchivePartUrl(archive.archive, index).slice(1),
             source,
             type: "asset" as const,
-          })) ?? [];
+          })) ?? []),
+          ...(grouped?.map(({ archive, source }) => ({
+            fileName: buildArchivePartUrl(archive, 0).slice(1),
+            source,
+            type: "asset" as const,
+          })) ?? []),
+        ];
         const manifestFileName = buildManifestUrl(manifest.version).slice(1);
         const pointerFileName = BUILD_POINTER_URL.slice(1);
         for (const fileName of [
@@ -494,6 +573,7 @@ export function precachePlugin({
           source: JSON.stringify({
             ...createBuildPointer(manifest),
             ...(archive === undefined ? {} : { archive: archive.archive }),
+            ...(groups === undefined ? {} : { groups }),
           }),
           type: "asset",
         });

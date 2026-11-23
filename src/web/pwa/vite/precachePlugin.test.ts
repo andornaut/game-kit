@@ -20,6 +20,7 @@ import {
   type BuildManifest,
   buildManifestUrl,
   type BuildPointer,
+  GROUP_ARCHIVE_IDENTITY,
 } from "../buildContract.ts";
 import { UNKNOWN_BUILD_ID, validateBuildManifest, validateBuildPointer } from "../buildManifest.ts";
 import { installedManifest, parseBuildPointer } from "../buildRecords.ts";
@@ -36,9 +37,9 @@ afterEach(() => vi.unstubAllEnvs());
 
 const sha256 = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
-function cleanSite(): { root: string; buildId: string } {
+function cleanSite(icon = "icon"): { root: string; buildId: string } {
   vi.stubEnv(CI_COMMIT_VARIABLE, "");
-  const root = site("icon");
+  const root = site(icon);
   writeFileSync(join(root, ".gitignore"), "node_modules/\ndist/\n");
   writeFileSync(join(root, "main.js"), "console.log(__BUILD_ID__);\n");
   execFileSync("git", ["init", "--quiet", root]);
@@ -97,6 +98,7 @@ interface Build {
   readonly missing?: string;
   // A public file to replace with a directory, which the build cannot read.
   readonly unreadable?: string;
+  readonly updateGroup?: PrecachePluginOptions["updateGroup"];
   readonly wholeBuild?: PrecachePluginOptions["wholeBuild"];
   // An existing site to build again, as Vite's output names depend on the root.
   readonly root?: string;
@@ -134,6 +136,7 @@ async function precache({
   packs,
   root = site("icon"),
   unreadable,
+  updateGroup,
   verifiedJsonBodies,
   wholeBuild,
 }: Build): Promise<Built> {
@@ -161,6 +164,7 @@ async function precache({
         ...(packs === undefined ? {} : { packs }),
         policy: POLICY,
         serviceWorkerSource: join(root, "sw.js"),
+        ...(updateGroup === undefined ? {} : { updateGroup }),
         ...(verifiedJsonBodies === undefined ? {} : { verifiedJsonBodies }),
         ...(wholeBuild === undefined ? {} : { wholeBuild }),
       }),
@@ -179,10 +183,11 @@ async function precache({
   );
   const json = (fileName: string): unknown =>
     JSON.parse(Buffer.from(output.get(fileName) ?? "null").toString());
-  const { archive, ...legacyPointer } = parseBuildPointer(json(BUILD_POINTER_URL.slice(1)));
+  const { archive, groups, ...legacyPointer } = parseBuildPointer(json(BUILD_POINTER_URL.slice(1)));
   const pointer = {
     ...validateBuildPointer(legacyPointer),
     ...(archive === undefined ? {} : { archive }),
+    ...(groups === undefined ? {} : { groups }),
   };
   const manifest = validateBuildManifest(json(pointer.manifest.slice(1)));
   return { manifest, output, pointer };
@@ -365,6 +370,102 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
         files.get(url),
       );
     }
+  });
+
+  it("emits a sorted, complete group partition and reuses unchanged bytes across build IDs", async () => {
+    const firstSite = cleanSite();
+    const nextSite = cleanSite("next icon");
+    const emitted = {
+      "art/a.svg": `<svg>${"a".repeat(300)}</svg>`,
+      "art/z.svg": `<svg>${"z".repeat(300)}</svg>`,
+    };
+    const options: Build = {
+      emitted,
+      hashedFiles: () => ({ sounds: {}, urls: ["/art/z.svg", "/art/a.svg"] }),
+      packs: { maxBytes: 1024 },
+      updateGroup: (url) => (url.startsWith("/art/") ? "a-art" : "Z-core"),
+    };
+    const initial = await precache({ ...options, ...firstSite });
+    const next = await precache({
+      ...options,
+      ...nextSite,
+      hashedFiles: () => ({ sounds: {}, urls: ["/art/a.svg", "/art/z.svg"] }),
+    });
+    expect(initial.pointer.buildId).not.toBe(next.pointer.buildId);
+    expect(initial.pointer.version).not.toBe(next.pointer.version);
+    expect(initial.pointer).not.toHaveProperty("archive");
+    expect(next.manifest.packs?.flatMap(({ members }) => members)).toEqual(
+      expect.arrayContaining(["/art/a.svg", "/art/z.svg"]),
+    );
+    const bytesOf = ({ output }: Built, group: NonNullable<BuildPointer["groups"]>[number]) =>
+      output.get(buildArchivePartUrl(group, 0).slice(1))!;
+    const [core, art] = next.pointer.groups!;
+    expect(next.pointer.groups).toHaveLength(2);
+    expect(core).not.toEqual(initial.pointer.groups?.[0]);
+    expect(art).toEqual(initial.pointer.groups?.[1]);
+    expect(bytesOf(next, art!)).toEqual(bytesOf(initial, art!));
+    const identity = { buildId: GROUP_ARCHIVE_IDENTITY, version: GROUP_ARCHIVE_IDENTITY };
+    const files = fileMap(next.manifest);
+    const urls = next.pointer.groups!.map((group) => {
+      const bytes = bytesOf(next, group);
+      expect(group).toEqual({ byteSize: bytes.byteLength, schema: 1, sha256: sha256(bytes) });
+      const index = parseBuildArchiveIndex(identity, bytes.byteLength, bytes);
+      for (const { byteSize, offset, url } of index.files) {
+        expect({
+          byteSize,
+          sha256: sha256(bytes.subarray(offset, offset + byteSize)),
+          url,
+        }).toEqual(files.get(url));
+      }
+      return index.files.map(({ url }) => url);
+    });
+    expect(urls[0]).toContain("/");
+    expect(urls[1]).toEqual(["/art/a.svg", "/art/z.svg"]);
+    expect(urls.flat().sort()).toEqual([...files.keys()].sort());
+    expect(Buffer.from(next.output.get("art/a.svg")!).toString()).toBe(emitted["art/a.svg"]);
+
+    const regrouped = await precache({
+      ...options,
+      ...nextSite,
+      updateGroup: (url) => (url.startsWith("/art/") || url === "/icon.png" ? "a-art" : "Z-core"),
+    });
+    expect(regrouped.pointer.version).not.toBe(next.pointer.version);
+    expect(regrouped.manifest.files).toEqual(next.manifest.files);
+  });
+
+  it.each(["specific-file updates", "groups"] as const)(
+    "allows 100 units and rejects 101 in %s",
+    async (mode) => {
+      const build = (extra: number) => {
+        const names = Array.from({ length: extra }, (_, index) => `art/file-${index}.bin`);
+        const updateGroup = (url: string) =>
+          url === "/" ? "home" : url.slice(1).replaceAll("/", ":");
+        return precache({
+          emitted: Object.fromEntries(names.map((name) => [name, "x"])),
+          hashedFiles: () => ({ sounds: {}, urls: names.map((name) => `/${name}`) }),
+          ...(mode === "groups" ? { updateGroup } : {}),
+        });
+      };
+      // The fixture discovers five files without the extra assets.
+      const allowed = await build(95);
+      expect(allowed.manifest.files).toHaveLength(100);
+      if (mode === "groups") {
+        expect(allowed.pointer.groups).toHaveLength(100);
+      }
+      await expect(build(96)).rejects.toThrow(
+        mode === "groups" ? /101 groups.*100/ : /specific-file updates list 101 files.*100/,
+      );
+    },
+  );
+
+  it("rejects a group exceeding one transport part after accounting for the index", async () => {
+    await expect(
+      precache({
+        emitted: { "art/large.bin": new Uint8Array(BUILD_ARCHIVE_PART_BYTES) },
+        hashedFiles: () => ({ sounds: {}, urls: ["/art/large.bin"] }),
+        updateGroup: (url) => (url === "/art/large.bin" ? "large" : "other"),
+      }),
+    ).rejects.toThrow(/update group "large".*including its index.*Split the group/);
   });
 
   it("records the full SHA-256 and exact size of every file, hashed build output included", async () => {
@@ -668,6 +769,16 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
       "a build file in the reserved manifest directory",
       { emitted: { ".game-kit/build.json": "{}" } },
       "precache: .game-kit/build.json is reserved for the build manifest",
+    ],
+    [
+      "a missing update group identifier",
+      { updateGroup: () => "" },
+      /updateGroup\("\/"\) must return a nonempty group identifier/,
+    ],
+    [
+      "grouped and whole-build modes together",
+      { updateGroup: () => "all", wholeBuild: true },
+      "precache: choose updateGroup or wholeBuild",
     ],
     [
       "an archive file with an unknown media type",

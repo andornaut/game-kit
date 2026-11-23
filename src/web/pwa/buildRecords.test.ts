@@ -96,6 +96,25 @@ describe("parseBuildPointer", () => {
       ).toThrow(TypeError);
     }
   });
+
+  it("accepts 100 independent groups and rejects ambiguous or oversized sets", () => {
+    const pointer = { buildId: "id", manifest: buildManifestUrl("v1"), schema: 1, version: "v1" };
+    const groups = Array.from({ length: 100 }, (_, index) => ({
+      byteSize: 10,
+      schema: 1,
+      sha256: index.toString(16).padStart(64, "0"),
+    }));
+    expect(parseBuildPointer({ ...pointer, groups }).groups).toEqual(groups);
+    for (const invalid of [
+      { groups: [] },
+      { groups: [...groups, { ...groups[0], sha256: sha("f") }] },
+      { groups: [groups[0], groups[0]] },
+      { groups: [{ ...groups[0], byteSize: BUILD_ARCHIVE_PART_BYTES + 1 }] },
+      { archive: groups[0], groups: [groups[0]] },
+    ]) {
+      expect(() => parseBuildPointer({ ...pointer, ...invalid })).toThrow(TypeError);
+    }
+  });
 });
 
 describe("parseBuildManifest", () => {

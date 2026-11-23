@@ -10,7 +10,6 @@
 // CLEANUP (added 2026-11-18): remove once all three games deploy the router. Version caches and
 // routing records an earlier kit's worker wrote are left in place for the page to migrate and
 // delete; the router never reads or serves them.
-import type { BuildArchiveEntry } from "../buildArchive.ts";
 import {
   ACTIVE_RECORD_PATH,
   BUILD_HASH_HEADER,
@@ -30,8 +29,9 @@ import {
 } from "../buildRecords.ts";
 import { cacheKeyFor } from "../cachePolicy.ts";
 import type { VerifiedJsonBody } from "../verifiedJsonBody.ts";
-import { BUILD_ARCHIVE_ROUTER_PROBE } from "./buildArchiveRouter.ts";
+import { BUILD_ARCHIVE_ROUTER_PROBE, BUILD_GROUP_ROUTER_PROBE } from "./buildArchiveRouter.ts";
 import { createBuildArchiveStore } from "./buildArchiveStore.ts";
+import { type BuildGroupFile, createBuildGroupStore } from "./buildGroupStore.ts";
 import { readCachedVersion, withBuildStateLock } from "./buildStore.ts";
 import {
   isDataProfile,
@@ -91,10 +91,7 @@ interface Build {
   readonly families: ReadonlyMap<string, VerifiedJsonBody>;
 }
 
-interface RoutedArchive {
-  readonly blob: Blob;
-  readonly files: ReadonlyMap<string, BuildArchiveEntry>;
-}
+type RoutedFiles = ReadonlyMap<string, BuildGroupFile>;
 
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -170,11 +167,22 @@ function parseBuild(version: string, value: unknown): Build | undefined {
 export function runServiceWorker(policy: BuildPolicy): void {
   const worker = self as unknown as WorkerScope;
   let archiveStore: ReturnType<typeof createBuildArchiveStore> | undefined;
+  let groupStore: ReturnType<typeof createBuildGroupStore> | undefined;
   // Manifests are immutable per version, and a pin never changes for its client.
   const builds = new Map<string, Promise<Build | undefined>>();
   const pins = new Map<string, string>();
 
-  const readArchive = async (version: string): Promise<RoutedArchive | undefined> => {
+  const readArchivedFiles = async (version: string): Promise<RoutedFiles | undefined> => {
+    groupStore ??= createBuildGroupStore({ caches, origin: worker.location.origin, policy });
+    const grouped = await groupStore.read(version);
+    if (grouped.kind === "unavailable") {
+      builds.delete(version);
+      throw new TypeError(`Build groups unavailable for ${version}`);
+    }
+    if (grouped.kind === "ready") {
+      builds.delete(version);
+      return grouped.files;
+    }
     archiveStore ??= createBuildArchiveStore({ caches, origin: worker.location.origin, policy });
     const stored = await archiveStore.read(version);
     if (stored.kind === "unknown") {
@@ -183,16 +191,18 @@ export function runServiceWorker(policy: BuildPolicy): void {
     if (stored.kind === "unavailable") {
       throw new TypeError(`Build archive unavailable for ${version}`);
     }
-    return {
-      blob: stored.blob,
-      files: new Map(stored.index.files.map((file) => [file.url, file])),
-    };
+    return new Map(
+      stored.index.files.map(({ byteSize, contentType, offset, url }) => [
+        url,
+        { blob: stored.blob, byteSize, contentType, offset },
+      ]),
+    );
   };
 
   // Keep recent verified snapshots, including concurrent reads of the same version. Only
   // successful reads stay cached, so the page can still install or repair an archive.
-  const archives = new Map<string, Promise<RoutedArchive | undefined>>();
-  const rememberArchive = (version: string, archive: Promise<RoutedArchive | undefined>) => {
+  const archives = new Map<string, Promise<RoutedFiles | undefined>>();
+  const rememberArchive = (version: string, archive: Promise<RoutedFiles | undefined>) => {
     archives.delete(version);
     archives.set(version, archive);
     if (archives.size > RETAINED_ARCHIVES) {
@@ -201,7 +211,7 @@ export function runServiceWorker(policy: BuildPolicy): void {
   };
   const loadArchive = (version: string) => {
     const cached = archives.get(version);
-    const archive = cached ?? readArchive(version);
+    const archive = cached ?? readArchivedFiles(version);
     rememberArchive(version, archive);
     if (cached === undefined) {
       const remove = () => {
@@ -348,7 +358,7 @@ export function runServiceWorker(policy: BuildPolicy): void {
     }
     const active = await versionAt(ACTIVE_RECORD_PATH);
     // Check persisted completeness, even if the worker holds a previously read snapshot.
-    const archive = await readArchive(staged);
+    const archive = await readArchivedFiles(staged);
     if (archive === undefined && staged !== active) {
       const build = await loadBuild(records, staged);
       if (build === undefined || !(await complete(build))) {
@@ -485,7 +495,7 @@ export function runServiceWorker(policy: BuildPolicy): void {
     const build =
       archive === undefined ? (legacy ?? (await loadBuild(records, version))) : undefined;
     const path = cacheKeyFor(new URL(request.url).pathname);
-    const entry = archive?.files.get(path);
+    const entry = archive?.get(path);
     const file = build?.files.get(path);
     if (
       (archive === undefined && build === undefined) ||
@@ -498,9 +508,9 @@ export function runServiceWorker(policy: BuildPolicy): void {
     if (client && pinned === undefined) {
       await writePin(records, client, version);
     }
-    if (archive !== undefined && entry !== undefined) {
-      const { byteSize, contentType, offset } = entry;
-      return new Response(archive.blob.slice(offset, offset + byteSize, contentType), {
+    if (entry !== undefined) {
+      const { blob, byteSize, contentType, offset } = entry;
+      return new Response(blob.slice(offset, offset + byteSize, contentType), {
         headers: {
           "content-length": String(byteSize),
           "content-type": contentType,
@@ -516,8 +526,8 @@ export function runServiceWorker(policy: BuildPolicy): void {
     event.waitUntil(worker.clients.claim().then(() => prune(true))),
   );
   worker.addEventListener("message", (event) => {
-    if (event.data === BUILD_ARCHIVE_ROUTER_PROBE) {
-      event.ports[0]?.postMessage(BUILD_ARCHIVE_ROUTER_PROBE);
+    if (event.data === BUILD_ARCHIVE_ROUTER_PROBE || event.data === BUILD_GROUP_ROUTER_PROBE) {
+      event.ports[0]?.postMessage(event.data);
     }
   });
   worker.addEventListener("fetch", (event) => {

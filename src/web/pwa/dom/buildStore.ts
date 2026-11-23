@@ -30,7 +30,7 @@ import {
 } from "../buildRecords.ts";
 
 const PIN_PREFIX = pinRecordPath("");
-const BUILD_RECORD_PATH = /^\/\.game-kit\/(?:manifest|archive-record)-([^/]+)\.json$/;
+const BUILD_RECORD_PATH = /^\/\.game-kit\/(?:manifest|archive-record|group-record)-([^/]+)\.json$/;
 
 // How many entries a metadata scan reads at once.
 const SCAN_CONCURRENCY = 32;

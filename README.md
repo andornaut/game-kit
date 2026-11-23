@@ -116,6 +116,25 @@ Whole-build staging waits for a controlling worker that supports the archive
 format. Existing in-session consent, cold-launch activation and required-save
 recovery apply to complete archives.
 
+## Grouped updates
+
+`precachePlugin({ updateGroup, ...options })` assigns each discovered file to
+one group. `updateGroup(url)` returns a stable group name for the canonical
+request URL. Keep frequently changed files separate from stable assets. Each
+group has its own SHA-256 and is capped at 24 MiB, including its index.
+
+An unchanged version skips staging. For a changed version, the page reuses
+verified groups from earlier builds and downloads missing groups one at a time.
+The router serves the pinned version's files from the groups. A complete build
+still has one activation, and interrupted staging preserves the active build.
+First install and older workers can install the ordinary emitted files.
+
+The build rejects more than 100 groups in grouped mode or more than 100 listed
+files in specific-file mode. This counts update units. First-install packs,
+other website output and older deployed builds have their own layout. The
+existing `wholeBuild: true` transport remains available for migration and cannot
+be combined with `updateGroup`.
+
 ## Refusal admission and Retry press cues in 0.62.1
 
 Pointer refusal runs only when the caller resolves a current action. Configured loading-safe Retry shows a non-ring press cue for fixed or content width, including forced colours.
@@ -589,7 +608,7 @@ make check
 
 Native npm scripts run the tools directly. Use `npm run lint` and `npm test` for working-tree checks, or focus a test run with `npm test -- src/terrain/movementMap.test.ts`. The test script uses at most four workers. `npm run format` applies Prettier and ESLint fixes. `npm run check` includes the release build after lint and test. For `npm run build`, use a clean Git checkout and set `SOURCE_COMMIT` to its full HEAD and `SOURCE_DATE_EPOCH` to the commit timestamp. The builder compiles from that commit's Git archive and proves `.claude/release-output/game-kit-<version>.tgz` with `SHA256SUMS` and `SOURCE_COMMIT`. CI runs the same npm scripts and uploads the release output. A push or pull request that changes only `docs/` runs lint alone and skips the tests and release build. Tags, new branches, forced pushes and manual runs run every job.
 
-`npm run test:e2e` runs the browser install and update check, `tests/e2e/run.ts`, through `tests/container/e2e` in the `mcr.microsoft.com/playwright` image whose version equals the exact `playwright-core` pin. The container has an open-file limit of 4096, since Chromium's Cache Storage fails writes under 256 (`CHECK_NOFILE` sets it). The check builds a fixture game with `precachePlugin`, serves it with Cloudflare's HTTP/3 `priority` and `server-timing` headers, throttles every page and service worker to 1.6 Mbit/s with 300 ms latency and every page to a 4x slower CPU over CDP, and drives Chromium through a first install that resumes after a reload, a worker stop and a redeploy, offline play, a delta update with its in-session offer and dismissal, silent launch promotion, `updateNow` and a failed background update. The short run uses about 400 files, takes about two minutes and runs in CI. `npm run test:e2e:long` uses about 4,500 files (46 MB), so the first install runs past five minutes.
+`npm run test:e2e` runs the browser install and update check, `tests/e2e/run.ts`, through `tests/container/e2e` in the `mcr.microsoft.com/playwright` image whose version equals the exact `playwright-core` pin. The container has an open-file limit of 4096, since Chromium's Cache Storage fails writes under 256 (`CHECK_NOFILE` sets it). The check builds a fixture game with `precachePlugin`, serves it with Cloudflare's HTTP/3 `priority` and `server-timing` headers, throttles every page and service worker to 1.6 Mbit/s with 300 ms latency and every page to a 4x slower CPU over CDP, and drives Chromium through a first install that resumes after a reload, a worker stop and a redeploy, offline play, a delta update with its in-session offer and dismissal, silent launch promotion, `updateNow` and a failed background update. The short run uses fewer than 100 files and runs in CI. `npm run test:e2e:long` uses larger fixture files (about 68 MB total), so the first install runs past five minutes.
 
 `node scripts/check.ts <directory>` uses the same local runner in release mode from a clean checkout. The host needs Git, Docker, Node 24.21.0 or newer, tar and GNU timeout. ShellCheck reads a host scratch snapshot through its read-only mount. One pinned Git archive supplies types, lint, tests, packaging and the native Node, declaration and Vite artifact proof. The gate exports the checked artifacts after package proof and source fingerprint checks pass. The runner waits up to 15 minutes for one-minute load below 20 before a container start. The npm cache volume defaults to `game-kit-npm-cache`. Set `GAME_KIT_NPM_CACHE` to use another volume, or transfer cache contents with `node scripts/npm-cache.ts load|save <directory>`. Only a confirmed offline cache miss triggers a fill. Other install failures keep the npm diagnostic in the gate evidence. The gate refuses credential-shaped source paths before reading their bytes.
 

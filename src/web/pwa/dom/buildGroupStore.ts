@@ -1,0 +1,293 @@
+import {
+  BUILD_ARCHIVE_HEADER_BYTES,
+  parseBuildArchiveIndex,
+  readBuildArchivePrefixSize,
+} from "../buildArchive.ts";
+import {
+  BUILD_HASH_HEADER,
+  buildArchivePartUrl,
+  type BuildArchiveReference,
+  buildCacheName,
+  type BuildPointer,
+  type BuildPolicy,
+  GROUP_ARCHIVE_IDENTITY,
+  recordsCacheName,
+} from "../buildContract.ts";
+import { isBuildVersion, parseBuildPointer, RECORD_CONTENT_TYPE } from "../buildRecords.ts";
+import { withBuildStateLock } from "./buildStore.ts";
+
+type GroupedPointer = BuildPointer & { readonly groups: readonly BuildArchiveReference[] };
+
+export interface BuildGroupFile {
+  readonly blob: Blob;
+  readonly byteSize: number;
+  readonly contentType: string;
+  readonly offset: number;
+}
+
+type GroupMarker =
+  | { readonly kind: "unknown" | "unavailable" }
+  | { readonly kind: "known"; readonly pointer: GroupedPointer };
+
+export type BuildGroupRead =
+  | { readonly kind: "unknown" }
+  | { readonly kind: "unavailable" }
+  | { readonly kind: "ready"; readonly files: ReadonlyMap<string, BuildGroupFile> };
+
+export interface BuildGroupStore {
+  reuse(pointer: BuildPointer, group: BuildArchiveReference): Promise<boolean>;
+  // The downloader verifies the full SHA-256 before passing the group here.
+  put(
+    pointer: BuildPointer,
+    group: BuildArchiveReference,
+    body: Blob,
+    signal?: AbortSignal,
+  ): Promise<void>;
+  seal(pointer: BuildPointer, signal?: AbortSignal): Promise<void>;
+  complete(version: string, expected?: BuildPointer): Promise<boolean>;
+  // Only an absent marker yields "unknown". Marker I/O errors propagate.
+  read(version: string): Promise<BuildGroupRead>;
+}
+
+const GROUP_ID = { buildId: GROUP_ARCHIVE_IDENTITY, version: GROUP_ARCHIVE_IDENTITY };
+
+function groupedPointer(value: unknown): GroupedPointer {
+  const { buildId, groups, manifest, schema, version } = parseBuildPointer(value);
+  if (groups === undefined) {
+    throw new TypeError("Missing build groups");
+  }
+  return {
+    buildId,
+    groups: groups.map(({ byteSize, schema, sha256 }) => ({ byteSize, schema, sha256 })),
+    manifest,
+    schema,
+    version,
+  };
+}
+
+const sameGroup = (a: BuildArchiveReference, b: BuildArchiveReference) =>
+  a.schema === b.schema && a.byteSize === b.byteSize && a.sha256 === b.sha256;
+
+function samePointer(a: GroupedPointer, b: BuildPointer): boolean {
+  const { groups } = b;
+  return (
+    a.schema === b.schema &&
+    a.version === b.version &&
+    a.buildId === b.buildId &&
+    a.manifest === b.manifest &&
+    b.archive === undefined &&
+    groups !== undefined &&
+    a.groups.length === groups.length &&
+    a.groups.every((group, i) => sameGroup(group, groups[i]!))
+  );
+}
+
+function member(pointer: GroupedPointer, input: BuildArchiveReference): BuildArchiveReference {
+  const group = pointer.groups.find((candidate) => sameGroup(candidate, input));
+  if (group === undefined) {
+    throw new TypeError("Group does not belong to the build pointer");
+  }
+  return group;
+}
+
+async function groupIndex(blob: Blob) {
+  const header = new Uint8Array(await blob.slice(0, BUILD_ARCHIVE_HEADER_BYTES).arrayBuffer());
+  const size = readBuildArchivePrefixSize(blob.size, header);
+  const prefix = new Uint8Array(await blob.slice(0, size).arrayBuffer());
+  return parseBuildArchiveIndex(GROUP_ID, blob.size, prefix);
+}
+
+export function createBuildGroupStore({
+  caches,
+  origin,
+  policy,
+}: {
+  readonly caches: CacheStorage;
+  readonly origin: string;
+  readonly policy: BuildPolicy;
+}): BuildGroupStore {
+  if (new URL(origin).origin !== origin) {
+    throw new TypeError("Invalid build group store origin");
+  }
+  const records = recordsCacheName(policy);
+  const buildPrefix = buildCacheName(policy, "");
+  const groupKey = (group: BuildArchiveReference) => origin + buildArchivePartUrl(group, 0);
+  const recordKey = (version: string) => {
+    if (!isBuildVersion(version)) {
+      throw new TypeError("Invalid build group version");
+    }
+    return `${origin}/.game-kit/group-record-${encodeURIComponent(version)}.json`;
+  };
+
+  const readMarker = async (version: string): Promise<GroupMarker> => {
+    const entry = await caches.match(recordKey(version), { cacheName: records });
+    if (entry === undefined) {
+      return { kind: "unknown" };
+    }
+    if (entry.status === 200) {
+      try {
+        const pointer = groupedPointer(await entry.json());
+        if (pointer.version === version) {
+          return { kind: "known", pointer };
+        }
+      } catch {
+        // A malformed marker is still authoritative about the stored representation.
+      }
+    }
+    return { kind: "unavailable" };
+  };
+
+  const readGroup = async (cacheName: string, group: BuildArchiveReference) => {
+    try {
+      const entry = await caches.match(groupKey(group), { cacheName });
+      if (
+        entry?.status === 200 &&
+        entry.headers.get(BUILD_HASH_HEADER) === group.sha256 &&
+        entry.headers.get("content-length") === String(group.byteSize)
+      ) {
+        const blob = await entry.blob();
+        if (blob.size === group.byteSize) {
+          return { blob, index: await groupIndex(blob) };
+        }
+      }
+    } catch {
+      // Unreadable bodies cannot be used for reuse, sealing, or routing.
+    }
+    return undefined;
+  };
+
+  const writeGroup = async (
+    cacheName: string,
+    group: BuildArchiveReference,
+    body: Blob,
+    signal?: AbortSignal,
+  ) => {
+    const cache = await caches.open(cacheName);
+    signal?.throwIfAborted();
+    await cache.put(
+      groupKey(group),
+      new Response(body, {
+        headers: {
+          [BUILD_HASH_HEADER]: group.sha256,
+          "content-length": String(group.byteSize),
+          "content-type": "application/octet-stream",
+        },
+      }),
+    );
+    signal?.throwIfAborted();
+  };
+
+  const readFiles = async (pointer: GroupedPointer) => {
+    const cacheName = buildCacheName(policy, pointer.version);
+    const files = new Map<string, BuildGroupFile>();
+    for (const group of pointer.groups) {
+      // Materialize and validate one group at a time.
+      // eslint-disable-next-line no-await-in-loop
+      const stored = await readGroup(cacheName, group);
+      if (stored === undefined) {
+        return undefined;
+      }
+      for (const { byteSize, contentType, offset, url } of stored.index.files) {
+        if (files.has(url)) {
+          return undefined;
+        }
+        files.set(url, { blob: stored.blob, byteSize, contentType, offset });
+      }
+    }
+    return files;
+  };
+
+  const matchingMarker = async (pointer: GroupedPointer) => {
+    const marker = await readMarker(pointer.version);
+    if (
+      marker.kind === "unavailable" ||
+      (marker.kind === "known" && !samePointer(marker.pointer, pointer))
+    ) {
+      throw new TypeError("Conflicting cached build group pointer");
+    }
+    return marker;
+  };
+
+  return {
+    async complete(version, expected) {
+      const marker = await readMarker(version);
+      return (
+        marker.kind === "known" &&
+        (expected === undefined || samePointer(marker.pointer, expected)) &&
+        (await readFiles(marker.pointer)) !== undefined
+      );
+    },
+
+    async put(value, reference, body, signal) {
+      signal?.throwIfAborted();
+      const pointer = groupedPointer(value);
+      const group = member(pointer, reference);
+      if (body.size !== group.byteSize) {
+        throw new RangeError("Build group size does not match the pointer");
+      }
+      await groupIndex(body);
+      await withBuildStateLock(policy, async () => {
+        signal?.throwIfAborted();
+        await matchingMarker(pointer);
+        await writeGroup(buildCacheName(policy, pointer.version), group, body, signal);
+      });
+    },
+
+    async read(version) {
+      const marker = await readMarker(version);
+      if (marker.kind === "unknown") {
+        return { kind: "unknown" };
+      }
+      const files = marker.kind === "known" ? await readFiles(marker.pointer) : undefined;
+      return files === undefined ? { kind: "unavailable" } : { files, kind: "ready" };
+    },
+    async reuse(value, reference) {
+      const pointer = groupedPointer(value);
+      const group = member(pointer, reference);
+      return withBuildStateLock(policy, async () => {
+        await matchingMarker(pointer);
+        const target = buildCacheName(policy, pointer.version);
+        if ((await readGroup(target, group)) !== undefined) {
+          return true;
+        }
+        for (const source of await caches.keys()) {
+          if (!source.startsWith(buildPrefix) || source === target) {
+            continue;
+          }
+          // Stop at the first usable group in this game's build caches.
+          // eslint-disable-next-line no-await-in-loop
+          const stored = await readGroup(source, group);
+          if (stored !== undefined) {
+            // eslint-disable-next-line no-await-in-loop
+            await writeGroup(target, group, stored.blob);
+            return true;
+          }
+        }
+        return false;
+      });
+    },
+
+    async seal(value, signal) {
+      signal?.throwIfAborted();
+      const pointer = groupedPointer(value);
+      await withBuildStateLock(policy, async () => {
+        signal?.throwIfAborted();
+        const marker = await matchingMarker(pointer);
+        if ((await readFiles(pointer)) === undefined) {
+          throw new TypeError("Build groups are unavailable or contain duplicate URLs");
+        }
+        signal?.throwIfAborted();
+        if (marker.kind === "unknown") {
+          const cache = await caches.open(records);
+          signal?.throwIfAborted();
+          await cache.put(
+            recordKey(pointer.version),
+            new Response(JSON.stringify(pointer), {
+              headers: { "content-type": RECORD_CONTENT_TYPE },
+            }),
+          );
+        }
+      });
+    },
+  };
+}

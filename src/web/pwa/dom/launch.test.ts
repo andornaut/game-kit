@@ -20,8 +20,9 @@ import {
   type UpdateState,
 } from "../buildContract.ts";
 import { installedManifest } from "../buildRecords.ts";
-import { BUILD_ARCHIVE_ROUTER_PROBE } from "./buildArchiveRouter.ts";
+import { BUILD_ARCHIVE_ROUTER_PROBE, BUILD_GROUP_ROUTER_PROBE } from "./buildArchiveRouter.ts";
 import type { BuildArchiveStore } from "./buildArchiveStore.ts";
+import type { BuildGroupStore } from "./buildGroupStore.ts";
 import type { BuildInstallOptions, installBuild } from "./buildInstaller.ts";
 import type { BuildStore } from "./buildStore.ts";
 import {
@@ -193,8 +194,9 @@ class FakeDocument extends EventTarget {
 
 function fixture({
   archiveStore,
+  groupStore,
   soundFormat,
-}: { archiveStore?: BuildArchiveStore; soundFormat?: string } = {}) {
+}: { archiveStore?: BuildArchiveStore; groupStore?: BuildGroupStore; soundFormat?: string } = {}) {
   const container = new FakeContainer();
   const visibility = new FakeDocument();
   const window = new EventTarget();
@@ -261,6 +263,7 @@ function fixture({
   const launch = createLaunch(
     {
       ...(archiveStore === undefined ? {} : { archiveStore }),
+      ...(groupStore === undefined ? {} : { groupStore }),
       installBuild: install,
       page,
       policy: POLICY,
@@ -421,6 +424,74 @@ describe("whole-build updates", () => {
     expect(f.installBuild).not.toHaveBeenCalled();
     expect(f.offers).toEqual([]);
     expect(f.store.state).toEqual({ active: V1.pointer.version });
+    f.launch.dispose();
+  });
+});
+
+describe("grouped updates", () => {
+  const body = "changed group";
+  const changed = { byteSize: body.length, schema: 1, sha256: sha(body) } as const;
+  const unchanged = { byteSize: 1, schema: 1, sha256: sha("a") } as const;
+  const build = { ...V2, pointer: { ...V2.pointer, groups: [unchanged, changed] } };
+  const changedPath = buildArchivePartUrl(changed, 0);
+
+  it("downloads just the missing group and seals the version before offering", async () => {
+    let sealed = false;
+    const put = vi.fn();
+    const seal = vi.fn(async () => {
+      sealed = true;
+    });
+    const f = fixture({
+      groupStore: {
+        complete: async () => sealed,
+        put,
+        read: async () => (sealed ? { files: new Map(), kind: "ready" } : { kind: "unknown" }),
+        reuse: async (_pointer, group) => group.sha256 === unchanged.sha256,
+        seal,
+      },
+    });
+    f.container.claim((message, [port]) => {
+      if (message === BUILD_GROUP_ROUTER_PROBE) {
+        port?.postMessage(message);
+      }
+    });
+    f.store.state.active = V1.pointer.version;
+    f.deploy(build);
+    f.routes.set(changedPath, () => new Response(body));
+    await expect(f.launch.run()).resolves.toBe("play");
+    await vi.waitFor(() => expect(f.offers).toHaveLength(1));
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([
+      BUILD_POINTER_URL,
+      changedPath,
+      BUILD_POINTER_URL,
+    ]);
+    expect(f.installBuild).not.toHaveBeenCalled();
+    expect(put).toHaveBeenCalledExactlyOnceWith(
+      build.pointer,
+      changed,
+      expect.any(Blob),
+      expect.any(AbortSignal),
+    );
+    expect(seal).toHaveBeenCalledOnce();
+    expect(f.store.state).toEqual({ active: V1.pointer.version, staged: build.pointer.version });
+    const save = vi.fn();
+    await f.offers[0]!.updateNow(save);
+    expect(save).toHaveBeenCalledOnce();
+    expect(f.reload).toHaveBeenCalledOnce();
+    expect(f.store.state).toEqual({ active: build.pointer.version });
+    f.launch.dispose();
+  });
+
+  it("uses the ordinary manifest when a legacy router cannot serve grouped caches", async () => {
+    const f = fixture();
+    f.container.claim();
+    f.store.state.active = V1.pointer.version;
+    f.deploy(build);
+    await expect(f.launch.run()).resolves.toBe("play");
+    await vi.waitFor(() => expect(f.offers).toHaveLength(1));
+    expect(f.fetch.mock.calls.map(([url]) => url)).toContain(build.pointer.manifest);
+    expect(f.fetch.mock.calls.map(([url]) => url)).not.toContain(changedPath);
+    expect(f.installBuild).toHaveBeenCalledOnce();
     f.launch.dispose();
   });
 });

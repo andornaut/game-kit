@@ -17,6 +17,7 @@
     "src/web/pwa/dom/buildArchiveDownload.ts",
     "src/web/pwa/dom/buildArchiveRouter.ts",
     "src/web/pwa/dom/buildArchiveStore.ts",
+    "src/web/pwa/dom/buildGroupStore.ts",
     "src/web/pwa/dom/buildInstaller.ts",
     "src/web/pwa/dom/buildStore.ts",
     "src/web/pwa/dom/exitApp.ts",

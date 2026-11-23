@@ -5,16 +5,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { encodeBuildArchiveIndex } from "../buildArchive.ts";
 import {
   BUILD_HASH_HEADER,
+  buildArchivePartUrl,
   buildCacheName,
   type BuildManifest,
   buildManifestUrl,
+  type BuildPointer,
   type BuildPolicy,
+  GROUP_ARCHIVE_IDENTITY,
   recordsCacheName,
 } from "../buildContract.ts";
 import { installedManifest } from "../buildRecords.ts";
 import type { VerifiedJsonBody } from "../verifiedJsonBody.ts";
-import { BUILD_ARCHIVE_ROUTER_PROBE } from "./buildArchiveRouter.ts";
+import { BUILD_ARCHIVE_ROUTER_PROBE, BUILD_GROUP_ROUTER_PROBE } from "./buildArchiveRouter.ts";
 import { createBuildArchiveStore } from "./buildArchiveStore.ts";
+import { createBuildGroupStore } from "./buildGroupStore.ts";
 import { createBuildStore } from "./buildStore.ts";
 import { PIN_PRUNE_MS, runServiceWorker } from "./serviceWorker.ts";
 
@@ -292,6 +296,165 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function groupOf(
+  url: string,
+  contentType: string,
+  body: string,
+  identity: string = GROUP_ARCHIVE_IDENTITY,
+) {
+  const prefix = encodeBuildArchiveIndex({
+    buildId: identity,
+    files: [[url, Buffer.byteLength(body), contentType]],
+    version: identity,
+  });
+  const bytes = Buffer.concat([prefix, Buffer.from(body)]);
+  return {
+    blob: new Blob([bytes]),
+    reference: {
+      byteSize: bytes.byteLength,
+      schema: 1 as const,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    },
+  };
+}
+
+function groupedBuild(version: string, ...groups: ReturnType<typeof groupOf>[]): BuildPointer {
+  return {
+    buildId: "a".repeat(40),
+    groups: groups.map(({ reference }) => reference),
+    manifest: buildManifestUrl(version),
+    schema: 1,
+    version,
+  };
+}
+
+const groupRecord = (version: string) => `/.game-kit/group-record-${version}.json`;
+
+describe("group storage and routing", () => {
+  it("reuses exact whole groups within the game's caches and reclaims an old marker and cache", async () => {
+    const worker = startWorker(new FakeServer({}));
+    const context = { caches: worker.storage as unknown as CacheStorage, origin: ORIGIN };
+    const store = createBuildGroupStore({ ...context, policy: POLICY });
+    const foreign = createBuildGroupStore({
+      ...context,
+      policy: { ...POLICY, cacheNamePrefix: "other-" },
+    });
+    const group = groupOf("/app.js", "text/javascript", "shared");
+    const previous = groupedBuild("v1", group);
+    const target = groupedBuild("v2", group);
+    await foreign.put(previous, group.reference, group.blob);
+    expect(await store.reuse(target, group.reference)).toBe(false);
+    await store.put(previous, group.reference, group.blob);
+    await store.seal(previous);
+    const digest = vi.spyOn(crypto.subtle, "digest");
+    expect(await store.reuse(target, group.reference)).toBe(true);
+    expect(await store.complete(target.version, target)).toBe(false);
+    expect(await store.read(target.version)).toEqual({ kind: "unknown" });
+    await store.seal(target);
+    expect(await store.complete(target.version, target)).toBe(true);
+    expect(await store.complete(target.version, { ...target, buildId: "other" })).toBe(false);
+    const key = buildArchivePartUrl(group.reference, 0);
+    const cached = await worker.storage.open(buildCacheName(POLICY, target.version));
+    expect([...cached.entries.keys()]).toEqual([key]);
+    const copied = await cached.match(key);
+    expect(copied?.headers.get(BUILD_HASH_HEADER)).toBe(group.reference.sha256);
+    expect(await copied?.arrayBuffer()).toEqual(await group.blob.arrayBuffer());
+    expect(digest).not.toHaveBeenCalled();
+    const records = await worker.records();
+    expect(records.entries.has(groupRecord(previous.version))).toBe(true);
+    await worker.setRecord(ACTIVE, target.version);
+    expect(await createBuildStore(context, POLICY).reclaim([])).toEqual([
+      buildCacheName(POLICY, previous.version),
+    ]);
+    expect(records.entries.has(groupRecord(previous.version))).toBe(false);
+    expect((await store.read(target.version)).kind).toBe("ready");
+    expect(await store.reuse(target, group.reference)).toBe(true);
+  });
+
+  it("refuses a group with the wrong identity and never seals missing or overlapping bodies", async () => {
+    const worker = startWorker(new FakeServer({}));
+    const store = createBuildGroupStore({
+      caches: worker.storage as unknown as CacheStorage,
+      origin: ORIGIN,
+      policy: POLICY,
+    });
+    const wrong = groupOf("/app.js", "text/javascript", "wrong", "build");
+    const a = groupOf("/app.js", "text/javascript", "a");
+    const b = groupOf("/app.js", "text/javascript", "b");
+    const pointer = groupedBuild("v1", a, b);
+    await expect(
+      store.put(groupedBuild("bad", wrong), wrong.reference, wrong.blob),
+    ).rejects.toThrow();
+    await store.put(pointer, a.reference, a.blob);
+    await expect(store.seal(pointer)).rejects.toThrow("unavailable");
+    await store.put(pointer, b.reference, b.blob);
+    await expect(store.seal(pointer)).rejects.toThrow("duplicate URLs");
+    expect(await store.read(pointer.version)).toEqual({ kind: "unknown" });
+    const sealed = groupedBuild("v1", a);
+    await store.seal(sealed);
+    await expect(store.seal(groupedBuild("v1", b))).rejects.toThrow("Conflicting");
+    expect(await store.complete("v1", sealed)).toBe(true);
+  });
+
+  it("promotes groups, serves their typed bodies and keeps an older archive pin", async () => {
+    const worker = startWorker(new FakeServer({ "/api/state": "network" }));
+    await saveArchive(worker.storage, "v1");
+    await worker.setRecord(ACTIVE, "v1");
+    const store = createBuildGroupStore({
+      caches: worker.storage as unknown as CacheStorage,
+      origin: ORIGIN,
+      policy: POLICY,
+    });
+    const page = groupOf("/play/", "text/html; charset=utf-8", "<p>grouped</p>");
+    const script = groupOf("/app.js", "text/javascript", "grouped script");
+    const pointer = groupedBuild("v2", page, script);
+    await store.put(pointer, page.reference, page.blob);
+    await store.put(pointer, script.reference, script.blob);
+    await store.seal(pointer);
+    await worker.setRecord(STAGED, "v2");
+    expect(await (await worker.get("/app.js", "old"))!.text()).toBe(ARCHIVED_FILES["/app.js"][1]);
+    const response = (await worker.navigate("/play/index.html", "new"))!;
+    expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(await response.text()).toBe("<p>grouped</p>");
+    expect(await worker.readRecord(ACTIVE)).toBe("v2");
+    expect(await worker.readRecord(STAGED)).toBeUndefined();
+    expect(await worker.readRecord(pinKey("new"))).toBe("v2");
+    expect(await (await worker.get("/app.js", "new"))!.text()).toBe("grouped script");
+    expect(await (await worker.get("/app.js", "old"))!.text()).toBe(ARCHIVED_FILES["/app.js"][1]);
+    expect(await (await worker.get("/api/state", "new"))!.text()).toBe("network");
+    expect(worker.fetches).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ url: `${ORIGIN}/api/state` }),
+    );
+  });
+
+  it("fails closed for a missing sealed group despite a same-version legacy manifest", async () => {
+    const worker = startWorker(new FakeServer(V2));
+    await worker.saveBuild(manifestOf("v1", V1), V1);
+    await worker.saveBuild(manifestOf("v2", V2), V2);
+    const store = createBuildGroupStore({
+      caches: worker.storage as unknown as CacheStorage,
+      origin: ORIGIN,
+      policy: POLICY,
+    });
+    const page = groupOf("/play/", "text/html", "<p>grouped</p>");
+    const pointer = groupedBuild("v2", page);
+    await store.put(pointer, page.reference, page.blob);
+    await store.seal(pointer);
+    const cache = await worker.storage.open(buildCacheName(POLICY, "v2"));
+    await cache.delete(buildArchivePartUrl(page.reference, 0));
+    expect(await store.complete("v2", pointer)).toBe(false);
+    expect(await store.read("v2")).toEqual({ kind: "unavailable" });
+    await worker.setRecord(ACTIVE, "v1");
+    await worker.setRecord(STAGED, "v2");
+    expect(await (await worker.navigate("/play/", "new"))!.text()).toBe(V1["/play/"]);
+    expect(await worker.readRecord(ACTIVE)).toBe("v1");
+    expect(await worker.readRecord(STAGED)).toBe("v2");
+    await worker.setRecord(pinKey("missing"), "v2");
+    await expect(worker.get("/app.js", "missing")).rejects.toThrow("Build groups unavailable");
+    expect(worker.fetches).not.toHaveBeenCalled();
+  });
+});
+
 describe("archive routing", () => {
   it("promotes an archive, serves its typed slices and keeps an old document pinned", async () => {
     const server = new FakeServer({ "/api/state": "network state" });
@@ -411,16 +574,19 @@ describe("archive routing", () => {
     expect(await worker.readRecord(pinKey("v1"))).toBe("v1");
   });
 
-  it("echoes the exact capability token only to its transferred port", () => {
-    const worker = startWorker(new FakeServer(V1));
-    const listen = worker.listeners.get("message")!;
-    const reply = vi.fn();
-    listen({ data: { token: BUILD_ARCHIVE_ROUTER_PROBE }, ports: [{ postMessage: reply }] });
-    listen({ data: BUILD_ARCHIVE_ROUTER_PROBE, ports: [] });
-    expect(reply).not.toHaveBeenCalled();
-    listen({ data: BUILD_ARCHIVE_ROUTER_PROBE, ports: [{ postMessage: reply }] });
-    expect(reply).toHaveBeenCalledExactlyOnceWith(BUILD_ARCHIVE_ROUTER_PROBE);
-  });
+  it.each([BUILD_ARCHIVE_ROUTER_PROBE, BUILD_GROUP_ROUTER_PROBE])(
+    "echoes the exact capability token %s only to its transferred port",
+    (token) => {
+      const worker = startWorker(new FakeServer(V1));
+      const listen = worker.listeners.get("message")!;
+      const reply = vi.fn();
+      listen({ data: { token }, ports: [{ postMessage: reply }] });
+      listen({ data: token, ports: [] });
+      expect(reply).not.toHaveBeenCalled();
+      listen({ data: token, ports: [{ postMessage: reply }] });
+      expect(reply).toHaveBeenCalledExactlyOnceWith(token);
+    },
+  );
 });
 
 describe("runServiceWorker's lifecycle", () => {

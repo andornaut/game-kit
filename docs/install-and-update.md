@@ -126,7 +126,7 @@ After cache reuse, the installer uses a pack when at least two members remain an
 - Unit: verified JSON passes with unknown Cloudflare headers (`priority`, `server-timing`) and HTTP/1.1 `connection` and `keep-alive`, and fails on each of the six rejected headers; an unpinned client is served `active`; reuse performs no digest; resume after a kill mid-file and mid-record, hash mismatch, deploy mid-install, quota failure, record atomicity, delta reuse, reclaim with pins.
 - Header coverage: run the install over HTTP/3 against the Cloudflare-served deploy, or replay recorded h3 response headers. h2 and HTTP/1.1 runs do not exercise the failure.
 - Switch: at 1 CPU, Update now reloads within the bound with no re-hash.
-- Container Playwright Chromium (stock launcher, `npm run test:e2e`), with CDP network throttle (about 1.6 Mbps, 300 ms) on every page and service worker, 4x CPU throttle on every page and Cloudflare's h3 headers on every response. The long run (`npm run test:e2e:long`, 4,500 files, 46 MB) asserts the 5 min bound; the short run (400 files) asserts the rest in CI. Assert:
+- Container Playwright Chromium (stock launcher, `npm run test:e2e`), with CDP network throttle (about 1.6 Mbps, 300 ms) on every page and service worker, 4x CPU throttle on every page and Cloudflare's h3 headers on every response. The long run (`npm run test:e2e:long`, about 68 MB) asserts the 5 min bound. The short run asserts the rest in CI. Both fixtures stay under the specific-file cap. Assert:
   - the install exceeds 5 min wall time and completes;
   - the install fetches and stores only the sound alternatives of the page's `soundFormat`;
   - a reload and `ServiceWorker.stopWorker` mid-install resume with no repeat requests;

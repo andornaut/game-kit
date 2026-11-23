@@ -5,6 +5,7 @@
 import {
   BUILD_HASH_HEADER,
   BUILD_POINTER_URL,
+  type BuildArchiveReference,
   type BuildFile,
   type BuildManifest,
   type BuildPointer,
@@ -22,8 +23,9 @@ import {
 import { installedManifest, parseBuildManifest, parseBuildPointer } from "../buildRecords.ts";
 import { verifiedJsonAliasCachePrefix } from "../verifiedJsonBody.ts";
 import { downloadBuildArchive } from "./buildArchiveDownload.ts";
-import { supportsBuildArchive } from "./buildArchiveRouter.ts";
+import { BUILD_GROUP_ROUTER_PROBE, supportsBuildArchive } from "./buildArchiveRouter.ts";
 import { type BuildArchiveStore, createBuildArchiveStore } from "./buildArchiveStore.ts";
+import { type BuildGroupStore, createBuildGroupStore } from "./buildGroupStore.ts";
 import { BACKGROUND_INSTALL, FOREGROUND_INSTALL, installBuild } from "./buildInstaller.ts";
 import { type BuildStore, createBuildStore, withBuildStateLock } from "./buildStore.ts";
 import { type VisibilitySource, watchVisibility } from "./visibility.ts";
@@ -80,6 +82,7 @@ export interface LaunchPage {
 
 export interface LaunchContext {
   readonly archiveStore?: BuildArchiveStore;
+  readonly groupStore?: BuildGroupStore;
   readonly installBuild: typeof installBuild;
   readonly page: LaunchPage;
   // The game's cache policy, which scopes the store's caches and the legacy caches launch deletes.
@@ -389,7 +392,8 @@ export function browserLaunchContext(policy: BuildPolicy): LaunchContext | undef
   const origin = window.location.origin;
   const store = createBuildStore({ caches, origin }, policy);
   const archiveStore = createBuildArchiveStore({ caches, origin, policy });
-  return { archiveStore, installBuild, page, policy, store };
+  const groupStore = createBuildGroupStore({ caches, origin, policy });
+  return { archiveStore, groupStore, installBuild, page, policy, store };
 }
 
 // Call run() once at document boot. With no active build it installs the deployed build in the
@@ -762,7 +766,7 @@ export function createLaunch(
 
   let switching: Promise<void> | undefined;
 
-  const archiveRouterReady = async () => {
+  const archiveRouterReady = async (probe?: string) => {
     const controller = page.container.controller;
     if (
       controller?.scriptURL !== routerUrl ||
@@ -779,11 +783,16 @@ export function createLaunch(
       },
       CONTROL_WAIT_MS,
       { postMessage: (message, transfer) => controller.postMessage!(message, transfer) },
+      probe,
     );
     return ready && page.container.controller === controller;
   };
 
   const completeBuild = async (version: string): Promise<boolean> => {
+    const grouped = await context.groupStore?.read(version);
+    if (grouped !== undefined && grouped.kind !== "unknown") {
+      return grouped.kind === "ready" && (await archiveRouterReady(BUILD_GROUP_ROUTER_PROBE));
+    }
     if ((await context.archiveStore?.complete(version)) === true && (await archiveRouterReady())) {
       return true;
     }
@@ -865,10 +874,14 @@ export function createLaunch(
   const publishStaged = async (
     previous: BuildState,
     version: string,
-    archive?: BuildPointer,
+    pointer?: BuildPointer,
   ): Promise<void> => {
     const published = await withBuildStateLock(policy, async () => {
-      if (archive !== undefined && !(await context.archiveStore?.complete(version, archive))) {
+      if (
+        (pointer?.archive !== undefined &&
+          !(await context.archiveStore?.complete(version, pointer))) ||
+        (pointer?.groups !== undefined && !(await context.groupStore?.complete(version, pointer)))
+      ) {
         return false;
       }
       const current = await store.readState();
@@ -910,6 +923,24 @@ export function createLaunch(
     });
   };
 
+  const downloadArchive = (
+    archive: BuildArchiveReference,
+    onBytes: (received: number, total: number) => void,
+  ) =>
+    downloadBuildArchive(
+      {
+        beforePart: waitForArchiveTransfer,
+        clearTimeout: installContext.clearTimeout,
+        fetch: installContext.fetch,
+        inactivityMs: FOREGROUND_INSTALL.inactivityMs,
+        now: installContext.now,
+        onBytes,
+        setTimeout: installContext.setTimeout,
+        signal: aborts.signal,
+      },
+      archive,
+    );
+
   const stageArchive = async (
     pointer: BuildPointer,
     state: BuildState,
@@ -921,19 +952,8 @@ export function createLaunch(
     }
     if (!(await archiveStore.complete(version, pointer))) {
       reportUpdate({ phase: "staging", value: 0, version });
-      const body = await downloadBuildArchive(
-        {
-          beforePart: waitForArchiveTransfer,
-          clearTimeout: installContext.clearTimeout,
-          fetch: installContext.fetch,
-          inactivityMs: FOREGROUND_INSTALL.inactivityMs,
-          now: installContext.now,
-          onBytes: (received, total) =>
-            reportUpdate({ phase: "staging", value: received / total, version }),
-          setTimeout: installContext.setTimeout,
-          signal: aborts.signal,
-        },
-        archive,
+      const body = await downloadArchive(archive, (received, total) =>
+        reportUpdate({ phase: "staging", value: received / total, version }),
       );
       // A content-addressed transfer can finish even after a later release deploys.
       const deployed = await readPointer();
@@ -941,6 +961,58 @@ export function createLaunch(
         return "changed";
       }
       await archiveStore.put(pointer, body, aborts.signal);
+    }
+    await publishStaged(state, version, pointer);
+    return "complete";
+  };
+
+  const stageGroups = async (
+    pointer: BuildPointer,
+    state: BuildState,
+  ): Promise<"complete" | "changed"> => {
+    const { groupStore } = context;
+    const { groups, version } = pointer;
+    if (groupStore === undefined || groups === undefined) {
+      throw new LaunchError("verification", "Grouped build storage unavailable");
+    }
+    if (!(await groupStore.complete(version, pointer))) {
+      const missing: BuildArchiveReference[] = [];
+      for (const group of groups) {
+        aborts.signal.throwIfAborted();
+        // Limit storage work and downloads to one bounded group at a time.
+        // eslint-disable-next-line no-await-in-loop
+        if (!(await groupStore.reuse(pointer, group))) {
+          missing.push(group);
+        }
+      }
+      const total = missing.reduce((bytes, group) => bytes + group.byteSize, 0);
+      let received = 0;
+      if (total > 0) {
+        reportUpdate({ phase: "staging", value: 0, version });
+      }
+      for (const group of missing) {
+        // eslint-disable-next-line no-await-in-loop
+        const body = await downloadArchive(group, (bytes) =>
+          reportUpdate({ phase: "staging", value: (received + bytes) / total, version }),
+        );
+        // eslint-disable-next-line no-await-in-loop
+        await groupStore.put(pointer, group, body, aborts.signal);
+        received += group.byteSize;
+      }
+      const deployed = await readPointer();
+      if (
+        deployed.version !== version ||
+        deployed.buildId !== pointer.buildId ||
+        deployed.groups?.length !== groups.length ||
+        groups.some(
+          ({ byteSize, sha256 }, index) =>
+            deployed.groups?.[index]?.byteSize !== byteSize ||
+            deployed.groups?.[index]?.sha256 !== sha256,
+        )
+      ) {
+        return "changed";
+      }
+      await groupStore.seal(pointer, aborts.signal);
     }
     await publishStaged(state, version, pointer);
     return "complete";
@@ -966,8 +1038,13 @@ export function createLaunch(
     }
     const { version } = pointer;
     attempt.version = version;
-    if (pointer.archive !== undefined) {
-      if ((await stageArchive(pointer, state)) === "changed") {
+    const groupCapable =
+      pointer.groups !== undefined && (await archiveRouterReady(BUILD_GROUP_ROUTER_PROBE));
+    if (pointer.archive !== undefined || groupCapable) {
+      const result = groupCapable
+        ? await stageGroups(pointer, state)
+        : await stageArchive(pointer, state);
+      if (result === "changed") {
         if (restarts + 1 >= MAX_RESTARTS) {
           throw new LaunchError("verification", "The deployed build kept changing during staging");
         }
