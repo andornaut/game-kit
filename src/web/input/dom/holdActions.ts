@@ -63,12 +63,19 @@ interface Release {
   readonly pointerId: number;
 }
 
-interface TouchFocusRelease {
+interface TouchFocusChange {
   readonly focus: Element;
   readonly target: Element;
-  readonly timeStamp: number;
   readonly x: number;
   readonly y: number;
+}
+
+interface TouchFocusRelease extends TouchFocusChange {
+  readonly timeStamp: number;
+}
+
+interface HeldTouch extends Release {
+  change: TouchFocusChange | undefined;
 }
 
 // Default mode adds holds to caller-owned native activation. Pointer-release mode also owns taps.
@@ -113,6 +120,7 @@ export function bindHoldActions(
   let released: Release | undefined;
   let legacyRelease = false;
   let touchFocusRelease: TouchFocusRelease | undefined;
+  let heldTouch: HeldTouch | undefined;
   let invalidatedRelease: Release | undefined;
   let releaseTimer: number | undefined;
   let downRevision = 0;
@@ -211,6 +219,40 @@ export function bindHoldActions(
     const action = options.resolve(gesture.element);
     return same(gesture, action) && permitsOwnAria(action!) && action!.available() ? action : null;
   };
+  // Chromium's touch-derived mousedown uses the release timestamp and rounded client pixels.
+  const touchPoint = (element: HTMLElement, event: PointerEvent) =>
+    event.isTrusted &&
+    event.pointerType === "touch" &&
+    event.isPrimary &&
+    inside(element, event.target)
+      ? { x: Math.round(event.clientX), y: Math.round(event.clientY) }
+      : undefined;
+  const dispatchWithFocus = (
+    element: HTMLElement,
+    point: { x: number; y: number },
+    dispatch: () => void,
+  ): TouchFocusChange | undefined => {
+    const { x, y } = point;
+    const originalHit = document.elementFromPoint(x, y);
+    const before = document.activeElement;
+    dispatch();
+    const focus = document.activeElement;
+    if (
+      focus === null ||
+      focus === before ||
+      !inside(root, focus) ||
+      !inside(element, originalHit)
+    ) {
+      return undefined;
+    }
+    const target = document.elementFromPoint(x, y);
+    return target !== null &&
+      inside(root, target) &&
+      !inside(element, target) &&
+      !focus.contains(target)
+      ? { focus, target, x, y }
+      : undefined;
+  };
   const fire = (gesture: Gesture) => {
     const action = current(gesture);
     if (action === null || disposed || active !== gesture) {
@@ -225,7 +267,21 @@ export function bindHoldActions(
       view.clearTimeout(gesture.timer);
       gesture.timer = undefined;
       // Mark held before calling user code, including synchronous disposal or DOM replacement.
-      (action.hold ?? action.activate)();
+      const dispatch = action.hold ?? action.activate;
+      const point =
+        releaseOptions === undefined ? undefined : touchPoint(gesture.element, gesture.latest);
+      if (point === undefined) {
+        dispatch();
+      } else {
+        // The action may close its modal and synchronously invalidate logical ownership.
+        const held: HeldTouch = {
+          change: undefined,
+          element: gesture.element,
+          pointerId: gesture.pointerId,
+        };
+        heldTouch = held;
+        held.change = dispatchWithFocus(gesture.element, point, dispatch);
+      }
     }
   };
   const arm = (gesture: Gesture) => {
@@ -249,13 +305,35 @@ export function bindHoldActions(
     }
     cancel();
   };
-  const rememberRelease = (release: Release) => {
+  const rememberRelease = (release: Release, event: PointerEvent) => {
     clearRelease();
     released = release;
     legacyRelease = true;
+    if (heldTouch?.pointerId === release.pointerId) {
+      const { change, element } = heldTouch;
+      heldTouch = undefined;
+      const point = touchPoint(release.element, event);
+      if (
+        element === release.element &&
+        change !== undefined &&
+        point?.x === change.x &&
+        point.y === change.y &&
+        document.activeElement === change.focus &&
+        inside(root, change.focus) &&
+        !change.focus.contains(change.target) &&
+        document.elementFromPoint(point.x, point.y) === change.target
+      ) {
+        touchFocusRelease = { ...change, timeStamp: event.timeStamp };
+      }
+    }
+    const heldFocus = touchFocusRelease;
     releaseTimer = view.setTimeout(() => {
       legacyRelease = false;
-      touchFocusRelease = undefined;
+      // A held touch's compatibility mousedown can arrive after the pointerup task.
+      // Keep its exact native match until input or lifecycle cleanup clears the release.
+      if (touchFocusRelease !== heldFocus) {
+        touchFocusRelease = undefined;
+      }
       releaseTimer = undefined;
     }, 0);
   };
@@ -267,6 +345,7 @@ export function bindHoldActions(
       cancel();
     }
     downRevision += 1;
+    heldTouch = undefined;
     clearRelease();
   };
   const onDown = (event: PointerEvent) => {
@@ -341,48 +420,25 @@ export function bindHoldActions(
   };
   const activateTap = (gesture: Gesture, action: HoldAction, event: PointerEvent) => {
     const release = released;
-    if (
-      release === undefined ||
-      !event.isTrusted ||
-      event.pointerType !== "touch" ||
-      !event.isPrimary ||
-      !inside(gesture.element, event.target)
-    ) {
+    const point = touchPoint(gesture.element, event);
+    if (release === undefined || point === undefined) {
       action.activate();
       return;
     }
-    // Chromium's touch-derived mousedown uses the release timestamp and rounded client pixels.
-    const x = Math.round(event.clientX);
-    const y = Math.round(event.clientY);
-    const originalHit = document.elementFromPoint(x, y);
-    const before = document.activeElement;
-    action.activate();
-    const focus = document.activeElement;
-    if (
-      released !== release ||
-      focus === null ||
-      focus === before ||
-      !inside(root, focus) ||
-      !inside(gesture.element, originalHit)
-    ) {
-      return;
-    }
-    const target = document.elementFromPoint(x, y);
-    if (
-      target !== null &&
-      inside(root, target) &&
-      !inside(gesture.element, target) &&
-      !focus.contains(target)
-    ) {
-      touchFocusRelease = { focus, target, timeStamp: event.timeStamp, x, y };
+    const change = dispatchWithFocus(gesture.element, point, () => action.activate());
+    if (released === release && change !== undefined) {
+      touchFocusRelease = { ...change, timeStamp: event.timeStamp };
     }
   };
   const onEnd = (event: PointerEvent) => {
+    if (event.type === "pointercancel" && heldTouch?.pointerId === event.pointerId) {
+      heldTouch = undefined;
+    }
     if (invalidatedRelease?.pointerId === event.pointerId) {
       const witness = invalidatedRelease;
       invalidatedRelease = undefined;
       if (event.type === "pointerup") {
-        rememberRelease(witness);
+        rememberRelease(witness, event);
       }
     }
     const gesture = active;
@@ -412,7 +468,7 @@ export function bindHoldActions(
         (gesture.press.state === "held" || releaseOptions !== undefined)
       ) {
         // Pointer identity follows native compatibility clicks across task boundaries.
-        rememberRelease({ element: gesture.element, pointerId: gesture.pointerId });
+        rememberRelease({ element: gesture.element, pointerId: gesture.pointerId }, event);
       }
     }
     if (active === gesture) {
@@ -510,6 +566,7 @@ export function bindHoldActions(
     try {
       cancel(true);
     } finally {
+      heldTouch = undefined;
       clearRelease();
     }
   };
@@ -538,6 +595,7 @@ export function bindHoldActions(
     }
     disposed = true;
     invalidatedRelease = undefined;
+    heldTouch = undefined;
     try {
       try {
         cancel();

@@ -1,4 +1,4 @@
-// Run node tests/e2e/hold-touch-focus.ts in the stock Playwright container.
+// Run node tests/e2e/hold-touch-focus.ts [--hold] in the stock Playwright container.
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 
@@ -35,6 +35,7 @@ const markup = `<!doctype html>
   </main>`;
 
 assert(existsSync("/.dockerenv"), "Run in the stock Playwright container.");
+const held = process.argv.includes("--hold");
 const server = await createServer({
   configFile: false,
   envDir: false,
@@ -52,7 +53,7 @@ try {
     });
     await page.route(origin, (route) => route.fulfill({ contentType: "text/html", body: markup }));
     await page.goto(origin);
-    await page.evaluate(async () => {
+    await page.evaluate(async (held) => {
       const gateModule = "/src/input/modalInput.ts";
       const holdModule = "/src/web/input/dom/holdActions.ts";
       const modalModule = "/src/web/ui/dom/modalLayer.ts";
@@ -77,16 +78,18 @@ try {
         const scope = gate.open();
         confirmation.hidden = false;
         const close = modal.open({ focus: cancel, isolation: "dialog" }, confirmation);
+        const dismiss = (name: string) => {
+          close();
+          scope.close();
+          confirmation.hidden = true;
+          trace.push({ focus: document.activeElement!.id, name });
+        };
         const action = {
-          activate: () => {
-            close();
-            scope.close();
-            confirmation.hidden = true;
-            trace.push({ focus: document.activeElement!.id, name: "activate" });
-          },
+          activate: () => dismiss("activate"),
           available: () => !confirmation.hidden,
           element: cancel,
-          rule: { holdMs: 10_000, slopPx: 8 },
+          hold: () => dismiss("hold"),
+          rule: { holdMs: held ? 180 : 10_000, slopPx: 8 },
         };
         const binding = bindHoldActions(
           {
@@ -124,7 +127,7 @@ try {
           }
         });
       }
-    });
+    }, held);
     await page.keyboard.press("Tab");
     await page.keyboard.press("Enter");
     assert.equal(await page.locator(":focus").getAttribute("id"), "cancel");
@@ -142,6 +145,12 @@ try {
           requestAnimationFrame(resolve);
         }),
     );
+    if (held) {
+      await page.waitForFunction(() =>
+        (Reflect.get(window, "holdFocusTrace") as TraceEntry[]).some(({ name }) => name === "hold"),
+      );
+      assert.equal(await page.locator(":focus").getAttribute("id"), "opener");
+    }
     await session.send("Input.dispatchTouchEvent", { touchPoints: [], type: "touchEnd" });
     const afterTouch = await page.locator(":focus").getAttribute("id");
     await page.evaluate(
@@ -158,10 +167,20 @@ try {
     await page.mouse.click(x, y);
     const afterMouse = await page.locator(":focus").getAttribute("id");
     const mouseTrace = (await readTrace()).slice(touchTrace.length);
-    console.log(JSON.stringify({ afterMouse, afterTab, afterTouch, mouseTrace, touchTrace }));
+    console.log(
+      JSON.stringify({
+        afterMouse,
+        afterTab,
+        afterTouch,
+        browser: browser.version(),
+        held,
+        mouseTrace,
+        touchTrace,
+      }),
+    );
 
-    const activates = touchTrace.filter(({ name }) => name === "activate");
-    assert.deepEqual(activates, [{ focus: "opener", name: "activate" }]);
+    const actions = touchTrace.filter(({ name }) => name === "activate" || name === "hold");
+    assert.deepEqual(actions, [{ focus: "opener", name: held ? "hold" : "activate" }]);
     const down = touchTrace.find(({ name }) => name === "mousedown");
     assert(down?.trusted && down.touch && down.target === "hit" && down.focus === "opener");
     const start = touchTrace.find(({ name }) => name === "pointerdown");
@@ -172,7 +191,11 @@ try {
     assert.equal(down.time, release.time);
     assert.equal(down.x, Math.round(release.x!));
     assert.equal(down.y, Math.round(release.y!));
-    assert(touchTrace.indexOf(down) < touchTrace.findIndex(({ name }) => name === "timer"));
+    if (held) {
+      assert(touchTrace.indexOf(actions[0]!) < touchTrace.indexOf(release));
+    } else {
+      assert(touchTrace.indexOf(down) < touchTrace.findIndex(({ name }) => name === "timer"));
+    }
     const mouse = mouseTrace.find(({ name }) => name === "mousedown");
     assert(mouse?.trusted && !mouse.touch && !mouse.prevented && mouse.target === "hit");
     assert.equal(afterMouse, "panel");
