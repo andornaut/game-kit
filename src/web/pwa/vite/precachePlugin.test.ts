@@ -307,6 +307,7 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
       "assets/extra.json": JSON.stringify({ value: "a".repeat(200) }),
       "assets/font.woff2": "font",
       "assets/layout.css": "body { color: black; }",
+      "assets/OFL.txt": "Font licence, droits réservés\r\n",
       "assets/spanning.bin": new Uint8Array(BUILD_ARCHIVE_PART_BYTES + 1).fill(0xa5),
     };
     const options: Build = {
@@ -351,6 +352,7 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
       "/assets/data.json": "application/json",
       "/assets/font.woff2": "font/woff2",
       "/assets/layout.css": "text/css; charset=utf-8",
+      "/assets/OFL.txt": "text/plain; charset=utf-8",
       "/guide/": "text/html; charset=utf-8",
       "/manifest.webmanifest": "application/manifest+json",
     });

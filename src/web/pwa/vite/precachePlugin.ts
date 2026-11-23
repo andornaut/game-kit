@@ -88,6 +88,7 @@ const ARCHIVE_CONTENT_TYPES = new Map([
   ["mjs", "text/javascript; charset=utf-8"],
   ["otf", "font/otf"],
   ["ttf", "font/ttf"],
+  ["txt", "text/plain; charset=utf-8"],
   ["wasm", "application/wasm"],
   ["webmanifest", "application/manifest+json"],
   ["woff", "font/woff"],
