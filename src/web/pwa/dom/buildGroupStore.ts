@@ -52,12 +52,14 @@ export interface BuildGroupStore {
 const GROUP_ID = { buildId: GROUP_ARCHIVE_IDENTITY, version: GROUP_ARCHIVE_IDENTITY };
 
 function groupedPointer(value: unknown): GroupedPointer {
-  const { buildId, groups, manifest, schema, version } = parseBuildPointer(value);
+  const { buildId, groupedFirstInstall, groups, manifest, schema, version } =
+    parseBuildPointer(value);
   if (groups === undefined) {
     throw new TypeError("Missing build groups");
   }
   return {
     buildId,
+    ...(groupedFirstInstall === undefined ? {} : { groupedFirstInstall }),
     groups: groups.map(({ byteSize, schema, sha256 }) => ({ byteSize, schema, sha256 })),
     manifest,
     schema,
@@ -75,6 +77,7 @@ function samePointer(a: GroupedPointer, b: BuildPointer): boolean {
     a.version === b.version &&
     a.buildId === b.buildId &&
     a.manifest === b.manifest &&
+    a.groupedFirstInstall === b.groupedFirstInstall &&
     b.archive === undefined &&
     groups !== undefined &&
     a.groups.length === groups.length &&

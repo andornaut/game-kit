@@ -355,6 +355,20 @@ export function createLaunch(
     }
   };
 
+  const readDeployedManifest = async (pointer: BuildPointer): Promise<BuildManifest> => {
+    const value = await fetchJson(pointer.manifest, {});
+    let manifest: BuildManifest | undefined;
+    try {
+      manifest = parseBuildManifest(value);
+    } catch {
+      manifest = undefined;
+    }
+    if (manifest?.version !== pointer.version || manifest.buildId !== pointer.buildId) {
+      throw new LaunchError("verification", `Invalid build manifest for ${pointer.version}`);
+    }
+    return manifest;
+  };
+
   // The pinned manifest the pointer names, reduced to the files this device installs: from the
   // store when an earlier attempt saved it for the same sound format.
   const readPinnedManifest = async (pointer: BuildPointer): Promise<InstalledManifest> => {
@@ -366,17 +380,7 @@ export function createLaunch(
     ) {
       return saved;
     }
-    const value = await fetchJson(pointer.manifest, {});
-    let manifest: BuildManifest | undefined;
-    try {
-      manifest = parseBuildManifest(value);
-    } catch {
-      manifest = undefined;
-    }
-    if (manifest?.version !== pointer.version || manifest.buildId !== pointer.buildId) {
-      throw new LaunchError("verification", `Invalid build manifest for ${pointer.version}`);
-    }
-    return installedManifest(options.soundFormat, manifest);
+    return installedManifest(options.soundFormat, await readDeployedManifest(pointer));
   };
 
   const register = () => page.container.register(options.serviceWorkerUrl, ROUTER_REGISTRATION);
@@ -410,8 +414,9 @@ export function createLaunch(
     try {
       await register();
     } catch (error) {
+      const pointer = await readPointer().catch(() => undefined);
       throw new LaunchError(
-        "unsupported",
+        pointer?.groupedFirstInstall === true ? "verification" : "unsupported",
         `Service worker registration failed: ${String((error as Error)?.message ?? error)}`,
       );
     }
@@ -452,6 +457,24 @@ export function createLaunch(
     const pointer = await readPointer();
     bootVersion ??= pointer.version;
     installingVersion = pointer.version;
+    if (pointer.groupedFirstInstall === true) {
+      const result = await installGrouped(pointer).catch((error: unknown) => {
+        const reason = failureReason(error);
+        if (reason === "quota" || reason === "unsupported") {
+          throw new LaunchError("verification", "Could not install the grouped build", {
+            cause: error,
+          });
+        }
+        throw error;
+      });
+      if (result !== "changed") {
+        return result;
+      }
+      if (restarts + 1 >= MAX_RESTARTS) {
+        throw new LaunchError("verification", "The deployed build kept changing during install");
+      }
+      return installDeployed(restarts + 1);
+    }
     const manifest = await readPinnedManifest(pointer);
     progress = { ...progress, bootBytes: bootBytesOf(manifest), received: 0, total: 0 };
     const missingBytes = (await store.missing(manifest)).reduce(
@@ -782,12 +805,13 @@ export function createLaunch(
   const downloadArchive = (
     archive: BuildArchiveReference,
     onBytes: (received: number, total: number) => void,
+    foregroundFetch?: FetchLike,
   ) =>
     downloadBuildArchive(
       {
-        beforePart: waitForArchiveTransfer,
+        ...(foregroundFetch === undefined ? { beforePart: waitForArchiveTransfer } : {}),
         clearTimeout: installContext.clearTimeout,
-        fetch: installContext.fetch,
+        fetch: foregroundFetch ?? installContext.fetch,
         inactivityMs: FOREGROUND_INSTALL.inactivityMs,
         now: installContext.now,
         onBytes,
@@ -822,19 +846,34 @@ export function createLaunch(
     return "complete";
   };
 
-  const stageGroups = async (
+  const requireGroupRouter = async () => {
+    if (!(await archiveRouterReady(BUILD_GROUP_ROUTER_PROBE))) {
+      throw new LaunchError("verification", "The controlling worker cannot serve grouped builds");
+    }
+  };
+
+  const prepareGroups = async (
     pointer: BuildPointer,
-    state: BuildState,
+    onBytes: (received: number, total: number) => void,
+    foreground = false,
   ): Promise<"complete" | "changed"> => {
     const { groupStore } = context;
     const { groups, version } = pointer;
     if (groupStore === undefined || groups === undefined) {
       throw new LaunchError("verification", "Grouped build storage unavailable");
     }
-    if (!(await archiveRouterReady(BUILD_GROUP_ROUTER_PROBE))) {
-      throw new LaunchError("verification", "The controlling worker cannot serve grouped builds");
-    }
-    if (!(await groupStore.complete(version, pointer))) {
+    const stillDeployed = (deployed: BuildPointer) =>
+      deployed.version === version &&
+      deployed.buildId === pointer.buildId &&
+      deployed.groupedFirstInstall === pointer.groupedFirstInstall &&
+      deployed.groups?.length === groups.length &&
+      groups.every(
+        ({ byteSize, sha256 }, index) =>
+          deployed.groups?.[index]?.byteSize === byteSize &&
+          deployed.groups?.[index]?.sha256 === sha256,
+      );
+    const alreadySealed = await groupStore.complete(version, pointer);
+    if (!alreadySealed) {
       const missing: BuildArchiveReference[] = [];
       for (const group of groups) {
         aborts.signal.throwIfAborted();
@@ -846,35 +885,129 @@ export function createLaunch(
       }
       const total = missing.reduce((bytes, group) => bytes + group.byteSize, 0);
       let received = 0;
-      if (total > 0) {
-        reportUpdate({ phase: "staging", value: 0, version });
+      if (total > 0 || foreground) {
+        onBytes(0, total);
       }
       for (const group of missing) {
-        // eslint-disable-next-line no-await-in-loop
-        const body = await downloadArchive(group, (bytes) =>
-          reportUpdate({ phase: "staging", value: (received + bytes) / total, version }),
-        );
-        // eslint-disable-next-line no-await-in-loop
-        await groupStore.put(pointer, group, body, aborts.signal);
+        let fetchFailed = false;
+        const foregroundFetch: FetchLike | undefined = foreground
+          ? async (url, init) => {
+              const response = await installContext.fetch(url, init).catch((error: unknown) => {
+                fetchFailed = true;
+                throw error;
+              });
+              fetchFailed = response.status !== 200;
+              return response;
+            }
+          : undefined;
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const body = await downloadArchive(
+            group,
+            (bytes) => onBytes(received + bytes, total),
+            foregroundFetch,
+          );
+          // eslint-disable-next-line no-await-in-loop
+          await groupStore.put(pointer, group, body, aborts.signal);
+        } catch (error) {
+          if (fetchFailed && !aborts.signal.aborted) {
+            // The old part may have disappeared during a current-only deployment.
+            // eslint-disable-next-line no-await-in-loop
+            const deployed = await readPointer().catch(() => undefined);
+            if (deployed !== undefined && !stillDeployed(deployed) && !aborts.signal.aborted) {
+              return "changed";
+            }
+          }
+          throw error;
+        }
         received += group.byteSize;
       }
-      const deployed = await readPointer();
-      if (
-        deployed.version !== version ||
-        deployed.buildId !== pointer.buildId ||
-        deployed.groups?.length !== groups.length ||
-        groups.some(
-          ({ byteSize, sha256 }, index) =>
-            deployed.groups?.[index]?.byteSize !== byteSize ||
-            deployed.groups?.[index]?.sha256 !== sha256,
-        )
-      ) {
-        return "changed";
-      }
+    }
+    if ((!alreadySealed || foreground) && !stillDeployed(await readPointer())) {
+      return "changed";
+    }
+    if (!alreadySealed) {
       await groupStore.seal(pointer, aborts.signal);
     }
-    await publishStaged(state, version, pointer);
     return "complete";
+  };
+
+  const verifyGroupedManifest = async (manifest: BuildManifest) => {
+    const grouped = await context.groupStore?.read(manifest.version);
+    if (grouped?.kind !== "ready" || grouped.files.size !== manifest.files.length) {
+      throw new LaunchError("verification", "Grouped build members do not match the manifest");
+    }
+    for (const { byteSize, url } of manifest.files) {
+      if (grouped.files.get(url)?.byteSize !== byteSize) {
+        throw new LaunchError("verification", `Grouped build member does not match ${url}`);
+      }
+    }
+  };
+
+  const installGrouped = async (pointer: BuildPointer): Promise<"reloading" | "changed"> => {
+    const { version } = pointer;
+    await waitForRouter();
+    aborts.signal.throwIfAborted();
+    await requireGroupRouter();
+    const manifest = await readDeployedManifest(pointer);
+    progress = { ...progress, bootBytes: bootBytesOf(manifest), received: 0, total: 0 };
+    const result = await prepareGroups(
+      pointer,
+      (received, total) => {
+        progress = { ...progress, received, total };
+        report("installing", 0);
+      },
+      true,
+    );
+    if (result === "changed") {
+      return result;
+    }
+    await verifyGroupedManifest(manifest);
+    const active = await withBuildStateLock(policy, async () => {
+      const state = await store.readState();
+      if (state.active !== undefined) {
+        return state.active;
+      }
+      if (
+        !(await context.groupStore?.complete(version, pointer)) ||
+        !(await archiveRouterReady(BUILD_GROUP_ROUTER_PROBE))
+      ) {
+        throw new LaunchError("verification", "Could not activate the sealed grouped build");
+      }
+      aborts.signal.throwIfAborted();
+      await store.setActive(version);
+      return version;
+    });
+    if (disposed) {
+      return "reloading";
+    }
+    if (active === version) {
+      progress = { ...progress, received: progress.total, recorded: true };
+      report("installing", 0);
+      writeSession(
+        session,
+        LAUNCH_PROGRESS_KEY,
+        JSON.stringify({
+          bootBytes: progress.bootBytes,
+          receivedBytes: progress.total,
+          version,
+        } satisfies ProgressCarry),
+      );
+    }
+    // Bootstrap has no pin yet. The new navigation obtains the active build and its pin together.
+    reload();
+    return "reloading";
+  };
+
+  const stageGroups = async (pointer: BuildPointer, state: BuildState) => {
+    await requireGroupRouter();
+    const result = await prepareGroups(pointer, (received, total) =>
+      reportUpdate({ phase: "staging", value: received / total, version: pointer.version }),
+    );
+    if (result === "complete") {
+      await publishStaged(state, pointer.version, pointer);
+    }
+    return result;
   };
 
   // Stages the build the pointer names; a redeploy mid-staging restarts on the new manifest.

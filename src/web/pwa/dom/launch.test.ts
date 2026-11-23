@@ -392,6 +392,307 @@ describe("grouped updates", () => {
   const unchanged = { byteSize: 1, schema: 1, sha256: sha("a") } as const;
   const build = { ...V2, pointer: { ...V2.pointer, groups: [unchanged, changed] } };
   const changedPath = buildArchivePartUrl(changed, 0);
+  const cold = { ...build, pointer: { ...build.pointer, groupedFirstInstall: true as const } };
+  const coldFiles = (script = "alpha2") =>
+    new Map([
+      [
+        "/a.js",
+        {
+          blob: new Blob([script]),
+          byteSize: script.length,
+          contentType: "text/javascript",
+          offset: 0,
+        },
+      ],
+      ["/play/", { blob: new Blob(["<html>"]), byteSize: 6, contentType: "text/html", offset: 0 }],
+    ]);
+  const readCold = async () => ({ files: coldFiles(), kind: "ready" as const });
+
+  it("waits for the router and seals and activates groups before the first reload", async () => {
+    let sealed = false;
+    const put = vi.fn();
+    const seal = vi.fn(async () => {
+      sealed = true;
+    });
+    const f = fixture({
+      groupStore: {
+        complete: async () => sealed,
+        put,
+        read: readCold,
+        reuse: async () => false,
+        seal,
+      },
+    });
+    f.deploy(cold);
+    const unchangedPath = buildArchivePartUrl(unchanged, 0);
+    f.routes.set(unchangedPath, () => new Response("a"));
+    f.routes.set(changedPath, () => new Response(body));
+    const started = f.launch.run();
+    await settle();
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([BUILD_POINTER_URL]);
+    expect(f.store.state).toEqual({});
+    const probe = vi.fn((message: string, [port]: MessagePort[]) => {
+      port?.postMessage(message);
+      port?.close();
+    });
+    f.container.claim(probe);
+    await expect(started).resolves.toBe("reloading");
+    expect(probe.mock.calls.map(([message]) => message)).toEqual([
+      BUILD_GROUP_ROUTER_PROBE,
+      BUILD_GROUP_ROUTER_PROBE,
+    ]);
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([
+      BUILD_POINTER_URL,
+      cold.pointer.manifest,
+      unchangedPath,
+      changedPath,
+      BUILD_POINTER_URL,
+    ]);
+    expect(put).toHaveBeenCalledTimes(2);
+    expect(seal).toHaveBeenCalledExactlyOnceWith(cold.pointer, expect.any(AbortSignal));
+    expect(f.store.calls).toEqual([`setActive ${cold.pointer.version}`]);
+    expect(f.store.state).toEqual({ active: cold.pointer.version });
+    expect(f.offers).toEqual([]);
+    expect(f.updates).toEqual([]);
+    expect(f.installBuild).not.toHaveBeenCalled();
+    expect(f.reload).toHaveBeenCalledOnce();
+    expect(f.progress.at(-1)).toMatchObject({
+      phase: "installing",
+      receivedBytes: unchanged.byteSize + changed.byteSize,
+      totalBytes: unchanged.byteSize + changed.byteSize + 6,
+    });
+    expect(f.progress.at(-1)!.value).toBeLessThan(1);
+    f.launch.dispose();
+  });
+
+  it("retries a partial grouped install without activation or repeating a verified group", async () => {
+    let sealed = false;
+    const stored = new Set<string>();
+    const put = vi.fn((_pointer: BuildPointer, group: { sha256: string }) => {
+      stored.add(group.sha256);
+      return Promise.resolve();
+    });
+    const seal = vi.fn(async () => {
+      sealed = true;
+    });
+    const f = fixture({
+      groupStore: {
+        complete: async () => sealed,
+        put,
+        read: readCold,
+        reuse: async (_pointer, group) => stored.has(group.sha256),
+        seal,
+      },
+    });
+    f.deploy(cold);
+    const unchangedPath = buildArchivePartUrl(unchanged, 0);
+    f.routes.set(unchangedPath, () => new Response("a"));
+    f.routes.set(changedPath, () => new Response("x".repeat(body.length)));
+    f.container.claim((message, [port]) => {
+      port?.postMessage(message);
+      port?.close();
+    });
+    const started = f.launch.run();
+    await vi.waitFor(() => expect(f.failures).toHaveLength(1));
+    expect(put).toHaveBeenCalledOnce();
+    expect(seal).not.toHaveBeenCalled();
+    expect(f.store.calls).toEqual([]);
+    expect(f.offers).toEqual([]);
+    expect(f.reload).not.toHaveBeenCalled();
+    f.routes.set(changedPath, () => new Response(body));
+    f.failures[0]!.retry();
+    await expect(started).resolves.toBe("reloading");
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([
+      BUILD_POINTER_URL,
+      cold.pointer.manifest,
+      unchangedPath,
+      changedPath,
+      BUILD_POINTER_URL,
+      cold.pointer.manifest,
+      changedPath,
+      BUILD_POINTER_URL,
+    ]);
+    expect(put).toHaveBeenCalledTimes(2);
+    expect(seal).toHaveBeenCalledOnce();
+    expect(f.store.calls).toEqual([`setActive ${cold.pointer.version}`]);
+    f.launch.dispose();
+  });
+
+  it("leaves a sealed first install inactive when the controller changes before publication", async () => {
+    let sealed = false;
+    const seal = vi.fn(async () => {
+      sealed = true;
+      f.container.claim();
+    });
+    const f = fixture({
+      groupStore: {
+        complete: async () => sealed,
+        put: async () => {},
+        read: readCold,
+        reuse: async () => true,
+        seal,
+      },
+    });
+    f.deploy(cold);
+    f.container.claim((message, [port]) => {
+      port?.postMessage(message);
+      port?.close();
+    });
+    void f.launch.run();
+    await vi.waitFor(() => expect(f.failures).toHaveLength(1));
+    expect(f.failures[0]?.reason).toBe("verification");
+    expect(seal).toHaveBeenCalledOnce();
+    expect(f.store.state).toEqual({});
+    expect(f.reload).not.toHaveBeenCalled();
+    expect(f.networkPlay).toEqual([]);
+    f.launch.dispose();
+  });
+
+  it("refuses a sealed grouped install with a missing manifest member", async () => {
+    const files = coldFiles();
+    files.delete("/a.js");
+    const f = fixture({
+      groupStore: {
+        complete: async () => true,
+        put: vi.fn(),
+        read: async () => ({ files, kind: "ready" }),
+        reuse: vi.fn(),
+        seal: vi.fn(),
+      },
+    });
+    f.deploy(cold);
+    f.container.claim((message, [port]) => {
+      port?.postMessage(message);
+      port?.close();
+    });
+    void f.launch.run();
+    await vi.waitFor(() => expect(f.failures).toHaveLength(1));
+    expect(f.failures[0]?.reason).toBe("verification");
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([
+      BUILD_POINTER_URL,
+      cold.pointer.manifest,
+      BUILD_POINTER_URL,
+    ]);
+    expect(f.store.calls).toEqual([]);
+    expect(f.installBuild).not.toHaveBeenCalled();
+    expect(f.networkPlay).toEqual([]);
+    expect(f.reload).not.toHaveBeenCalled();
+    f.launch.dispose();
+  });
+
+  it.each(["sealed", "HTTP 404"])(
+    "follows a changed deployment from a %s candidate",
+    async (source) => {
+      const successor = {
+        ...V3,
+        pointer: { ...V3.pointer, groupedFirstInstall: true as const, groups: [unchanged] },
+      };
+      const f = fixture({
+        groupStore: {
+          complete: async (version) => version === successor.pointer.version || source === "sealed",
+          put: vi.fn(),
+          read: async () => ({ files: coldFiles("alpha3"), kind: "ready" }),
+          reuse: async () => false,
+          seal: vi.fn(),
+        },
+      });
+      f.deploy(cold);
+      f.deploy(successor);
+      let first = true;
+      f.routes.set(BUILD_POINTER_URL, () => {
+        const pointer = first ? cold.pointer : successor.pointer;
+        first = false;
+        return Response.json(pointer);
+      });
+      const removedPart = buildArchivePartUrl(unchanged, 0);
+      f.routes.set(removedPart, () => new Response("removed", { status: 404 }));
+      f.container.claim((message, [port]) => {
+        port?.postMessage(message);
+        port?.close();
+      });
+      await expect(f.launch.run()).resolves.toBe("reloading");
+      expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([
+        BUILD_POINTER_URL,
+        cold.pointer.manifest,
+        ...(source === "HTTP 404" ? [removedPart] : []),
+        BUILD_POINTER_URL,
+        BUILD_POINTER_URL,
+        successor.pointer.manifest,
+        BUILD_POINTER_URL,
+      ]);
+      expect(f.store.calls).toEqual([`setActive ${successor.pointer.version}`]);
+      expect(f.installBuild).not.toHaveBeenCalled();
+      expect(f.reload).toHaveBeenCalledOnce();
+      f.launch.dispose();
+    },
+  );
+
+  it("reports the original archive HTTP failure when the pointer still names the same deployment", async () => {
+    const f = fixture({
+      groupStore: {
+        complete: async () => false,
+        put: vi.fn(),
+        read: async () => ({ kind: "unknown" }),
+        reuse: async () => false,
+        seal: vi.fn(),
+      },
+    });
+    f.deploy(cold);
+    const missing = buildArchivePartUrl(unchanged, 0);
+    f.routes.set(missing, () => new Response("missing", { status: 404 }));
+    f.container.claim((message, [port]) => {
+      port?.postMessage(message);
+      port?.close();
+    });
+    void f.launch.run();
+    await vi.waitFor(() => expect(f.failures).toHaveLength(1));
+    expect(f.failures[0]?.reason).toBe("network");
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([
+      BUILD_POINTER_URL,
+      cold.pointer.manifest,
+      missing,
+      BUILD_POINTER_URL,
+    ]);
+    expect(f.store.calls).toEqual([]);
+    expect(f.networkPlay).toEqual([]);
+    f.launch.dispose();
+  });
+
+  it.each(["registration", "quota"])(
+    "keeps an archive-first deployment fenced after %s failure",
+    async (refusal) => {
+      const f = fixture({
+        groupStore: {
+          complete: () => Promise.reject(Object.assign(new Error("full"), { reason: "quota" })),
+          put: vi.fn(),
+          read: async () => ({ kind: "unknown" }),
+          reuse: vi.fn(),
+          seal: vi.fn(),
+        },
+      });
+      f.deploy(cold);
+      if (refusal === "registration") {
+        f.container.register.mockRejectedValue(new Error("denied"));
+      } else {
+        f.container.claim((message, [port]) => {
+          port?.postMessage(message);
+          port?.close();
+        });
+      }
+      void f.launch.run();
+      await vi.waitFor(() => expect(f.failures).toHaveLength(1));
+      expect(f.failures[0]?.reason).toBe("verification");
+      expect(f.fetch.mock.calls.map(([url]) => url)).toEqual(
+        refusal === "registration"
+          ? [BUILD_POINTER_URL]
+          : [BUILD_POINTER_URL, cold.pointer.manifest],
+      );
+      expect(f.networkPlay).toEqual([]);
+      expect(f.installBuild).not.toHaveBeenCalled();
+      expect(f.store.calls).toEqual([]);
+      f.launch.dispose();
+    },
+  );
 
   it("downloads just the missing group and seals the version before offering", async () => {
     let sealed = false;
