@@ -4,6 +4,7 @@
 // any other, so a pointer, manifest or record that a later kit version wrote stays readable.
 // buildManifest's validators are the strict build-time checks.
 import {
+  type BuildArchiveReference,
   type BuildFile,
   type BuildManifest,
   buildManifestUrl,
@@ -68,7 +69,27 @@ export function parseBuildPointer(value: unknown): BuildPointer {
   ) {
     throw new TypeError("Invalid build pointer");
   }
+  if (pointer.archive !== undefined) {
+    parseBuildArchiveReference(pointer.archive);
+  }
   return pointer as BuildPointer;
+}
+
+function parseBuildArchiveReference(value: unknown): BuildArchiveReference {
+  const archive = value as Partial<BuildArchiveReference> | null;
+  if (
+    typeof archive !== "object" ||
+    archive === null ||
+    archive.schema !== 1 ||
+    typeof archive.byteSize !== "number" ||
+    !Number.isSafeInteger(archive.byteSize) ||
+    archive.byteSize < 1 ||
+    typeof archive.sha256 !== "string" ||
+    !SHA256_HEX.test(archive.sha256)
+  ) {
+    throw new TypeError("Invalid build archive reference");
+  }
+  return archive as BuildArchiveReference;
 }
 
 // Packs supply bodies without individual HTTP headers. Limit them to known media types.

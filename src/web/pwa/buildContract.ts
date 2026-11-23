@@ -11,12 +11,34 @@ export function buildManifestUrl(version: string): string {
   return `/.game-kit/manifest-${encodeURIComponent(version)}.json`;
 }
 
+// Transport parts are byte ranges of one archive. The checksum covers their concatenation.
+// Keep emitted static assets below the 25 MiB deployment limit.
+export const BUILD_ARCHIVE_PART_BYTES = 24 * 1024 * 1024;
+
+export interface BuildArchiveReference {
+  readonly schema: 1;
+  readonly byteSize: number;
+  readonly sha256: string;
+}
+
+export function buildArchivePartUrl(archive: BuildArchiveReference, index: number): string {
+  if (
+    !Number.isSafeInteger(index) ||
+    index < 0 ||
+    index >= Math.ceil(archive.byteSize / BUILD_ARCHIVE_PART_BYTES)
+  ) {
+    throw new RangeError("Invalid build archive part index");
+  }
+  return `/.game-kit/archive-${archive.sha256}-${index}.bin`;
+}
+
 export interface BuildPointer {
   readonly schema: 1;
   readonly version: string;
   readonly buildId: string;
   // buildManifestUrl(version).
   readonly manifest: string;
+  readonly archive?: BuildArchiveReference;
 }
 
 // One file of a build, under the logical URL pages request. sha256 is the full lowercase hex

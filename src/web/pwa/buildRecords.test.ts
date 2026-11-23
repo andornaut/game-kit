@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { type BuildManifest, buildManifestUrl } from "./buildContract.ts";
+import {
+  BUILD_ARCHIVE_PART_BYTES,
+  buildArchivePartUrl,
+  type BuildManifest,
+  buildManifestUrl,
+} from "./buildContract.ts";
 import {
   installedManifest,
   parseBuildManifest,
@@ -47,6 +52,48 @@ describe("parseBuildPointer", () => {
       { ...pointer, buildId: 1 },
     ]) {
       expect(() => parseBuildPointer(invalid)).toThrow(TypeError);
+    }
+  });
+
+  it("derives a large archive's part URLs from one verified identity", () => {
+    const archive = {
+      byteSize: BUILD_ARCHIVE_PART_BYTES + 1,
+      schema: 1,
+      sha256: sha("a"),
+    } as const;
+    const pointer = parseBuildPointer({
+      archive,
+      buildId: "id",
+      manifest: buildManifestUrl("v1"),
+      schema: 1,
+      version: "v1",
+    });
+    expect(pointer.archive).toEqual(archive);
+    expect([0, 1].map((index) => buildArchivePartUrl(archive, index))).toEqual([
+      `/.game-kit/archive-${sha("a")}-0.bin`,
+      `/.game-kit/archive-${sha("a")}-1.bin`,
+    ]);
+    expect(() => buildArchivePartUrl(archive, 2)).toThrow(RangeError);
+  });
+
+  it("rejects an archive reference that cannot verify a complete build", () => {
+    const archive = { byteSize: 100, schema: 1, sha256: sha("a") };
+    for (const invalid of [
+      null,
+      { ...archive, byteSize: 0 },
+      { ...archive, byteSize: Number.MAX_SAFE_INTEGER + 1 },
+      { ...archive, schema: 2 },
+      { ...archive, sha256: sha("A") },
+    ]) {
+      expect(() =>
+        parseBuildPointer({
+          archive: invalid,
+          buildId: "id",
+          manifest: buildManifestUrl("v1"),
+          schema: 1,
+          version: "v1",
+        }),
+      ).toThrow(TypeError);
     }
   });
 });

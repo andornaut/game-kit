@@ -14,6 +14,7 @@
     "src/web/progress/dom/retryFocus.ts",
     "src/web/pwa/dom/audioUnlock.ts",
     "src/web/pwa/dom/backNavigation.ts",
+    "src/web/pwa/dom/buildArchiveDownload.ts",
     "src/web/pwa/dom/buildInstaller.ts",
     "src/web/pwa/dom/buildStore.ts",
     "src/web/pwa/dom/exitApp.ts",
