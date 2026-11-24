@@ -421,9 +421,9 @@ export async function runWholeBuildAcceptance(mode: "grouped" | "whole-build"): 
       );
       if (mode === "grouped") {
         await verifyStoredTransport(page, baseline);
-        const partRequests = server.log.slice(firstInstallStart).filter(({ path }) =>
-          path.startsWith("/.game-kit/archive-"),
-        );
+        const partRequests = server.log
+          .slice(firstInstallStart)
+          .filter(({ path }) => path.startsWith("/.game-kit/archive-"));
         assert.deepEqual(
           partRequests.map(({ path }) => path),
           baseline.pointer.groups!.map((group) => buildArchivePartUrl(group, 0)),
