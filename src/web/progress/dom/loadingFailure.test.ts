@@ -6,6 +6,7 @@ import { bindHoldActions } from "../../input/dom/holdActions.ts";
 import {
   type LoadingFailureContext,
   type LoadingFailureLayout,
+  type LoadingFailureNoticeContext,
   type LoadingFailurePresentation,
   mountLoadingFailure,
 } from "./loadingFailure.ts";
@@ -53,6 +54,92 @@ function presentationFixture(unit = 1): LoadingFailurePresentation {
 }
 
 describe("mountLoadingFailure", () => {
+  it("shows readable notice text through the same lifecycle without mounting any action", () => {
+    const parent = document.createElement("div");
+    const opener = document.createElement("button");
+    document.body.append(parent, opener);
+    opener.focus();
+    parent.style.font = "0px MissingGameFont";
+    parent.style.color = "transparent";
+    const bar = document.createElement("div");
+    bar.setAttribute("role", "progressbar");
+    parent.append(bar);
+    const bind = vi.fn();
+    const documentEvents = vi.spyOn(document, "addEventListener");
+    const windowEvents = vi.spyOn(window, "addEventListener");
+    const text = "This browser cannot load the game. <Use another browser.>";
+    // An untyped caller's stray binder must not turn a notice into an interactive view.
+    const context = { bindHoldAction: bind, body: text } as unknown as LoadingFailureNoticeContext;
+    const view = mountLoadingFailure(context, parent);
+    try {
+      expect(view.element.hidden).toBe(true);
+      view.update({ attempt: 2, error: new Error("private details"), kind: "failed" });
+      expect(view.element.hidden).toBe(false);
+      expect(view.element.getAttribute("role")).toBe("alert");
+      expect(view.element.getAttribute("aria-atomic")).toBe("true");
+      expect(view.element.querySelector("h2")?.textContent).toBe("Loading failed");
+      expect(view.element.querySelector("p")?.textContent).toBe(text);
+      expect(view.element.querySelector("p")?.children).toHaveLength(0);
+      expect(view.element.querySelector("button, [tabindex], link, style, img")).toBeNull();
+      for (const node of [view.element, ...view.element.querySelectorAll<HTMLElement>("h2, p")]) {
+        expect(node.style.getPropertyValue("font")).toBe("medium sans-serif");
+        expect(node.style.getPropertyPriority("font")).toBe("important");
+        expect(node.style.getPropertyValue("all")).toBe("revert");
+        expect(node.style.getPropertyPriority("all")).toBe("important");
+      }
+      expect(parent.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
+      expect(document.activeElement).toBe(opener);
+      const activationEvents = new Set(["keydown", "keypress", "keyup", "focusin"]);
+      expect(documentEvents.mock.calls.filter(([type]) => activationEvents.has(type))).toEqual([]);
+      expect(windowEvents.mock.calls.map(([type]) => type)).not.toContain("blur");
+      expect(bind).not.toHaveBeenCalled();
+      view.update({ attempt: 1, kind: "idle" });
+      expect(view.element.hidden).toBe(false);
+      view.update({ attempt: 3, kind: "idle" });
+      expect(view.element.hidden).toBe(true);
+      view.dispose();
+      view.update({ attempt: 4, error: new Error("late"), kind: "failed" });
+      expect(view.element.hidden).toBe(true);
+      expect(parent.children).toHaveLength(1);
+    } finally {
+      view.dispose();
+      documentEvents.mockRestore();
+      windowEvents.mockRestore();
+      parent.remove();
+      opener.remove();
+    }
+  });
+
+  it("honours simple and replaceable notice layouts without leaving action spacing", () => {
+    const parent = document.createElement("div");
+    const layout = { actionAlign: "end", gapPx: 9, minActionSizePx: 60, paddingPx: 11 } as const;
+    const simple = mountLoadingFailure({ body: "Unsupported", layout }, parent);
+    const presentation = presentationFixture();
+    const styled = mountLoadingFailure({ body: "Unsupported", presentation }, parent);
+    for (const view of [simple, styled]) {
+      view.update({ attempt: 1, error: undefined, kind: "failed" });
+      expect(view.element.style.display).toBe("flex");
+      expect(view.element.children).toHaveLength(2);
+    }
+    expect(simple.element.style.gap).toBe("9px");
+    expect(simple.element.style.padding).toBe("11px");
+    const body = styled.element.querySelector("p")!;
+    expect(body.style.marginBottom).toBe("0px");
+    styled.setPresentation({
+      ...presentation,
+      panel: { ...presentation.panel, maxWidthPx: 300, titleBodyGapPx: 7 },
+    });
+    expect(styled.element.querySelector("p")).toBe(body);
+    expect(body.style.marginTop).toBe("7px");
+    expect(body.style.marginBottom).toBe("0px");
+    expect(styled.element.style.maxWidth).toBe("300px");
+    styled.dispose();
+    styled.setPresentation(presentation);
+    expect(styled.element.style.maxWidth).toBe("300px");
+    simple.dispose();
+    expect(parent.children).toHaveLength(0);
+  });
+
   it("switches between intrinsic and numeric widths on the same hardened Retry", () => {
     const parent = document.createElement("div");
     const numeric = presentationFixture();

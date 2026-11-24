@@ -72,6 +72,16 @@ export interface LoadingFailureContext<Width extends number | "content" = number
 
 type Context = LoadingFailureContext<number | "content">;
 
+export interface LoadingFailureNoticeContext<Width extends number | "content" = number> {
+  readonly bindHoldAction?: never;
+  readonly body: string;
+  readonly layout?: LoadingFailureLayout;
+  readonly onRetry?: never;
+  readonly presentation?: LoadingFailurePresentation<Width>;
+}
+
+type NoticeContext = LoadingFailureNoticeContext<number | "content">;
+
 export interface LoadingFailureView {
   readonly element: HTMLDivElement;
   dispose(): void;
@@ -260,7 +270,15 @@ export function mountLoadingFailure(
 ): LoadingFailurePresentationView;
 export function mountLoadingFailure(context: Context, parent: HTMLElement): LoadingFailureView;
 export function mountLoadingFailure(
-  context: Context,
+  context: NoticeContext & { readonly presentation: Presentation },
+  parent: HTMLElement,
+): LoadingFailurePresentationView;
+export function mountLoadingFailure(
+  context: NoticeContext,
+  parent: HTMLElement,
+): LoadingFailureView;
+export function mountLoadingFailure(
+  context: Context | NoticeContext,
   parent: HTMLElement,
 ): LoadingFailureView | LoadingFailurePresentationView {
   if (context.layout !== undefined && context.presentation !== undefined) {
@@ -276,10 +294,14 @@ export function mountLoadingFailure(
   const title = document.createElement("h2");
   title.textContent = LOADING_FAILURE_TEXT.title;
   const body = document.createElement("p");
-  body.textContent = LOADING_FAILURE_TEXT.body;
-  const retry = createNativeButton(document, LOADING_FAILURE_TEXT.retry);
-  element.append(title, body, retry);
-  for (const node of [element, title, body, retry]) {
+  body.textContent = context.onRetry === undefined ? context.body : LOADING_FAILURE_TEXT.body;
+  const retry =
+    context.onRetry === undefined
+      ? undefined
+      : createNativeButton(document, LOADING_FAILURE_TEXT.retry);
+  const contents = retry === undefined ? [title, body] : [title, body, retry];
+  element.append(...contents);
+  for (const node of [element, ...contents]) {
     fallback(node);
   }
   if (layout !== undefined) {
@@ -291,7 +313,7 @@ export function mountLoadingFailure(
     })) {
       element.style.setProperty(name, value, "important");
     }
-    for (const node of [title, body, retry]) {
+    for (const node of contents) {
       node.style.setProperty("margin", "0", "important");
     }
     for (const [name, value] of Object.entries({
@@ -305,7 +327,7 @@ export function mountLoadingFailure(
       "min-width": `${layout.minActionSizePx}px`,
       "text-align": "center",
     })) {
-      retry.style.setProperty(name, value, "important");
+      retry?.style.setProperty(name, value, "important");
     }
   }
   const applyPresentation = (next: Presentation) => {
@@ -348,7 +370,7 @@ export function mountLoadingFailure(
       },
       element,
     );
-    for (const node of [title, body, retry]) {
+    for (const node of contents) {
       styles({ "box-sizing": "border-box", flex: "none", margin: "0" }, node);
     }
     for (const node of [title, body]) {
@@ -358,11 +380,14 @@ export function mountLoadingFailure(
     font(text.body, palette.text, body);
     styles(
       {
-        margin: `${panel.titleBodyGapPx}px 0 ${panel.bodyActionGapPx}px`,
+        margin: `${panel.titleBodyGapPx}px 0 ${retry === undefined ? 0 : panel.bodyActionGapPx}px`,
         "text-wrap": "balance",
       },
       body,
     );
+    if (retry === undefined) {
+      return;
+    }
     font(text.action, palette.actionText, retry);
     if (text.action.synthesis === undefined) {
       retry.style.removeProperty("font-synthesis");
@@ -415,86 +440,101 @@ export function mountLoadingFailure(
           : "flex",
       "important",
     );
-    retry.disabled = state.kind !== "failed" || busy;
-  };
-  const onClick = () => {
-    if (disposed || state.kind !== "failed" || busy) {
-      return;
-    }
-    busy = true;
-    const token = ++generation;
-    render();
-    const finish = () => {
-      if (!disposed && generation === token) {
-        busy = false;
-        render();
-      }
-    };
-    try {
-      // Failed retry callbacks retain the same friendly error; never render the raw rejection.
-      void Promise.resolve(context.onRetry()).then(finish, finish);
-    } catch {
-      finish();
+    if (retry !== undefined) {
+      retry.disabled = state.kind !== "failed" || busy;
     }
   };
-  const heldKeys = new Set<string>();
-  const keyTypes = ["keydown", "keypress", "keyup"] as const;
-  const neutralTarget = (target: EventTarget | null) =>
-    target === document || target === document.body || target === document.documentElement;
-  // Keep native activation defaults. Ancestor capture listeners still observe these keys.
-  // Disabling Retry can move focus to the body before the same press repeats or releases.
-  const onKey = (event: KeyboardEvent) => {
-    const key = event.key === "Spacebar" ? " " : event.key;
-    if (key !== "Enter" && key !== " ") {
-      return;
-    }
-    if (!event.composedPath().includes(retry)) {
-      if (
-        !heldKeys.has(key) ||
-        !neutralTarget(event.target) ||
-        (document.activeElement !== retry && !neutralTarget(document.activeElement)) ||
-        (event.type === "keydown" && !event.repeat)
-      ) {
-        heldKeys.delete(key);
+  const bindRetryEvents = (retry: HTMLButtonElement, onRetry: Context["onRetry"]) => {
+    const onClick = () => {
+      if (disposed || state.kind !== "failed" || busy) {
         return;
       }
+      busy = true;
+      const token = ++generation;
+      render();
+      const finish = () => {
+        if (!disposed && generation === token) {
+          busy = false;
+          render();
+        }
+      };
+      try {
+        // Failed retry callbacks retain the same friendly error; never render the raw rejection.
+        void Promise.resolve(onRetry()).then(finish, finish);
+      } catch {
+        finish();
+      }
+    };
+    const heldKeys = new Set<string>();
+    const keyTypes = ["keydown", "keypress", "keyup"] as const;
+    const neutralTarget = (target: EventTarget | null) =>
+      target === document || target === document.body || target === document.documentElement;
+    // Keep native activation defaults. Ancestor capture listeners still observe these keys.
+    // Disabling Retry can move focus to the body before the same press repeats or releases.
+    const onKey = (event: KeyboardEvent) => {
+      const key = event.key === "Spacebar" ? " " : event.key;
+      if (key !== "Enter" && key !== " ") {
+        return;
+      }
+      if (!event.composedPath().includes(retry)) {
+        if (
+          !heldKeys.has(key) ||
+          !neutralTarget(event.target) ||
+          (document.activeElement !== retry && !neutralTarget(document.activeElement)) ||
+          (event.type === "keydown" && !event.repeat)
+        ) {
+          heldKeys.delete(key);
+          return;
+        }
+      }
+      if (event.type === "keydown") {
+        heldKeys.add(key);
+      } else if (event.type === "keyup") {
+        heldKeys.delete(key);
+      }
+      event.stopPropagation();
+    };
+    const clearKeys = () => heldKeys.clear();
+    const onFocus = (event: FocusEvent) => {
+      if (event.target !== retry && !neutralTarget(event.target)) {
+        clearKeys();
+      }
+    };
+    for (const type of keyTypes) {
+      retry.addEventListener(type, onKey);
+      document.addEventListener(type, onKey);
     }
-    if (event.type === "keydown") {
-      heldKeys.add(key);
-    } else if (event.type === "keyup") {
-      heldKeys.delete(key);
-    }
-    event.stopPropagation();
+    document.addEventListener("focusin", onFocus);
+    document.defaultView?.addEventListener("blur", clearKeys);
+    retry.addEventListener("click", onClick);
+    return {
+      dispose() {
+        clearKeys();
+        for (const type of keyTypes) {
+          retry.removeEventListener(type, onKey);
+          document.removeEventListener(type, onKey);
+        }
+        document.removeEventListener("focusin", onFocus);
+        document.defaultView?.removeEventListener("blur", clearKeys);
+        retry.removeEventListener("click", onClick);
+      },
+      onClick,
+    };
   };
-  const clearKeys = () => heldKeys.clear();
-  const onFocus = (event: FocusEvent) => {
-    if (event.target !== retry && !neutralTarget(event.target)) {
-      clearKeys();
-    }
-  };
-  for (const type of keyTypes) {
-    retry.addEventListener(type, onKey);
-    document.addEventListener(type, onKey);
-  }
-  document.addEventListener("focusin", onFocus);
-  document.defaultView?.addEventListener("blur", clearKeys);
-  retry.addEventListener("click", onClick);
+  const events =
+    retry !== undefined && context.onRetry !== undefined
+      ? bindRetryEvents(retry, context.onRetry)
+      : undefined;
   render();
   parent.append(element);
-  const focus = paintRetryFocus(retry, presentation !== undefined);
+  const focus =
+    retry === undefined ? undefined : paintRetryFocus(retry, presentation !== undefined);
   const view: LoadingFailureView = {
     dispose() {
       disposed = true;
       generation += 1;
-      clearKeys();
-      for (const type of keyTypes) {
-        retry.removeEventListener(type, onKey);
-        document.removeEventListener(type, onKey);
-      }
-      document.removeEventListener("focusin", onFocus);
-      document.defaultView?.removeEventListener("blur", clearKeys);
-      retry.removeEventListener("click", onClick);
-      focus.dispose();
+      events?.dispose();
+      focus?.dispose();
       element.remove();
       const stop = stopHold;
       stopHold = undefined;
@@ -510,11 +550,13 @@ export function mountLoadingFailure(
     },
   };
   try {
-    stopHold = context.bindHoldAction?.({
-      activate: onClick,
-      available: () => !disposed && state.kind === "failed" && !busy,
-      element: retry,
-    });
+    if (retry !== undefined && events !== undefined) {
+      stopHold = context.bindHoldAction?.({
+        activate: events.onClick,
+        available: () => !disposed && state.kind === "failed" && !busy,
+        element: retry,
+      });
+    }
   } catch (error) {
     view.dispose();
     throw error;
@@ -531,9 +573,9 @@ export function mountLoadingFailure(
           if (snapshot === undefined) {
             throw new RangeError("A configured presentation requires a complete replacement");
           }
-          focus.clear();
+          focus?.clear();
           applyPresentation(snapshot);
-          focus.refresh();
+          focus?.refresh();
         },
       };
 }
