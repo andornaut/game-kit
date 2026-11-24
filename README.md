@@ -130,6 +130,15 @@ still has one activation, and interrupted staging preserves the active build.
 First install can use the current build’s ordinary files or install packs.
 Grouped staging requires a controller that supports group archives.
 
+At production startup, call `prepareBrowserLaunch({ parent, onUnsupported }, policy)`
+from `runtime/web/pwa/dom/launch` before creating the installer or game. With a
+`supported` result, pass its context to `createLaunch`. With an `unsupported`
+result, the shared error is already visible and game startup stops. The callback
+stops the caller's existing loading progress before the error is shown. The
+returned `failure` view owns its teardown. Supply `failure.presentation` or
+`failure.layout` to fit the existing game frame. The capability error has no
+Retry action. Recoverable failures still use the installer's Retry.
+
 Set `groupedFirstInstall: { archiveOnly }` with `updateGroup` to use the same
 prebuilt group archives for first install and updates. The game supplies an
 `archiveOnly(url)` predicate for emitted members that only need to be served

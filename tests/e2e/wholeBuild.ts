@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { chromium, type Page, type Response } from "playwright-core";
+import { type Browser, chromium, type Page, type Response } from "playwright-core";
 
 import {
   ACTIVE_RECORD_PATH,
@@ -317,6 +317,34 @@ async function offlineFiles(
   console.log(`PASS ${deployment.variant} serves exact HTML, JS, JSON and Ogg bytes offline`);
 }
 
+async function unsupportedLaunch(
+  browser: Browser,
+  server: FixtureServer,
+  missing: "caches" | "serviceWorker",
+): Promise<void> {
+  const context = await browser.newContext();
+  try {
+    await context.addInitScript((api) => {
+      Object.defineProperty(api === "caches" ? window : navigator, api, { value: undefined });
+    }, missing);
+    const logStart = server.log.length;
+    const page = await context.newPage();
+    await page.goto(`${server.origin}/play/`);
+    const error = page.getByRole("alert");
+    await error.waitFor({ state: "visible" });
+    assert.match(await error.innerText(), /Loading failed.*needed to load the game/s);
+    assert.equal(await error.getByRole("button").count(), 0);
+    const state = await page.evaluate(() => window.e2e);
+    assert.equal(state.phase, "unsupported");
+    assert.equal(state.progressStopped, true);
+    assert.equal(state.bootFiles, 0);
+    const launchRequests = new Set([BUILD_POINTER_URL, ROUTER_PATH, "/data/index.json"]);
+    assert(!server.log.slice(logStart).some(({ path }) => launchRequests.has(path)));
+  } finally {
+    await context.close();
+  }
+}
+
 export async function runWholeBuildAcceptance(mode: "grouped" | "whole-build"): Promise<number> {
   const outRoot = join(process.env.TMPDIR ?? "/scratch", `e2e-${mode}`);
   mkdirSync(outRoot, { recursive: true });
@@ -374,6 +402,12 @@ export async function runWholeBuildAcceptance(mode: "grouped" | "whole-build"): 
       };
       const url = `${server.origin}/play/`;
       server.deploy(baseline.directory);
+      if (mode === "grouped") {
+        await unsupportedLaunch(browser, server, "caches");
+        await unsupportedLaunch(browser, server, "serviceWorker");
+        console.log("PASS missing browser capabilities show an actionless error before install");
+      }
+      const firstInstallStart = server.log.length;
       await page.goto(url);
       await playing(page, baseline);
       assert.deepEqual(await records(page), {
@@ -387,7 +421,7 @@ export async function runWholeBuildAcceptance(mode: "grouped" | "whole-build"): 
       );
       if (mode === "grouped") {
         await verifyStoredTransport(page, baseline);
-        const partRequests = server.log.filter(({ path }) =>
+        const partRequests = server.log.slice(firstInstallStart).filter(({ path }) =>
           path.startsWith("/.game-kit/archive-"),
         );
         assert.deepEqual(

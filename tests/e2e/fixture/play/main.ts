@@ -2,7 +2,7 @@
 // a tick counter that stands for play, and a game-drawn Update now prompt that pauses it. The
 // runner reads and drives window.e2e.
 import type { UpdateOffer } from "../../../../src/web/pwa/buildContract.ts";
-import { browserLaunchContext, createLaunch } from "../../../../src/web/pwa/dom/launch.ts";
+import { createLaunch, prepareBrowserLaunch } from "../../../../src/web/pwa/dom/launch.ts";
 import { POLICY, SAVE_MS } from "../policy.ts";
 
 declare const __VARIANT__: string;
@@ -20,6 +20,7 @@ export interface E2eState {
   gameVariant?: string;
   bootFiles: number;
   progress?: { phase: string; value: number; receivedBytes: number; totalBytes: number };
+  progressStopped?: true;
   failures: string[];
   // Each onNetworkPlay reason.
   networkPlay: string[];
@@ -49,7 +50,6 @@ function readSave(): E2eState["lastSave"] {
   }
 }
 
-const lastSave = readSave();
 const state: E2eState = {
   bootFiles: 0,
   errors: [],
@@ -62,7 +62,6 @@ const state: E2eState = {
   updateReady: [],
   updateStates: [],
   variant: __VARIANT__,
-  ...(lastSave === undefined ? {} : { lastSave }),
 };
 window.e2e = state;
 
@@ -97,11 +96,23 @@ document.getElementById("later")?.addEventListener("click", () => {
   state.paused = false;
 });
 
-const context = browserLaunchContext(POLICY);
-if (context === undefined) {
+const preparation = prepareBrowserLaunch(
+  {
+    onUnsupported: () => {
+      state.progressStopped = true;
+    },
+    parent: document.body,
+  },
+  POLICY,
+);
+if (preparation.kind === "unsupported") {
   state.phase = "unsupported";
 } else {
-  const launch = createLaunch(context, {
+  const lastSave = readSave();
+  if (lastSave !== undefined) {
+    state.lastSave = lastSave;
+  }
+  const launch = createLaunch(preparation.context, {
     onFailure: (failure) => {
       state.failures.push(failure.reason);
     },
