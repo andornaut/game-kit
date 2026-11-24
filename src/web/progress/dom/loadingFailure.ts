@@ -522,9 +522,7 @@ export function mountLoadingFailure(
     };
   };
   const events =
-    retry !== undefined && context.onRetry !== undefined
-      ? bindRetryEvents(retry, context.onRetry)
-      : undefined;
+    retry === undefined ? undefined : bindRetryEvents(retry, () => context.onRetry?.());
   render();
   parent.append(element);
   const focus =
