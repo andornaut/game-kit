@@ -238,6 +238,7 @@ export async function registerRouter(
 
 // The browser's page, store and installer for policy, or undefined where the browser has no
 // service workers or Cache Storage; the game then plays from the network.
+/** @deprecated Use prepareBrowserLaunch for production startup. */
 export function browserLaunchContext(policy: BuildPolicy): LaunchContext | undefined {
   if (!("serviceWorker" in navigator) || typeof caches === "undefined") {
     return undefined;
@@ -322,7 +323,11 @@ export function prepareBrowserLaunch(
   if (container !== undefined && cacheStorage !== undefined) {
     return { context: contextForBrowser(container, cacheStorage, policy), kind: "supported" };
   }
-  onUnsupported();
+  try {
+    onUnsupported();
+  } catch (error) {
+    console.error("Unsupported launch callback failed.", error);
+  }
   const view = mountLoadingFailure(
     { ...failure, body: "This browser does not support the features needed to load the game." },
     parent,
