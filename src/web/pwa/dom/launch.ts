@@ -3,6 +3,13 @@
 // (docs/install-and-update.md). The page drives every download; the router only serves the
 // recorded active build or a window's pin.
 import {
+  type LoadingFailureLayout,
+  type LoadingFailurePresentation,
+  type LoadingFailurePresentationView,
+  type LoadingFailureView,
+  mountLoadingFailure,
+} from "../../progress/dom/loadingFailure.ts";
+import {
   BUILD_POINTER_URL,
   type BuildArchiveReference,
   type BuildManifest,
@@ -235,6 +242,14 @@ export function browserLaunchContext(policy: BuildPolicy): LaunchContext | undef
   if (!("serviceWorker" in navigator) || typeof caches === "undefined") {
     return undefined;
   }
+  return contextForBrowser(navigator.serviceWorker, caches, policy);
+}
+
+function contextForBrowser(
+  container: ServiceWorkerContainer,
+  caches: CacheStorage,
+  policy: BuildPolicy,
+): LaunchContext {
   let session: SessionLike | undefined;
   try {
     session = window.sessionStorage;
@@ -242,7 +257,7 @@ export function browserLaunchContext(policy: BuildPolicy): LaunchContext | undef
     session = undefined;
   }
   const page: LaunchPage = {
-    container: navigator.serviceWorker,
+    container,
     eventTarget: window,
     fetch: (input, init) => fetch(input, init),
     location: window.location,
@@ -263,6 +278,57 @@ export function browserLaunchContext(policy: BuildPolicy): LaunchContext | undef
   const archiveStore = createBuildArchiveStore({ caches, origin, policy });
   const groupStore = createBuildGroupStore({ caches, origin, policy });
   return { archiveStore, groupStore, installBuild, page, policy, store };
+}
+
+type BrowserFailurePresentation = LoadingFailurePresentation<number | "content">;
+
+export interface BrowserLaunchPreparation {
+  readonly parent: HTMLElement;
+  readonly onUnsupported: () => void;
+  readonly failure?: {
+    readonly layout?: LoadingFailureLayout;
+    readonly presentation?: BrowserFailurePresentation;
+  };
+}
+
+export type PreparedBrowserLaunch<View extends LoadingFailureView = LoadingFailureView> =
+  | { readonly kind: "supported"; readonly context: LaunchContext }
+  | { readonly kind: "unsupported"; readonly failure: View };
+
+// Resolve capability before starting the installer or game. A missing browser API cannot
+// recover through the installer's Retry. Retain the unsupported view for page teardown.
+export function prepareBrowserLaunch(
+  preparation: BrowserLaunchPreparation & {
+    readonly failure: { readonly presentation: BrowserFailurePresentation };
+  },
+  policy: BuildPolicy,
+): PreparedBrowserLaunch<LoadingFailurePresentationView>;
+export function prepareBrowserLaunch(
+  preparation: BrowserLaunchPreparation,
+  policy: BuildPolicy,
+): PreparedBrowserLaunch;
+export function prepareBrowserLaunch(
+  { failure, onUnsupported, parent }: BrowserLaunchPreparation,
+  policy: BuildPolicy,
+): PreparedBrowserLaunch {
+  let container: ServiceWorkerContainer | undefined;
+  let cacheStorage: CacheStorage | undefined;
+  try {
+    container = globalThis.navigator?.serviceWorker;
+    cacheStorage = globalThis.caches;
+  } catch {
+    // Browsers can expose API accessors that throw in restricted contexts.
+  }
+  if (container !== undefined && cacheStorage !== undefined) {
+    return { context: contextForBrowser(container, cacheStorage, policy), kind: "supported" };
+  }
+  onUnsupported();
+  const view = mountLoadingFailure(
+    { ...failure, body: "This browser does not support the features needed to load the game." },
+    parent,
+  );
+  view.update({ attempt: 0, error: undefined, kind: "failed" });
+  return { failure: view, kind: "unsupported" };
 }
 
 // Call run() once at document boot. With no active build it installs the deployed build in the
