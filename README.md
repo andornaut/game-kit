@@ -524,6 +524,33 @@ hud.arrange({ gap: "small", width: face }, [
 ]);
 ```
 
+## Slider
+
+`runtime/web/ui/dom/slider` `createSlider(document, options)` with `slider.css` (load it after `formRow.css`) makes a slider row for `createFormRows`' list: a form row whose first line takes the list's columns, with the optional state-free `icon`, the `label` and optional `note`, and the value word `getState().value` (player text, such as 50% or Muted) in the value column, placed as the list places a state word (`value.state` and `value.bearing`, so `"end"` puts its ink's right edge on the column's). Under that line the lane spans the row's content, `layout.gap` below it and `layout.inset` in from its sides. The row is `role="slider"` with `aria-valuemin` 0, `aria-valuemax` `steps`, `aria-valuenow` the step and `aria-valuetext` the value word. ArrowLeft and ArrowRight move one step, Home and End to the ends. A mouse or pen press anywhere on the row drags the thumb's centre along the track; a touch drags once it travels `slop` base px sideways, a tap sets the step where it lifts, and a vertical travel is left to the browser's scrolling (`touch-action: pan-y`). `change(step)` sets the value and `commit(step)` follows a key change or an uncancelled drag or tap. With `getState().refused` the row is `aria-disabled`, keeps its focus and value, shows the disabled art and plays `refusal.cue` through `refusalCue` on a press or a step key. `active()` is the caller's guard.
+
+The game's art is at its locked size: `layout.art` gives the thumb's size and the track's height and three-slice caps (one art pixel per unit), and the game sets `--ui-slider-track-image`, `--ui-slider-fill-image` and `--ui-slider-thumb-image`, their `-disabled-image` variants and `--ui-slider-thumb-pressed-image`. The track is the lane's width rounded down to a whole unit and the thumb's offset a whole unit, a half rounding right; the fill runs to the thumb's right edge. `layout.height` sets the row's least height where it differs from the list's. Inside a theme root the row has a clear idle face and takes the pressed and disabled slots and the focus fill slots `controls.css` uses, filling the row only, with system fills in forced colours. `runtime/ui/slider` holds the pure steps and geometry: `sliderStepForKey`, `sliderThumbOffset`, `sliderStepAt`, `sliderLane`, `sliderGeometry` (projected through an `ActionProjection` for a canvas) and `sliderPresentation`.
+
+```ts
+import { createSlider } from "@andornaut/game-kit/runtime/web/ui/dom/slider";
+
+const music = createSlider(document, {
+  change: (step) => setMusicVolume(step / VOLUME_STEPS),
+  commit: () => saveSettings(),
+  getState: () => ({
+    refused: settings.muted,
+    step: volumeSteps(settings.musicVolume),
+    value: settings.muted ? words.muted : words.volume(volumePercent(settings.musicVolume)),
+  }),
+  icon: musicIcon,
+  label: words.music,
+  layout: { art: SLIDER_ART, gap: SLIDER_GAP, height: SLIDER_ROW_HEIGHT, inset: { left: 2 } },
+  refusal: { cue: REFUSAL_CUE, reducedMotion: () => settings.reducedMotion },
+  slop: TAP_MAX_DISTANCE,
+  steps: VOLUME_STEPS,
+});
+rows.element.append(music.element);
+```
+
 ## Caller action order
 
 Layout primitives retain the caller's keyed order and action roles. Callers place the existing primary action last in vertical groups and rightmost in horizontal groups, retaining secondary order and hidden-control identities. The crash screen keeps Reload after its optional developer details and centres the sole Copy action in its own row. Its action callbacks and focus remain unchanged.
@@ -733,6 +760,7 @@ The inventory uses implementation paths relative to `src/`, and tests sit beside
 | `ui/focusKeys`, `ui/hitAreas`, `ui/spacing`                                                                                                             | Pure                     | Focus keys and steps, press areas by nearest control, and the button gaps                                                                 |
 | `ui/modalFrame`                                                                                                                                         | Pure                     | Modal frame geometry: width families, header, title clearance, scroll body, footer and close                                              |
 | `ui/formRow`, `ui/pager`, `ui/hudDisc`                                                                                                                  | Pure                     | Form row layout properties, pager arrangement and state, HUD disc icon placement                                                          |
+| `ui/slider`                                                                                                                                             | Pure                     | Slider steps, key steps, pointer steps and whole-unit track and thumb geometry                                                            |
 | `view/fitCheck`, `view/modalDim`, `view/pagePoint`, `view/renderScale`, `view/settleFit`                                                                | Pure                     | Fit decisions, dimming, coordinate mapping, device render scale and settling                                                              |
 | `web/build/buildLabel`, `web/build/buildVersion`, `web/build/phaserBuild`                                                                               | Pure                     | Build labels, commit selection, reduced Phaser entries and feature flags                                                                  |
 | `web/crash/crashModel`                                                                                                                                  | Pure                     | Crash classification and presentation data                                                                                                |
@@ -752,6 +780,7 @@ The inventory uses implementation paths relative to `src/`, and tests sit beside
 | `web/ui/dom/*` and its `ui.css` and opt-in `controls.css`, `layoutTree.css`, `controlPresentation.css`, `actionGroup.css` and `uiTheme.css` stylesheets | Browser DOM, CSS         | HTML UI: units, layout values, modal layer, focus cues, presses, frames, button skins, action groups, theme, chrome, refusal, decoded art |
 | `web/ui/dom/modalFrame` and its opt-in `modalFrame.css` stylesheet                                                                                      | Browser DOM, CSS         | HTML modal frame on the modal layer: backdrop, dialog card, skin layer, scroll body, footer and close                                     |
 | `web/ui/dom/formRow`, `web/ui/dom/pager`, `web/ui/dom/hudDisc` and their opt-in stylesheets                                                             | Browser DOM, CSS         | HTML switch and form rows, pager and HUD disc on standard buttons and action groups                                                       |
+| `web/ui/dom/slider` and `slider.css`                                                                                                                    | Browser DOM, CSS         | HTML slider form row with the game's track and thumb art                                                                                  |
 | `web/view/dom/watchFrameTurn`                                                                                                                           | Browser DOM              | Marks the frame turn on `<html>` and requests the orientation lock                                                                        |
 | `web/headers/vite/securityHeadersPlugin`                                                                                                                | Vite, Node build time    | Writes `_headers` with per-page inline hashes                                                                                             |
 | `web/build/vite/buildInfo`, `web/build/vite/gameConfig`                                                                                                 | Vite, Node build time    | Build constant declarations and a game's whole Vite and Vitest config                                                                     |

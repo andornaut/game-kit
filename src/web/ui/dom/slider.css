@@ -1,0 +1,172 @@
+/* Opt-in slider rows (slider), with formRow.css. Every rule matches through :where(), with zero
+   specificity, so a game's component class always wins. Lengths are unitless base px at
+   --ui-unit, from the row's layout. A slider row is a form row: its icon, label and value word
+   take the list's columns on its first line, and the lane spans the row's content under them,
+   the gap below. The track is a whole number of units wide and the thumb's offset a whole unit,
+   a half rounding right. The game supplies --ui-slider-track-image and --ui-slider-fill-image
+   (three-slices, one art pixel per unit, with the row's caps) and --ui-slider-thumb-image, and
+   their -disabled-image variants and --ui-slider-thumb-pressed-image. Inside a theme root the row
+   takes the button state slots: a clear idle face, controls.css's focus fill slots and the
+   pressed and disabled slots, filling the row only. */
+
+:where(.ui-slider-row) {
+  align-content: start;
+  row-gap: calc(var(--ui-slider-gap, 0) * var(--ui-unit, 1) * 1px);
+}
+
+:where(.ui-slider-row > .ui-slider-lane) {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  position: relative;
+  display: block;
+  height: calc(var(--ui-slider-lane-height) * var(--ui-unit, 1) * 1px);
+  margin: 0 calc(var(--ui-slider-inset-right, 0) * var(--ui-unit, 1) * 1px) 0
+    calc(var(--ui-slider-inset-left, 0) * var(--ui-unit, 1) * 1px);
+}
+
+/* The track, the lane's width rounded down to a whole unit. */
+:where(.ui-slider-lane > .ui-slider-track) {
+  position: absolute;
+  top: calc(var(--ui-slider-track-top, 0) * var(--ui-unit, 1) * 1px);
+  left: 0;
+  display: block;
+  width: 100%;
+  width: round(down, 100%, var(--ui-unit, 1) * 1px);
+  height: calc(var(--ui-slider-track-height) * var(--ui-unit, 1) * 1px);
+}
+
+:where(.ui-slider-track > .ui-slider-empty, .ui-slider-track > .ui-slider-fill) {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  box-sizing: border-box;
+  height: 100%;
+  border-style: solid;
+  border-color: transparent;
+  border-width: 0 calc(var(--ui-slider-cap-right, 0) * var(--ui-unit, 1) * 1px) 0
+    calc(var(--ui-slider-cap-left, 0) * var(--ui-unit, 1) * 1px);
+  border-image-slice: 0 var(--ui-slider-cap-right, 0) 0 var(--ui-slider-cap-left, 0) fill;
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
+}
+
+:where(.ui-slider-track > .ui-slider-empty) {
+  width: 100%;
+  border-image-source: var(--ui-slider-track-image, none);
+}
+
+/* The fill reaches the thumb's right edge. */
+:where(.ui-slider-track > .ui-slider-fill) {
+  width: calc(
+    (100% - var(--ui-slider-thumb-width) * var(--ui-unit, 1) * 1px) * var(--ui-slider-step) /
+      var(--ui-slider-steps) + var(--ui-slider-thumb-width) * var(--ui-unit, 1) * 1px
+  );
+  width: calc(
+    round(
+        nearest,
+        (100% - var(--ui-slider-thumb-width) * var(--ui-unit, 1) * 1px) * var(--ui-slider-step) /
+          var(--ui-slider-steps),
+        var(--ui-unit, 1) * 1px
+      ) +
+      var(--ui-slider-thumb-width) * var(--ui-unit, 1) * 1px
+  );
+  border-image-source: var(--ui-slider-fill-image, none);
+}
+
+/* The thumb's left edge is the travel's share at the step, on a whole unit. */
+:where(.ui-slider-track > .ui-slider-thumb) {
+  position: absolute;
+  top: calc(var(--ui-slider-thumb-top, 0) * var(--ui-unit, 1) * 1px);
+  left: calc(
+    (100% - var(--ui-slider-thumb-width) * var(--ui-unit, 1) * 1px) * var(--ui-slider-step) /
+      var(--ui-slider-steps)
+  );
+  left: round(
+    nearest,
+    (100% - var(--ui-slider-thumb-width) * var(--ui-unit, 1) * 1px) * var(--ui-slider-step) /
+      var(--ui-slider-steps),
+    var(--ui-unit, 1) * 1px
+  );
+  display: block;
+  width: calc(var(--ui-slider-thumb-width) * var(--ui-unit, 1) * 1px);
+  height: calc(var(--ui-slider-thumb-height) * var(--ui-unit, 1) * 1px);
+  background-image: var(--ui-slider-thumb-image, none);
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  image-rendering: pixelated;
+}
+
+:where(.ui-slider-row[data-ui-pressed] .ui-slider-thumb) {
+  background-image: var(--ui-slider-thumb-pressed-image, var(--ui-slider-thumb-image, none));
+}
+
+:where(.ui-slider-row[aria-disabled="true"] .ui-slider-empty) {
+  border-image-source: var(--ui-slider-track-disabled-image, var(--ui-slider-track-image, none));
+}
+
+:where(.ui-slider-row[aria-disabled="true"] .ui-slider-fill) {
+  border-image-source: var(--ui-slider-fill-disabled-image, var(--ui-slider-fill-image, none));
+}
+
+:where(.ui-slider-row[aria-disabled="true"] .ui-slider-thumb) {
+  background-image: var(--ui-slider-thumb-disabled-image, var(--ui-slider-thumb-image, none));
+}
+
+/* Row fills inside a theme root, the last matching state winning: idle, pressed, refused, then
+   the one focus fill. */
+:where([data-ui-theme] .ui-slider-row) {
+  background-color: var(--ui-colour-button-face);
+  color: var(--ui-colour-button-text);
+}
+
+:where([data-ui-theme] .ui-slider-row[data-ui-pressed]) {
+  background-color: var(--ui-colour-button-pressed-face);
+  color: var(--ui-colour-button-pressed-text, var(--ui-colour-button-text));
+}
+
+:where([data-ui-theme] .ui-slider-row[aria-disabled="true"]) {
+  background-color: var(--ui-colour-button-disabled-face);
+  color: var(--ui-colour-button-disabled-text);
+}
+
+:where([data-ui-theme] .ui-slider-row:focus-visible) {
+  outline: none;
+  background-color: var(--ui-button-focus-fill, Highlight);
+  color: var(--ui-button-focus-text, HighlightText);
+}
+
+/* Inside a theme root system fills show the state, and the art steps aside for a GrayText
+   track, a fill in the row's text colour and a thumb as tall as its art. */
+@media (forced-colors: active) {
+  :where([data-ui-theme] .ui-slider-row) {
+    forced-color-adjust: none;
+    background-color: ButtonFace;
+    color: ButtonText;
+  }
+
+  :where([data-ui-theme] .ui-slider-row[aria-disabled="true"]) {
+    background-color: ButtonFace;
+    color: GrayText;
+  }
+
+  :where([data-ui-theme] .ui-slider-row:is(:focus-visible, [data-ui-pressed])) {
+    background-color: Highlight;
+    color: HighlightText;
+  }
+
+  :where([data-ui-theme] .ui-slider-track > .ui-slider-empty) {
+    border-image-source: none;
+    background-color: GrayText;
+  }
+
+  :where([data-ui-theme] .ui-slider-track > .ui-slider-fill) {
+    border-image-source: none;
+    background-color: currentColor;
+  }
+
+  :where([data-ui-theme] .ui-slider-track > .ui-slider-thumb) {
+    background-image: none;
+    background-color: currentColor;
+  }
+}

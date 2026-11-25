@@ -53,6 +53,7 @@
     "src/web/ui/dom/pager.ts",
     "src/web/ui/dom/refusalCue.ts",
     "src/web/ui/dom/sheetFrames.ts",
+    "src/web/ui/dom/slider.ts",
     "src/web/ui/dom/uiTheme.ts",
     "src/web/ui/dom/vectorChrome.ts",
     "src/web/ui/dom/viewUnits.ts",

@@ -63,6 +63,7 @@
     "src/ui/layoutTree.ts",
     "src/ui/modalFrame.ts",
     "src/ui/pager.ts",
+    "src/ui/slider.ts",
     "src/ui/spacing.ts",
     "src/ui/uiTheme.ts",
     "src/units.ts",

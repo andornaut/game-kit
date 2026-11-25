@@ -59,6 +59,11 @@
   color: inherit;
 }
 
+/* A slider row (slider.css) takes horizontal drags and leaves vertical pans to the browser. */
+:where(.ui-form-row[role="slider"]) {
+  touch-action: pan-y;
+}
+
 :where(.ui-form-row[hidden]) {
   display: none;
 }

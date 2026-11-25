@@ -68,6 +68,22 @@ theme slots.
 - An action group may keep each full press area and route overlaps to the nearest face centre,
   the earlier action on a tie; the DOM draws each area cut where its face stops being nearest.
 
+## Slider
+
+A slider row builds on the form row: pure steps and geometry in `src/ui/slider.ts`, the DOM part
+in `src/web/ui/dom/slider.ts` with `slider.css`, in the form row list's grid.
+
+- The value is a whole step from 0 to the game's step count. Left and right arrows move one step,
+  Home and End to the ends, and a press anywhere on the row drags the thumb's centre along the
+  track; a touch drags only once it travels sideways and leaves vertical travel to scrolling.
+- The first line shares the list's columns: one state-free icon, the label and the value word in
+  the value column, placed as the list places a state word. The lane spans the row under it.
+- The track and thumb are the game's art at their locked sizes, the track a three-slice. The
+  track is a whole number of units and the thumb's offset a whole unit, a half rounding right; a
+  canvas takes the same geometry through the projection hook.
+- Focus and press fill the row only, focus with the one focus fill, with system fills in forced
+  colours. A refused slider keeps its focus and value and plays the shared refusal cue.
+
 ## Work items
 
 | ID      | Title                                                                   | Link                             |
