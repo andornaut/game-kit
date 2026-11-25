@@ -6,6 +6,26 @@ cues, and the crash screen uses the game's words and colours.
 
 Reference: [High-density game UI](../../README.md#high-density-game-ui), [Dialog-subtree isolation](../../README.md#dialog-subtree-isolation).
 
+## Layout base
+
+Components keep pure geometry and state in `src/ui/<component>.ts` and their DOM part in
+`src/web/ui/dom/<component>.ts` with an opt-in `<component>.css`. `controls.css` holds button
+geometry only.
+
+- Action groups own spacing. Layout boxes equal the drawn faces; the group applies the gap tokens
+  or a named override, and each press area is an outset clamped to half the space toward a
+  neighbour, so no consumer adds per-button padding or negative margins.
+- Fitting decides row or stack from face sizes the game supplies, at full font size. The primary
+  is last; a sole visible action is centred; a footer pins secondary left and primary right
+  around an optional middle slot.
+- Geometry is whole game units with a game projection of edges. An odd unit always falls right or
+  below.
+- Colours are role-named slots under a theme root, with system colours in forced-colours mode.
+  Focus, press and selection are fills; `controls.css` owns the one focus fill. Disabled is
+  distinct and never dips. Theme rules have zero specificity.
+- `.ui-control-row` and `.ui-control-copy` remain for one control beside its copy in flow, with no
+  press outsets.
+
 ## Work items
 
 | ID      | Title                                                     | Link                             |

@@ -35,6 +35,7 @@
     "src/web/pwa/dom/wakeLock.ts",
     "src/web/save/dom/localSaveStorage.ts",
     "src/web/save/dom/pageSessionStore.ts",
+    "src/web/ui/dom/actionGroup.ts",
     "src/web/ui/dom/button.ts",
     "src/web/ui/dom/buttonLayout.ts",
     "src/web/ui/dom/buttonSkin.ts",
@@ -48,6 +49,7 @@
     "src/web/ui/dom/nativeButton.ts",
     "src/web/ui/dom/refusalCue.ts",
     "src/web/ui/dom/sheetFrames.ts",
+    "src/web/ui/dom/uiTheme.ts",
     "src/web/ui/dom/vectorChrome.ts",
     "src/web/ui/dom/viewUnits.ts",
     "src/web/view/dom/watchFrameTurn.ts"

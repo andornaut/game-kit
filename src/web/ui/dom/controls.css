@@ -83,7 +83,10 @@ button.ui-standard-button:focus-visible > .ui-button-face > [aria-hidden="true"]
   gap: var(--ui-control-gap, var(--ui-stack-button-gap));
 }
 
-/* External placement is independent of the label's alignment inside its button. */
+/* A control row places one control beside its related copy (a reason or a value) in normal flow,
+   the button gap apart. External placement is independent of the label's alignment inside its
+   button. The row has no press outsets: a group of actions whose press areas reach past their
+   faces uses actionGroup.css instead. */
 .ui-control-row {
   display: flex;
   align-items: flex-start;
@@ -99,6 +102,7 @@ button.ui-standard-button:focus-visible > .ui-button-face > [aria-hidden="true"]
   align-items: baseline;
 }
 
+/* The control row's copy cell, which takes the room the control leaves. */
 .ui-control-copy {
   flex: 1 1 auto;
   min-width: 0;

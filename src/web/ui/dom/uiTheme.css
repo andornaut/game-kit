@@ -1,0 +1,125 @@
+/* Opt-in text roles, native-button reset and role colour slots (uiTheme). Every rule matches
+   through :where(), with zero specificity, so a game's component class always wins. Lengths are
+   unitless base px at --ui-unit; colours are only the slots a game fills or system colours. */
+
+/* The native-button reset. It removes user-agent styling and inherits the surrounding type. */
+:where(.ui-button-reset) {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+:where(.ui-text-body, .ui-text-heading, .ui-text-label, .ui-text-supporting) {
+  margin: 0;
+}
+
+:where(.ui-text-body) {
+  font-size: calc(var(--ui-text-body-size) * var(--ui-unit, 1) * 1px);
+  line-height: calc(var(--ui-text-body-line-height) * var(--ui-unit, 1) * 1px);
+  font-weight: var(--ui-text-body-weight);
+  color: var(--ui-colour-text-primary, currentColor);
+}
+
+:where(.ui-text-heading) {
+  font-size: calc(var(--ui-text-heading-size) * var(--ui-unit, 1) * 1px);
+  line-height: calc(var(--ui-text-heading-line-height) * var(--ui-unit, 1) * 1px);
+  font-weight: var(--ui-text-heading-weight);
+  color: var(--ui-colour-text-primary, currentColor);
+}
+
+/* A control's label inherits its control's text colour. */
+:where(.ui-text-label) {
+  font-size: calc(var(--ui-text-label-size) * var(--ui-unit, 1) * 1px);
+  line-height: calc(var(--ui-text-label-line-height) * var(--ui-unit, 1) * 1px);
+  font-weight: var(--ui-text-label-weight);
+}
+
+:where(.ui-text-supporting) {
+  font-size: calc(var(--ui-text-supporting-size) * var(--ui-unit, 1) * 1px);
+  line-height: calc(var(--ui-text-supporting-line-height) * var(--ui-unit, 1) * 1px);
+  font-weight: var(--ui-text-supporting-weight);
+  color: var(--ui-colour-text-secondary, currentColor);
+}
+
+/* The theme root feeds its focus slots to controls.css's focus fill, the one focus treatment of
+   a standard button. */
+:where([data-ui-theme]) {
+  --ui-button-focus-fill: var(--ui-colour-button-focus-face, Highlight);
+  --ui-button-focus-text: var(--ui-colour-button-focus-text, HighlightText);
+}
+
+/* Standard button faces (button.ts) inside the theme root. Press, selection and disabled change
+   only the fill and text colour; --ui-button-press-dip (base px, default 0) moves a pressed face
+   down. A disabled face is distinct and never dips. The last matching state wins. */
+:where([data-ui-theme] .ui-button-face) {
+  background-color: var(--ui-colour-button-face);
+  color: var(--ui-colour-button-text);
+}
+
+:where(
+  [data-ui-theme] [data-ui-button-role="primary"].ui-button-face,
+  [data-ui-theme] [data-ui-button-role="primary"] > .ui-button-face
+) {
+  background-color: var(--ui-colour-button-primary-face, var(--ui-colour-button-face));
+  color: var(--ui-colour-button-primary-text, var(--ui-colour-button-text));
+}
+
+:where(
+  [data-ui-theme] button[data-ui-selected].ui-button-face,
+  [data-ui-theme] button[data-ui-selected] > .ui-button-face
+) {
+  background-color: var(--ui-colour-button-selected-face);
+  color: var(--ui-colour-button-selected-text, var(--ui-colour-button-text));
+}
+
+:where(
+  [data-ui-theme] button[data-ui-pressed].ui-button-face,
+  [data-ui-theme] button[data-ui-pressed] > .ui-button-face
+) {
+  background-color: var(--ui-colour-button-pressed-face);
+  color: var(--ui-colour-button-pressed-text, var(--ui-colour-button-text));
+  translate: 0 calc(var(--ui-button-press-dip, 0) * var(--ui-unit, 1) * 1px);
+}
+
+:where(
+  [data-ui-theme] button:is(:disabled, [aria-disabled="true"]).ui-button-face,
+  [data-ui-theme] button:is(:disabled, [aria-disabled="true"]) > .ui-button-face
+) {
+  background-color: var(--ui-colour-button-disabled-face);
+  color: var(--ui-colour-button-disabled-text);
+  translate: none;
+}
+
+@media (forced-colors: active) {
+  :where([data-ui-theme] .ui-button-face) {
+    forced-color-adjust: none;
+    background-color: ButtonFace;
+    color: ButtonText;
+  }
+
+  :where(
+    [data-ui-theme] button:is([data-ui-pressed], [data-ui-selected]).ui-button-face,
+    [data-ui-theme] button:is([data-ui-pressed], [data-ui-selected]) > .ui-button-face
+  ) {
+    background-color: Highlight;
+    color: HighlightText;
+  }
+
+  :where(
+    [data-ui-theme] button:is(:disabled, [aria-disabled="true"]).ui-button-face,
+    [data-ui-theme] button:is(:disabled, [aria-disabled="true"]) > .ui-button-face
+  ) {
+    background-color: ButtonFace;
+    color: GrayText;
+  }
+}

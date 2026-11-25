@@ -1,0 +1,49 @@
+/* Opt-in action groups (actionGroup). The DOM part writes every length as unitless base px from
+   the pure arrangement; they resolve at --ui-unit. The group box takes the whole room across and
+   its content's height, and places its actions and middle slot by their faces. */
+.ui-action-group {
+  position: relative;
+  box-sizing: border-box;
+  flex: none;
+  width: calc(var(--ui-action-group-width) * var(--ui-unit, 1) * 1px);
+  height: calc(var(--ui-action-group-height) * var(--ui-unit, 1) * 1px);
+}
+
+.ui-action-group > :is(.ui-action, .ui-action-middle) {
+  position: absolute;
+  box-sizing: border-box;
+  top: calc(var(--ui-action-y) * var(--ui-unit, 1) * 1px);
+  left: calc(var(--ui-action-x) * var(--ui-unit, 1) * 1px);
+  width: calc(var(--ui-action-width) * var(--ui-unit, 1) * 1px);
+  height: calc(var(--ui-action-height) * var(--ui-unit, 1) * 1px);
+  margin: 0;
+}
+
+/* A skin face inside the native action fills it. */
+.ui-action-group > .ui-action > .ui-button-face {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+}
+
+/* The press area: an overflow area of the action itself, so the browser's hit test takes it as
+   the action. Outsets are clamped to half the space toward each neighbour, so areas never meet a
+   neighbour's face or overlap its area. */
+.ui-action-group > .ui-action::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--ui-action-outset-top) * var(--ui-unit, 1) * -1px);
+  right: calc(var(--ui-action-outset-right) * var(--ui-unit, 1) * -1px);
+  bottom: calc(var(--ui-action-outset-bottom) * var(--ui-unit, 1) * -1px);
+  left: calc(var(--ui-action-outset-left) * var(--ui-unit, 1) * -1px);
+}
+
+.ui-action-group > :is(.ui-action, .ui-action-middle)[hidden] {
+  display: none;
+}
+
+/* measure() reads each action's natural face at max-content for one synchronous layout. */
+.ui-action-group[data-ui-action-measuring] > :is(.ui-action, .ui-action-middle) {
+  width: max-content;
+  height: max-content;
+}
