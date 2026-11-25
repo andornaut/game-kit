@@ -164,3 +164,4 @@ in `src/web/ui/dom/slider.ts` with `slider.css`, in the form row list's grid.
 | gk-0067 | Recover grouped installs on a format change and measure press areas unshaken | [gk-0067.md](../work/gk-0067.md) |
 | gk-0068 | Add a silent refused state to standard buttons                               | [gk-0068.md](../work/gk-0068.md) |
 | gk-0069 | Draw an outer rim on HUD discs                                               | [gk-0069.md](../work/gk-0069.md) |
+| gk-0070 | Let form rows and sliders play the game's refusal cue                        | [gk-0070.md](../work/gk-0070.md) |
