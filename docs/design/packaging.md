@@ -21,6 +21,8 @@ behind the public operation that owns them.
 Imports are relative, and runtime imports are acyclic: ESLint's `import-x/no-cycle` covers
 `src/`, `scripts/` and `tests/`.
 
+Reference: [Standalone verification](../../README.md#standalone-verification), [Release artifacts and consumer proof](../../README.md#release-artifacts-and-consumer-proof).
+
 ## Source bands
 
 `src/` follows the shared source structure (game-coordinator gc-0029). Each band holds layers,
@@ -51,11 +53,10 @@ whole trees. Package exports stay the consumer surface. Tests beside their modul
 Every `dom/` and `phaser/` directory is in Engine and views or Support, so only those bands
 import Phaser or the DOM. Nothing in `src/` imports `scripts/` or `tests/`.
 
-During the migration, `scripts/source-bands.test.ts` places every shipped module in this table
-and fails on a runtime cycle, an import that does not point down it, an import into an area past
-its entry or an unplaced module, apart from its known-violations table, which only shrinks.
-
-Reference: [Standalone verification](../../README.md#standalone-verification), [Release artifacts and consumer proof](../../README.md#release-artifacts-and-consumer-proof).
+ESLint guards the table, which `SOURCE_BANDS` in `eslint.config.mjs` holds:
+`import-x/no-restricted-paths` rejects an import into a later layer, past another directory
+area's `index.ts`, or into `scripts/` or `tests/`, type-only imports and re-exports included. The
+config refuses to load while a shipped module is in no area or in two.
 
 ## Work items
 

@@ -1,7 +1,11 @@
+import { readdirSync } from "node:fs";
+import { posix } from "node:path";
+
 import js from "@eslint/js";
 import { defineConfig } from "eslint/config";
 import { createNodeResolver } from "eslint-plugin-import-x/node-resolver";
 import noCycle from "eslint-plugin-import-x/rules/no-cycle";
+import noRestrictedPaths from "eslint-plugin-import-x/rules/no-restricted-paths";
 import globals from "globals";
 import ts from "typescript-eslint";
 
@@ -41,6 +45,130 @@ const VITE = {
   message: "Only vite/ folders may import Vite or a vite/ folder.",
 };
 
+// The source bands (docs/design/packaging.md), lowest first, each a list of layers lowest first.
+// An area is a file (`rect.ts`), the files directly in a directory (`ui`) or a whole tree
+// (`build/**`), relative to src/.
+const SOURCE_BANDS = [
+  [
+    "Foundation",
+    [
+      [
+        "arrays.ts",
+        "assertNever.ts",
+        "lines.ts",
+        "mapLimit.ts",
+        "maps.ts",
+        "numbers.ts",
+        "opaqueBounds.ts",
+        "records.ts",
+        "rect.ts",
+        "rgba.ts",
+        "units.ts",
+      ],
+      ["random.ts"],
+    ],
+  ],
+  ["Model", [["ai", "clock", "terrain"]]],
+  ["Saving", [["save"], ["achievements.ts", "achievements", "web/save"]]],
+  [
+    "Presentation",
+    [
+      ["art", "input", "modalLayout.ts", "motion.ts", "progress.ts", "text", "view"],
+      ["ui", "web/view"],
+    ],
+  ],
+  [
+    "Platform",
+    [
+      ["load", "progressState.ts", "web/buildLabel.ts", "web/crash", "web/pwa"],
+      ["web/pwa/archive"],
+    ],
+  ],
+  [
+    "Engine and views",
+    [
+      [
+        "clock/phaser",
+        "input/phaser",
+        "load/phaser",
+        "progress/phaser",
+        "text/phaser",
+        "view/phaser",
+        "web/input/dom",
+        "web/save/dom",
+        "web/view/dom",
+      ],
+      ["web/ui/dom", "web/view/phaser"],
+      ["web/crash/dom", "web/progress/dom"],
+      ["web/pwa/dom"],
+    ],
+  ],
+  ["Support", [["build/**", "testing/**"]]],
+];
+
+const LAYERS = SOURCE_BANDS.flatMap(([, layers]) => layers);
+const isFile = (area) => area.endsWith(".ts");
+const isTree = (area) => area.endsWith("/**");
+const areaGlob = (area) => (isFile(area) || isTree(area) ? `src/${area}` : `src/${area}/*.ts`);
+
+function holds(area, module) {
+  if (isTree(area)) {
+    return module.startsWith(area.slice(0, -2));
+  }
+  return isFile(area) ? module === area : posix.dirname(module) === area;
+}
+
+// Every shipped module is in exactly one area, so none escapes the zones below.
+const misplaced = readdirSync(new URL("src", import.meta.url), {
+  encoding: "utf8",
+  recursive: true,
+})
+  .map((name) => name.replaceAll("\\", "/"))
+  .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))
+  .filter((name) => LAYERS.flat().filter((area) => holds(area, name)).length !== 1);
+if (misplaced.length > 0) {
+  throw new Error(`Place each src/ module in one SOURCE_BANDS area: ${misplaced.join(", ")}`);
+}
+
+const BAND_MESSAGE =
+  "src/ imports its own layer or a lower one in the source bands (docs/design/packaging.md), " +
+  "another directory area only through its index.ts, and never scripts/ or tests/.";
+
+// What each area may not import, type-only imports and re-exports included: a later layer, a
+// module of another directory area in its own or an earlier layer other than its index.ts, and
+// scripts/ and tests/. A zone takes either globs or plain paths, so the file areas of later layers
+// get a zone of their own.
+const BAND_ZONES = LAYERS.flatMap((areas, layer) =>
+  areas.flatMap((area) => {
+    const target = areaGlob(area);
+    const later = LAYERS.slice(layer + 1).flat();
+    const globs = [
+      ...later.filter((other) => !isFile(other)).map(areaGlob),
+      ...LAYERS.slice(0, layer + 1)
+        .flat()
+        .filter((other) => other !== area && !isFile(other) && !isTree(other))
+        .map((other) => `src/${other}/!(index).ts`),
+      "scripts/**",
+      "tests/**",
+    ];
+    const files = later.filter(isFile).map(areaGlob);
+    return [
+      { from: globs, message: BAND_MESSAGE, target },
+      ...(files.length > 0 ? [{ from: files, message: BAND_MESSAGE, target }] : []),
+    ];
+  }),
+);
+
+const IMPORT_X = {
+  plugins: {
+    "import-x": { rules: { "no-cycle": noCycle, "no-restricted-paths": noRestrictedPaths } },
+  },
+  settings: {
+    "import-x/extensions": [".ts"],
+    "import-x/resolver-next": [createNodeResolver({ extensions: [".ts", ".js"] })],
+  },
+};
+
 export default defineConfig(
   {
     ignores: [".claude/", ".worktrees/", "dist/", "node_modules/"],
@@ -78,17 +206,24 @@ export default defineConfig(
     files: VITE_FILES,
     rules: { "no-restricted-imports": ["error", { patterns: [OUTSIDE_KIT, PHASER, DOM] }] },
   },
-  // No import cycles: a module in a cycle can run before what it imports has loaded. Type-only
-  // imports are erased at build time, so this rule skips them; scripts/import-cycles.test.ts
-  // rejects type cycles too.
+  // The source bands; tests may import any module.
   {
-    files: [...KIT_FILES, ...TOOLING_FILES],
-    plugins: { "import-x": { rules: { "no-cycle": noCycle } } },
-    rules: { "import-x/no-cycle": "error" },
-    settings: {
-      "import-x/extensions": [".ts"],
-      "import-x/resolver-next": [createNodeResolver({ extensions: [".ts", ".js"] })],
+    ...IMPORT_X,
+    files: KIT_FILES,
+    ignores: TEST_FILES,
+    rules: {
+      "import-x/no-restricted-paths": [
+        "error",
+        { basePath: import.meta.dirname, zones: BAND_ZONES },
+      ],
     },
+  },
+  // No import cycles: a module in a cycle can run before what it imports has loaded. Type-only
+  // imports are erased at build time, so they never form one.
+  {
+    ...IMPORT_X,
+    files: [...KIT_FILES, ...TOOLING_FILES],
+    rules: { "import-x/no-cycle": "error" },
   },
   // Tests and tooling: they verify or produce what ships rather than being it.
   {
