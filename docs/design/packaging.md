@@ -18,9 +18,40 @@ familiar operations with unambiguous roles. A factory's read hook can receive th
 reads so callers can use it during construction. Keep lifecycle and persistence details
 behind the public operation that owns them.
 
-Imports are relative and acyclic. ESLint's `import-x/no-cycle` covers runtime edges in `src/`,
-`scripts/` and `tests/`; `scripts/import-cycles.test.ts` also rejects cycles made only of type
-imports, which that rule skips.
+Imports are relative, and runtime imports are acyclic: ESLint's `import-x/no-cycle` covers
+`src/`, `scripts/` and `tests/`.
+
+## Source bands
+
+`src/` follows the shared source structure (game-coordinator gc-0029). Each band holds layers,
+lowest first. A module imports only areas in earlier layers, type-only imports included, and a
+directory area only through its `index.ts`, which re-exports what other areas use. An area is a
+file in `src/` or `src/web/`, or the files directly in one directory; `build/` and `testing/` are
+whole trees. Package exports stay the consumer surface. Tests beside their modules and
+`tests/e2e/` may import any module. The kit has no page entries, so no Entries band.
+
+| Band             | Layer | Areas, relative to `src/`                                                                                                                                |
+| ---------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Foundation       | 1     | `arrays`, `assertNever`, `lines`, `mapLimit`, `maps`, `numbers`, `opaqueBounds`, `records`, `rect`, `rgba`, `units`                                      |
+|                  | 2     | `random`                                                                                                                                                 |
+| Model            | 1     | `ai/`, `clock/`, `terrain/`                                                                                                                              |
+| Saving           | 1     | `save/`                                                                                                                                                  |
+|                  | 2     | `achievements`, `achievements/`, `web/save/`                                                                                                             |
+| Presentation     | 1     | `art/`, `input/`, `modalLayout`, `motion`, `progress`, `text/`, `view/`                                                                                  |
+|                  | 2     | `ui/`, `web/view/`                                                                                                                                       |
+| Platform         | 1     | `load/`, `progressState`, `web/buildLabel`, `web/crash/`, `web/pwa/`                                                                                     |
+| Engine and views | 1     | `clock/phaser/`, `input/phaser/`, `load/phaser/`, `progress/phaser/`, `text/phaser/`, `view/phaser/`, `web/input/dom/`, `web/save/dom/`, `web/view/dom/` |
+|                  | 2     | `web/ui/dom/`, `web/view/phaser/`                                                                                                                        |
+|                  | 3     | `web/crash/dom/`, `web/progress/dom/`                                                                                                                    |
+|                  | 4     | `web/pwa/dom/`                                                                                                                                           |
+| Support          | 1     | `build/` (build-time code: pure at its top, Node and Vite in `build/vite/`), `testing/`                                                                  |
+
+Every `dom/` and `phaser/` directory is in Engine and views or Support, so only those bands
+import Phaser or the DOM. Nothing in `src/` imports `scripts/` or `tests/`.
+
+During the migration, `scripts/source-bands.test.ts` places every shipped module in this table
+and fails on a runtime cycle, an import that does not point down it, an import into an area past
+its entry or an unplaced module, apart from its known-violations table, which only shrinks.
 
 Reference: [Standalone verification](../../README.md#standalone-verification), [Release artifacts and consumer proof](../../README.md#release-artifacts-and-consumer-proof).
 
