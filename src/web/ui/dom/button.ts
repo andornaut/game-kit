@@ -15,6 +15,31 @@ import {
   setButtonSize,
 } from "./buttonLayout.ts";
 import { createNativeButton } from "./nativeButton.ts";
+import { type RefusalCue, refuse, refusing } from "./refusalCue.ts";
+
+// How a refused button plays its refusal: the kit cue, which a further refusal leaves playing, or
+// the game's own refuse, in the kit refuse's argument order, which owns its replay and stopping.
+// reducedMotion() is read at each refusal.
+export type ButtonRefusal =
+  | {
+      readonly cue: RefusalCue;
+      readonly reducedMotion: () => boolean;
+      readonly refuse?: never;
+    }
+  | {
+      readonly refuse: (reducedMotion: boolean, control: HTMLButtonElement) => void;
+      readonly reducedMotion: () => boolean;
+      readonly cue?: never;
+    };
+
+// Plays refusal on control: the game's refuse, or the kit cue unless it already plays there.
+export function refuseButton(refusal: ButtonRefusal, control: HTMLButtonElement): void {
+  if (refusal.refuse !== undefined) {
+    refusal.refuse(refusal.reducedMotion(), control);
+  } else if (!refusing(control)) {
+    refuse(refusal.cue, refusal.reducedMotion(), control);
+  }
+}
 
 export type ButtonContent =
   | { readonly kind: "text"; readonly label: string }
@@ -37,8 +62,13 @@ export interface ButtonAppearance {
 }
 
 export interface ButtonState {
+  // A refused button stays focusable and in the Tab order with no description, and refuses
+  // Enter, Space and pointer presses through refusal.
   readonly availability?:
-    ControlAvailability | { readonly kind: "disabled" } | { readonly kind: "pointer-refusal" };
+    | ControlAvailability
+    | { readonly kind: "disabled" }
+    | { readonly kind: "pointer-refusal" }
+    | { readonly kind: "refused" };
   readonly selected?: boolean;
   readonly toggled?: boolean;
 }
@@ -57,6 +87,9 @@ export interface ButtonOptions {
   readonly onUnavailable?: (reason: string) => void;
   // Only a pointer-owned action or a native pointer click may give this feedback.
   readonly onPointerRefusal?: () => void;
+  // Plays on each press of a refused button under a current action. Without it the press does
+  // nothing.
+  readonly refusal?: ButtonRefusal;
 }
 
 export interface ButtonView {
@@ -142,7 +175,10 @@ export function createButton(document: Document, options: ButtonOptions): Button
       previousTabIndex = undefined;
     }
   };
-  const refresh = (): ControlPresentation & { readonly pointerRefusal: boolean } => {
+  const refresh = (): ControlPresentation & {
+    readonly pointerRefusal: boolean;
+    readonly refused: boolean;
+  } => {
     const {
       availability = { kind: "available" },
       selected,
@@ -150,8 +186,9 @@ export function createButton(document: Document, options: ButtonOptions): Button
     } = options.getState?.(element) ?? {};
     const disabled = availability.kind === "disabled";
     const pointerRefusal = availability.kind === "pointer-refusal";
+    const refused = availability.kind === "refused";
     const state: ControlPresentation =
-      disabled || pointerRefusal
+      disabled || pointerRefusal || refused
         ? { executable: false, visible: true }
         : controlPresentation(availability);
     element.hidden = !state.visible;
@@ -163,7 +200,7 @@ export function createButton(document: Document, options: ButtonOptions): Button
     } else {
       element.setAttribute("aria-pressed", String(toggled));
     }
-    if (pointerRefusal || state.reason !== undefined) {
+    if (pointerRefusal || refused || state.reason !== undefined) {
       element.setAttribute("aria-disabled", "true");
     } else {
       element.removeAttribute("aria-disabled");
@@ -181,7 +218,7 @@ export function createButton(document: Document, options: ButtonOptions): Button
       }
       reason.hidden = state.reason === undefined;
     }
-    return { ...state, pointerRefusal };
+    return { ...state, pointerRefusal, refused };
   };
   const admitted = () =>
     !disposed &&
@@ -209,11 +246,17 @@ export function createButton(document: Document, options: ButtonOptions): Button
   type Current = NonNullable<ReturnType<typeof current>>;
   const canDispatch = (state: Current) =>
     state.executable ||
-    (state.pointerRefusal
-      ? options.onPointerRefusal !== undefined
-      : state.reason !== undefined && options.onUnavailable !== undefined);
+    (state.refused
+      ? options.refusal !== undefined
+      : state.pointerRefusal
+        ? options.onPointerRefusal !== undefined
+        : state.reason !== undefined && options.onUnavailable !== undefined);
   const dispatch = (hold: boolean, pointer: boolean, state: Current) => {
-    if (state.pointerRefusal) {
+    if (state.refused) {
+      if (state.action !== null && options.refusal !== undefined) {
+        refuseButton(options.refusal, element);
+      }
+    } else if (state.pointerRefusal) {
       if (pointer && state.action !== null) {
         options.onPointerRefusal?.();
       }
@@ -262,7 +305,9 @@ export function createButton(document: Document, options: ButtonOptions): Button
         return null;
       }
       const feedback =
-        options.onUnavailable !== undefined || options.onPointerRefusal !== undefined;
+        options.onUnavailable !== undefined ||
+        options.onPointerRefusal !== undefined ||
+        options.refusal !== undefined;
       const expected = identity(state.action);
       const invoke = (hold: boolean) => {
         const next = sameAction(expected);

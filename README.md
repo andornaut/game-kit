@@ -400,6 +400,20 @@ Place the native button in the caller's existing root action registry. Resolve t
 
 Keep the game's skin, size tokens, placement, labels and navigation callbacks in the caller. `appearance.layout: "caller"` keeps existing geometry. Native disabled controls, focusable unavailable controls with a reason, selected styling, toggle semantics and momentary press feedback remain distinct. Use separate native form and continuous input paths for submit, steering, drag, sliders and editing.
 
+**Refused.** Return `{ kind: "refused" }` as the availability from `getState` for an option the player can reach but not take, such as a choice card they cannot afford. The button stays enabled, focusable and in the Tab order, with no description or reason, and is `aria-disabled="true"`, which the kit sets on every refresh while the state holds. Style it on `[aria-disabled="true"]`: pointer refusal and unavailable set the same attribute, and the kit's theme, frame and HUD disc stylesheets already draw it as disabled. Enter, Space and pointer presses and holds under a current action play `refusal`, a `ButtonRefusal`: with `{ cue, reducedMotion }` the `refusalCue` `refuse`, leaving a cue already playing there to finish, and with `{ refuse, reducedMotion }` the game's `refuse(reducedMotion, control)` in its place, with `reducedMotion()` read at that refusal and the refused button, as the pager's `refusal` does (`PagerRefusal` is `ButtonRefusal`). `refuseButton(refusal, control)` plays a refusal the same way. Without `refusal` a refused press does nothing. Focus and press stay fills. Form rows and HUD discs take the same state and option. Pointer refusal, unavailable and every other state are unchanged.
+
+```ts
+const card = createButton(document, {
+  appearance: { className: "choice-option", layout: "caller" },
+  content: { kind: "icon", name: cardName },
+  getAction: () => ({ activate: () => choose(index) }),
+  getState: () => ({ availability: { kind: entry.enabled ? "available" : "refused" } }),
+  // playRefusal(reducedMotion, control)
+  refusal: { reducedMotion: () => settings.reducedMotion, refuse: playRefusal },
+  rule: HOLD_RULE,
+});
+```
+
 The loading-failure presenter keeps its asset-independent inline fallback and adds a themed keyboard-focus cue when the browser exposes the necessary focus and forced-colors features. Native focus remains visible on the fallback path. Retry still uses its existing single-flight and input guards.
 
 ## Action groups and UI theme

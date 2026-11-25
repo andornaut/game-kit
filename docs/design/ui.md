@@ -40,6 +40,13 @@ geometry only.
 - Button frame states are size-independent: a nine-slice frame on any face or layer follows its
   button's role, selection, press and disabled state from game tokens, and press and focus fill
   its inside.
+- A standard button's refused state is for an option the player can reach but not take: it stays
+  focusable and in the Tab order with no description, and Enter, Space and pointer presses play
+  the shared refusal cue or the game's refuse callback, as the pager's do. Its styling hook is
+  `aria-disabled="true"`, which conveys the refusal to assistive technology with no description
+  and which pointer refusal and unavailable already set, so the kit's disabled art applies and
+  the game adds no attribute. Pointer refusal keeps leaving the Tab order and unavailable keeps
+  its spoken reason.
 - Kit screens outside the UI layer, the crash screen and the loading failure card, take the text
   roles and colour slots from an ancestor such as the document root, each with its own type and
   colours as the fallback. The crash screen does this in CSS alone, so it needs no game code.

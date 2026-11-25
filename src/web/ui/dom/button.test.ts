@@ -6,6 +6,7 @@ import { bindHoldActions } from "../../input/dom/holdActions.ts";
 import { type ButtonState, createButton } from "./button.ts";
 import { guardClicks } from "./domPress.ts";
 import { createModalLayer, focusTargets } from "./modalLayer.ts";
+import { REFUSAL_ATTRIBUTES } from "./refusalCue.ts";
 
 const rule = { holdMs: 100, slopPx: 5 };
 
@@ -478,3 +479,286 @@ it.each(["native-click", "pointer-release"] as const)(
     }
   },
 );
+
+const OPEN_LABEL = '<span class="ui-control-label">Open</span>';
+
+// Each state as 0.86.1 renders it for a caller that does not pass refusal: the markup, the hold
+// action's fields with and without feedback callbacks, and what a key and a pointer click call.
+it.each([
+  ["available", {}, "", ["activate"]],
+  [
+    "selected and untoggled",
+    { selected: true, toggled: false },
+    ' data-ui-selected="" aria-pressed="false"',
+    ["activate"],
+  ],
+  ["disabled", { availability: { kind: "disabled" } }, ' disabled=""', null],
+  [
+    "pointer refusal",
+    { availability: { kind: "pointer-refusal" } },
+    ' tabindex="-1" aria-disabled="true"',
+    ["pointer"],
+  ],
+  [
+    "unavailable",
+    { availability: { kind: "unavailable", reason: "Need a key" } },
+    ' aria-disabled="true" aria-description="Need a key"',
+    ["unavailable"],
+  ],
+  ["omitted", { availability: { kind: "omitted" } }, ' hidden=""', null],
+] as const)("keeps the %s state unchanged without refusal", (_name, state, attributes, calls) => {
+  const classes = "ui-standard-button ui-button-face ui-control-button";
+  const markup = `<button type="button" class="${classes}"${attributes}>${OPEN_LABEL}</button>`;
+  const fields = ["activate", "available", "element", "hold", "identity", "rule"];
+  for (const feedback of [false, true]) {
+    const log: string[] = [];
+    const reason = document.createElement("p");
+    const view = createButton(document, {
+      content: { kind: "text", label: "Open" },
+      getAction: () => ({ activate: () => log.push("activate") }),
+      getState: () => state as ButtonState,
+      rule,
+      ...(feedback
+        ? {
+            onPointerRefusal: () => log.push("pointer"),
+            onUnavailable: () => log.push("unavailable"),
+            reason,
+          }
+        : {}),
+    });
+    document.body.append(view.element, reason);
+    try {
+      view.refresh();
+      expect(view.element.outerHTML).toBe(markup);
+      const hold = view.holdAction();
+      const dispatches = calls !== null && (feedback || calls[0] === "activate") ? calls : null;
+      expect(hold === null ? null : Object.keys(hold).sort()).toEqual(
+        dispatches === null ? null : feedback ? [...fields, "ownAriaDisabled"].sort() : fields,
+      );
+      view.element.click();
+      view.element.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }),
+      );
+      const keyed = dispatches?.[0] === "pointer" ? [] : (dispatches ?? []);
+      expect(log).toEqual([...keyed, ...(dispatches ?? [])]);
+      if (feedback) {
+        expect(reason.outerHTML).toBe(
+          attributes.includes("Need a key") ? "<p>Need a key</p>" : '<p hidden=""></p>',
+        );
+      }
+    } finally {
+      view.dispose();
+      reason.remove();
+    }
+  }
+});
+
+// A refused button in a dialog between two others, refusing through refuse.
+function refusedFixture(options: {
+  readonly getAction?: () => { readonly activate: () => void } | null;
+  readonly getState?: () => ButtonState;
+  readonly reducedMotion?: () => boolean;
+}) {
+  const refuse = vi.fn();
+  const root = document.createElement("div");
+  const dialog = document.createElement("section");
+  const before = document.createElement("button");
+  const after = document.createElement("button");
+  const reason = document.createElement("span");
+  const view = createButton(document, {
+    content: { kind: "text", label: "Fetch" },
+    getAction: options.getAction ?? (() => ({ activate: vi.fn() })),
+    getState: options.getState ?? (() => ({ availability: { kind: "refused" } })),
+    reason,
+    refusal: { reducedMotion: options.reducedMotion ?? (() => false), refuse },
+    rule,
+  });
+  dialog.append(before, view.element, after, reason);
+  root.append(dialog);
+  document.body.append(root);
+  const modal = createModalLayer(root);
+  const close = modal.open({ focus: before, isolation: "dialog" }, dialog);
+  const key = (type: "keydown" | "keyup", key: string) =>
+    document.activeElement!.dispatchEvent(
+      new KeyboardEvent(type, { bubbles: true, cancelable: true, key }),
+    );
+  const dispose = () => {
+    close();
+    modal.dispose();
+    view.dispose();
+  };
+  return { after, before, dialog, dispose, key, reason, refuse, view };
+}
+
+it("keeps a refused button focusable and in the Tab order with no description", () => {
+  let state: ButtonState = { availability: { kind: "refused" } };
+  const { after, before, dialog, dispose, key, reason, refuse, view } = refusedFixture({
+    getState: () => state,
+  });
+  const { element } = view;
+  try {
+    expect(focusTargets(dialog)).toEqual([before, element, after]);
+    key("keydown", "Tab");
+    expect(document.activeElement).toBe(element);
+    expect(element.disabled).toBe(false);
+    expect(element.hasAttribute("tabindex")).toBe(false);
+    expect(element.hasAttribute("aria-describedby")).toBe(false);
+    expect(element.hasAttribute("aria-description")).toBe(false);
+    expect(reason.hidden).toBe(true);
+    expect(reason.textContent).toBe("");
+    expect(element.getAttribute("aria-disabled")).toBe("true");
+    view.refresh();
+    view.refresh();
+    expect(element.getAttribute("aria-disabled")).toBe("true");
+    expect(document.activeElement).toBe(element);
+
+    state = {};
+    view.refresh();
+    expect(element.hasAttribute("aria-disabled")).toBe(false);
+    element.tabIndex = 4;
+    state = { availability: { kind: "pointer-refusal" } };
+    view.refresh();
+    expect(element.tabIndex).toBe(-1);
+    state = { availability: { kind: "refused" } };
+    view.refresh();
+    expect(element.tabIndex).toBe(4);
+    expect(element.getAttribute("aria-disabled")).toBe("true");
+    expect(refuse).not.toHaveBeenCalled();
+  } finally {
+    dispose();
+  }
+});
+
+it.each([
+  ["Enter", "Enter"],
+  ["Space", " "],
+])("refuses %s through the caller's refuse, under the current action", (_name, name) => {
+  let reduced = false;
+  let inScope = true;
+  const activate = vi.fn();
+  const { dispose, key, refuse, view } = refusedFixture({
+    getAction: () => (inScope ? { activate } : null),
+    reducedMotion: () => reduced,
+  });
+  try {
+    view.element.focus();
+    key("keydown", name);
+    key("keyup", name);
+    expect(refuse.mock.calls).toEqual([[false, view.element]]);
+    reduced = true;
+    key("keydown", name);
+    key("keyup", name);
+    expect(refuse.mock.calls).toEqual([
+      [false, view.element],
+      [true, view.element],
+    ]);
+    inScope = false;
+    key("keydown", name);
+    expect(refuse).toHaveBeenCalledTimes(2);
+    expect(activate).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(view.element);
+  } finally {
+    dispose();
+  }
+});
+
+it.each(["native-click", "pointer-release"] as const)(
+  "refuses each pointer press and hold once in %s mode",
+  (mode) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const guard = { gate: createModalInputGate() };
+    const activate = vi.fn();
+    const hold = vi.fn();
+    const refuse = vi.fn();
+    const root = document.createElement("div");
+    const view = createButton(document, {
+      content: { kind: "text", label: "Fetch" },
+      getAction: () => ({ activate, hold }),
+      getState: () => ({ availability: { kind: "refused" } }),
+      refusal: { reducedMotion: () => false, refuse },
+      rule,
+    });
+    root.append(view.element);
+    document.body.append(root);
+    const resolve = (target: EventTarget | null) =>
+      target instanceof Node && view.element.contains(target) ? view.holdAction() : null;
+    const stop = bindHoldActions(
+      mode === "pointer-release"
+        ? { activation: mode, guard, resolve, resolvePointer: (event) => resolve(event.target) }
+        : { guard, resolve },
+      root,
+    );
+    const stopClicks = guardClicks(guard, root);
+    const send = (type: string, pointerType: "mouse" | "touch", detail = 0) =>
+      view.face.firstElementChild!.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          detail,
+          isPrimary: true,
+          pointerId: 4,
+          pointerType,
+        }),
+      );
+    try {
+      expect(view.holdAction()?.ownAriaDisabled).toBe("refusal-feedback");
+      send("pointerdown", "mouse");
+      send("pointerup", "mouse");
+      expect(refuse).toHaveBeenCalledTimes(mode === "pointer-release" ? 1 : 0);
+      expect(send("click", "mouse", 1)).toBe(false);
+      expect(refuse).toHaveBeenCalledOnce();
+      send("pointerdown", "touch");
+      vi.advanceTimersByTime(100);
+      expect(refuse).toHaveBeenCalledTimes(2);
+      send("pointerup", "touch");
+      vi.advanceTimersByTime(0);
+      expect(send("click", "touch", 1)).toBe(false);
+      expect(refuse.mock.calls).toEqual([
+        [false, view.element],
+        [false, view.element],
+      ]);
+      expect(activate).not.toHaveBeenCalled();
+      expect(hold).not.toHaveBeenCalled();
+    } finally {
+      stop();
+      stopClicks();
+      view.dispose();
+    }
+  },
+);
+
+it("plays the kit cue by default and refuses silently without a refusal", () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const activate = vi.fn();
+  const options = {
+    content: { kind: "text", label: "Fetch" },
+    getAction: () => ({ activate }),
+    getState: (): ButtonState => ({ availability: { kind: "refused" } }),
+    rule,
+  } as const;
+  const cued = createButton(document, {
+    ...options,
+    refusal: { cue: { shake: 2, stepMs: 50, steps: 4 }, reducedMotion: () => true },
+  });
+  const silent = createButton(document, options);
+  document.body.append(cued.element, silent.element);
+  try {
+    cued.element.click();
+    expect(cued.element.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(true);
+    vi.advanceTimersByTime(100);
+    cued.element.click();
+    vi.advanceTimersByTime(100);
+    expect(cued.element.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(false);
+
+    expect(silent.holdAction()).toBeNull();
+    expect(
+      silent.element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })),
+    ).toBe(false);
+    expect(silent.element.getAttribute("aria-disabled")).toBe("true");
+    expect(silent.element.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(false);
+    expect(activate).not.toHaveBeenCalled();
+  } finally {
+    cued.dispose();
+    silent.dispose();
+  }
+});

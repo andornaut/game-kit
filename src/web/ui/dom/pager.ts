@@ -9,8 +9,14 @@ import {
   type PagerState,
 } from "../../../ui/index.ts";
 import { type ActionGroupView, createActionGroup } from "./actionGroup.ts";
-import { type ButtonAppearance, type ButtonView, createButton } from "./button.ts";
-import { type RefusalCue, refuse, refusing, stopRefusal } from "./refusalCue.ts";
+import {
+  type ButtonAppearance,
+  type ButtonRefusal,
+  type ButtonView,
+  createButton,
+  refuseButton,
+} from "./button.ts";
+import { stopRefusal } from "./refusalCue.ts";
 
 // The HTML pager (pager.css with actionGroup.css): an action group holding Previous, the page
 // count and Next, each a direct child in that focus order. Previous and Next are standard buttons
@@ -31,17 +37,7 @@ export const PAGER_CURRENT_ATTRIBUTE = "data-ui-current";
 // How an unavailable step refuses: the kit's refusal cue, or the game's own. refuse runs for every
 // pointer and key refusal, in place of the kit cue, with reducedMotion() read at that refusal and
 // the refused Previous or Next button; the game decides whether a refusal restarts its cue.
-export type PagerRefusal =
-  | {
-      readonly cue: RefusalCue;
-      readonly reducedMotion: () => boolean;
-      readonly refuse?: never;
-    }
-  | {
-      readonly refuse: (reducedMotion: boolean, control: HTMLButtonElement) => void;
-      readonly reducedMotion: () => boolean;
-      readonly cue?: never;
-    };
+export type PagerRefusal = ButtonRefusal;
 
 export interface PagerOptions {
   // Player text.
@@ -97,15 +93,9 @@ export interface PagerView {
 
 export function createPager(document: Document, options: PagerOptions): PagerView {
   const { refusal } = options;
-  // Plays the refusal on control: the game's callback, or the kit cue unless it plays there.
   const refuseControl = (control: HTMLButtonElement) => {
-    if (refusal === undefined) {
-      return;
-    }
-    if (refusal.refuse !== undefined) {
-      refusal.refuse(refusal.reducedMotion(), control);
-    } else if (!refusing(control)) {
-      refuse(refusal.cue, refusal.reducedMotion(), control);
+    if (refusal !== undefined) {
+      refuseButton(refusal, control);
     }
   };
   const group = createActionGroup(document, {
