@@ -1,4 +1,4 @@
-// Checks a game against its build's Phaser (web/build/phaserBuild): a test calls
+// Checks a game against its build's Phaser (build/phaserBuild): a test calls
 // phaserBuildProblems with the game's PhaserBuild and its shipped modules, and expects []. Node
 // only, for tests; it needs the game's typescript dependency.
 import { existsSync, readdirSync, readFileSync } from "node:fs";

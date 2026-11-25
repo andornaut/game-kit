@@ -7,7 +7,7 @@ import {
   originMemberArchivePath,
   type OriginMemberIndex,
   parseOriginMemberIndex,
-} from "../originMemberIndex.ts";
+} from "../../web/pwa/index.ts";
 import { deterministicGzip, sha256Hex } from "./buildArchiveFiles.ts";
 
 export interface OriginMemberPackOptions {

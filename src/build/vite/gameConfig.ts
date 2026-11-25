@@ -46,7 +46,7 @@ export interface GameViteOptions<Modules> {
 // The Vite and Vitest config for a game laid out as above. Phaser and phaserBuildPlugin's entry
 // go in their own chunk, so a game code change keeps the Phaser chunk's hashed name and a new
 // service worker's precache gets it from the browser's HTTP cache. __APP_VERSION__ and
-// __COMMIT__ (declared by web/build/vite/buildInfo) are fixed per commit, so two builds of one
+// __COMMIT__ (declared by build/vite/buildInfo) are fixed per commit, so two builds of one
 // commit match. The commit is CI_COMMIT_VARIABLE in process.env, else the repository's HEAD.
 export async function gameViteConfig<Modules>(
   options: GameViteOptions<Modules>,

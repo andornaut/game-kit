@@ -82,17 +82,17 @@ it("follows self-package exports, handles cycles and audits every conditional ta
   ).toContain("Node builtin");
 });
 
-it("classifies private build helpers while retaining the runtime build label exception", () => {
+it("classifies every module under src/build/ as build source", () => {
   expect(
     audit({
-      "src/entry.ts": 'export * from "./web/build/buildLabel.ts";',
-      "src/web/build/buildLabel.ts": 'export const label = "v1";',
+      "src/entry.ts": 'export * from "./web/buildLabel.ts";',
+      "src/web/buildLabel.ts": 'export const label = "v1";',
     }),
   ).toEqual([]);
   expect(
     audit({
-      "src/entry.ts": 'export * from "./web/build/mapLimit.ts";',
-      "src/web/build/mapLimit.ts": "export const mapLimit = () => [];",
+      "src/entry.ts": 'export * from "./build/vite/private.ts";',
+      "src/build/vite/private.ts": "export const helper = () => [];",
     })[0],
   ).toContain("runtime reaches build/test source");
 });

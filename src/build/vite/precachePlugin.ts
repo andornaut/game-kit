@@ -1,10 +1,10 @@
 import type { Plugin, ResolvedConfig } from "vite";
 
-import { isBuildId } from "../../build/buildVersion.ts";
-import { contentHash } from "../../build/vite/contentHash.ts";
-import { gitBuildMetadata } from "../../build/vite/gitHead.ts";
-import type { BuildArchiveFile } from "../archive/buildArchive.ts";
-import { parseUpdateGroupRecipes, type UpdateGroupRecipes } from "../archive/buildGroupRecipes.ts";
+import {
+  type BuildArchiveFile,
+  parseUpdateGroupRecipes,
+  type UpdateGroupRecipes,
+} from "../../web/pwa/archive/index.ts";
 import {
   BUILD_ARCHIVE_PART_BYTES,
   BUILD_POINTER_URL,
@@ -15,18 +15,23 @@ import {
   buildManifestUrl,
   type BuildPack,
   type BuildPointer,
+  cacheKeyFor,
+  type CachePolicy,
   GROUP_ARCHIVE_IDENTITY,
+  isHashedAssetUrl,
   MAX_UPDATE_UNITS,
+  packContentType,
+  soundFormatOf,
   updateGroupRecipesPath,
-} from "../buildContract.ts";
+  validateVerifiedJsonBodies,
+} from "../../web/pwa/index.ts";
 import {
   createBuildManifest,
   createBuildPointer,
   UNKNOWN_BUILD_ID,
   validateBuildPointer,
 } from "../buildManifest.ts";
-import { packContentType, soundFormatOf } from "../buildRecords.ts";
-import { cacheKeyFor, type CachePolicy, isHashedAssetUrl } from "../cachePolicy.ts";
+import { isBuildId } from "../buildVersion.ts";
 import {
   bundleDependencies,
   type BundleFile,
@@ -34,9 +39,10 @@ import {
   rootRelativeUrls,
   webManifestIconUrls,
 } from "../precacheList.ts";
-import { validateVerifiedJsonBodies } from "../verifiedJsonBody.ts";
 import { archiveFiles, deterministicGzip, sha256Hex } from "./buildArchiveFiles.ts";
 import { classicWorker } from "./classicWorker.ts";
+import { contentHash } from "./contentHash.ts";
+import { gitBuildMetadata } from "./gitHead.ts";
 import { encodeGroupArchive } from "./groupArchive.ts";
 
 // Hashed files the page loads at runtime rather than links, such as a game's art: the URLs to
@@ -56,7 +62,7 @@ export type VerifiedJsonFamilySelection =
     };
 
 export interface PrecachePluginOptions {
-  // The full source commit the build is made from (web/build/buildVersion's BuildMetadata). When
+  // The full source commit the build is made from (build/buildVersion's BuildMetadata). When
   // set, the build fails unless it matches clean Git source and the app's __BUILD_ID__ define.
   // The manifest records UNKNOWN_BUILD_ID when unset.
   readonly buildId?: string | undefined;
@@ -87,7 +93,7 @@ export interface PrecachePluginOptions {
   // "play/index.html".
   pageHtmlFile: string;
   readonly policy: CachePolicy;
-  // The worker entry's source module, as an absolute path. It calls dom/serviceWorker's
+  // The worker entry's source module, as an absolute path. It calls web/pwa/dom/serviceWorker's
   // runServiceWorker with the policy.
   serviceWorkerSource: string;
   // The worker's file name in the build output; "sw.js" when unset.

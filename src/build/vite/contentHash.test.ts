@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import { VITE_HASHED_NAME } from "../../headers/securityHeaders.ts";
+import { VITE_HASHED_NAME } from "../securityHeaders.ts";
 import { contentHash, HASH_LENGTH } from "./contentHash.ts";
 
 describe("contentHash", () => {

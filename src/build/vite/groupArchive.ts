@@ -1,13 +1,13 @@
 // Encodes one update group exactly as precachePlugin's updateGroup output does, so a game can test
 // its group archive readers, such as an origin's createGroupArchiveMemberReader, against real
 // archives.
-import type { BuildArchiveFile } from "../archive/buildArchive.ts";
+import type { BuildArchiveFile } from "../../web/pwa/archive/index.ts";
 import {
   BUILD_ARCHIVE_PART_BYTES,
   type BuildGroupReference,
   buildGroupUrl,
   GROUP_ARCHIVE_IDENTITY,
-} from "../buildContract.ts";
+} from "../../web/pwa/index.ts";
 import { archiveFiles, deterministicGzip } from "./buildArchiveFiles.ts";
 
 export interface GroupArchiveMember {

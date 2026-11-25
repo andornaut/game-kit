@@ -10,9 +10,10 @@ import { gunzipSync } from "node:zlib";
 import { build, type Plugin } from "vite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { CI_COMMIT_VARIABLE } from "../../build/buildVersion.ts";
-import { gitBuildMetadata, gitHead } from "../../build/vite/gitHead.ts";
-import { parseBuildArchiveIndex, readBuildArchivePrefixSize } from "../archive/buildArchive.ts";
+import {
+  parseBuildArchiveIndex,
+  readBuildArchivePrefixSize,
+} from "../../web/pwa/archive/buildArchive.ts";
 import {
   BUILD_ARCHIVE_PART_BYTES,
   BUILD_POINTER_URL,
@@ -23,11 +24,17 @@ import {
   type BuildPointer,
   GROUP_ARCHIVE_IDENTITY,
   updateGroupRecipesPath,
-} from "../buildContract.ts";
+} from "../../web/pwa/buildContract.ts";
+import {
+  installedManifest,
+  installedPointer,
+  parseBuildPointer,
+} from "../../web/pwa/buildRecords.ts";
+import type { CachePolicy } from "../../web/pwa/cachePolicy.ts";
 import { UNKNOWN_BUILD_ID, validateBuildManifest, validateBuildPointer } from "../buildManifest.ts";
-import { installedManifest, installedPointer, parseBuildPointer } from "../buildRecords.ts";
-import type { CachePolicy } from "../cachePolicy.ts";
+import { CI_COMMIT_VARIABLE } from "../buildVersion.ts";
 import { assertClassicWorker } from "./classicWorker.ts";
+import { gitBuildMetadata, gitHead } from "./gitHead.ts";
 import { precachePlugin, type PrecachePluginOptions } from "./precachePlugin.ts";
 
 const POLICY: CachePolicy = {
@@ -883,7 +890,7 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
 
   it("builds one self-contained classic worker with no manifest written in", async () => {
     const root = site("icon");
-    const shared = fileURLToPath(new URL("../buildContract.ts", import.meta.url));
+    const shared = fileURLToPath(new URL("../../web/pwa/buildContract.ts", import.meta.url));
     writeFileSync(
       join(root, "main.js"),
       'import { buildManifestUrl } from "@contract"; console.log(buildManifestUrl("page"));',

@@ -11,27 +11,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // The violations the migration has yet to fix. Remove each entry as it is fixed: the tree must
 // report exactly these, so the table only shrinks.
-const KNOWN_VIOLATIONS: readonly string[] = [
-  "unplaced: src/web/build/buildLabel.ts",
-  "unplaced: src/web/build/buildVersion.ts",
-  "unplaced: src/web/build/phaserBuild.ts",
-  "unplaced: src/web/build/vite/buildInfo.d.ts",
-  "unplaced: src/web/build/vite/contentHash.ts",
-  "unplaced: src/web/build/vite/gameConfig.ts",
-  "unplaced: src/web/build/vite/gitHead.ts",
-  "unplaced: src/web/build/vite/phaserBuildPlugin.ts",
-  "unplaced: src/web/build/vite/phaserSource.ts",
-  "unplaced: src/web/build/vite/phaserUses.ts",
-  "unplaced: src/web/headers/securityHeaders.ts",
-  "unplaced: src/web/headers/vite/securityHeadersPlugin.ts",
-  "unplaced: src/web/mapLimit.ts",
-  "unplaced: src/web/pwa/vite/buildArchiveFiles.ts",
-  "unplaced: src/web/pwa/vite/classicWorker.ts",
-  "unplaced: src/web/pwa/vite/groupArchive.ts",
-  "unplaced: src/web/pwa/vite/hashedIconsPlugin.ts",
-  "unplaced: src/web/pwa/vite/originMemberPacks.ts",
-  "unplaced: src/web/pwa/vite/precachePlugin.ts",
-];
+const KNOWN_VIOLATIONS: readonly string[] = [];
 
 const BANDS: SourceBands = [
   ["Foundation", [["rect.ts"], ["random.ts"]]],

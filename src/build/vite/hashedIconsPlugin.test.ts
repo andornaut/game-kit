@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { build } from "vite";
 import { describe, expect, it } from "vitest";
 
-import { contentHash } from "../../build/vite/contentHash.ts";
+import { contentHash } from "./contentHash.ts";
 import { hashedIconsPlugin, type HashedIconsPluginOptions } from "./hashedIconsPlugin.ts";
 
 const INDEX = `<!doctype html>

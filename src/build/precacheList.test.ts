@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { CachePolicy } from "./cachePolicy.ts";
+import type { CachePolicy } from "../web/pwa/cachePolicy.ts";
 import {
   bundleDependencies,
   type BundleFile,

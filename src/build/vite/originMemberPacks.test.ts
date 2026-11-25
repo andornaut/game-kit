@@ -3,7 +3,10 @@ import { gunzipSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
-import { MAX_ORIGIN_MEMBER_ARCHIVE_BYTES, parseOriginMemberIndex } from "../originMemberIndex.ts";
+import {
+  MAX_ORIGIN_MEMBER_ARCHIVE_BYTES,
+  parseOriginMemberIndex,
+} from "../../web/pwa/originMemberIndex.ts";
 import { buildOriginMemberPacks, type OriginMemberPackOptions } from "./originMemberPacks.ts";
 
 const file = (path: string, body: string, contentType = "text/plain") => ({

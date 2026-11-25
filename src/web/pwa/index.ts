@@ -52,6 +52,7 @@ export {
   readBuildPacks,
   RECORD_CONTENT_TYPE,
   soundFormatOf,
+  validateBuildPacks,
   verifiedJsonFamilies,
   versionRecordText,
 } from "./buildRecords.ts";
@@ -103,4 +104,8 @@ export {
   routesRequest,
   settledPins,
 } from "./routerRules.ts";
-export { validateVerifiedJsonBodies, type VerifiedJsonBody } from "./verifiedJsonBody.ts";
+export {
+  validateVerifiedJsonBodies,
+  verifiedJsonAliasCachePrefix,
+  type VerifiedJsonBody,
+} from "./verifiedJsonBody.ts";

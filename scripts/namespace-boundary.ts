@@ -44,10 +44,7 @@ export function namespaceBoundaryErrors(context: {
     }
     const isTest =
       testTargets.has(path) || /(^|\/)(testing|__tests__)(\/|$)|\.test\.[^.]+$/.test(path);
-    const isBuild =
-      buildTargets.has(path) ||
-      path.includes("/vite/") ||
-      (path.startsWith("src/web/build/") && path !== "src/web/build/buildLabel.ts");
+    const isBuild = buildTargets.has(path) || path.startsWith("src/build/");
     if (isTest || (namespace === "runtime" && isBuild)) {
       diagnostic(`${namespace} reaches ${namespace === "runtime" ? "build/test" : "test"} source`);
       return;

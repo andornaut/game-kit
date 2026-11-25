@@ -7,9 +7,13 @@ import {
   type BuildArchiveFile,
   type BuildArchiveIdentity,
   encodeBuildArchiveIndex,
-} from "../archive/buildArchive.ts";
-import { BUILD_ARCHIVE_PART_BYTES, type BuildArchiveReference } from "../buildContract.ts";
-import { packContentType, soundFormatOf } from "../buildRecords.ts";
+} from "../../web/pwa/archive/index.ts";
+import {
+  BUILD_ARCHIVE_PART_BYTES,
+  type BuildArchiveReference,
+  packContentType,
+  soundFormatOf,
+} from "../../web/pwa/index.ts";
 
 export function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");

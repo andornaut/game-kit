@@ -61,7 +61,7 @@ assert.deepEqual(Object.keys(manifest.peerDependencies), [
   "vitest",
 ]);
 assert.deepEqual(manifest.exports["./build/buildInfo"], {
-  types: "./dist/web/build/vite/buildInfo.d.ts",
+  types: "./dist/build/vite/buildInfo.d.ts",
 });
 assert.equal(
   manifest.exports["./runtime/web/crash/dom/crash.css"],

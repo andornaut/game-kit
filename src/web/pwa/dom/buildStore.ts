@@ -7,7 +7,7 @@
 // Record keys are the same-origin absolute URLs of ACTIVE_RECORD_PATH, STAGED_RECORD_PATH,
 // pinRecordPath(clientId) and buildManifestUrl(version). File entries use the same-origin
 // absolute URL of each file.
-import { mapLimit } from "../../mapLimit.ts";
+import { mapLimit } from "../../../mapLimit.ts";
 import {
   ACTIVE_RECORD_PATH,
   BUILD_HASH_HEADER,

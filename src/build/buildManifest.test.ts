@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildManifestUrl } from "./buildContract.ts";
+import { buildManifestUrl } from "../web/pwa/buildContract.ts";
 import {
   createBuildManifest,
   createBuildPointer,

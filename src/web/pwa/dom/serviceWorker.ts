@@ -1,5 +1,5 @@
 // The router service worker. A game's worker entry calls runServiceWorker with its cache policy,
-// and vite/precachePlugin builds the entry to one classic script. The page downloads, verifies
+// and build/vite/precachePlugin builds the entry to one classic script. The page downloads, verifies
 // and stores each build's archive or manifest and files, and writes the active and staged records
 // (buildContract). The worker downloads nothing: it serves each window the build its pin names,
 // or the active build, from that build's cache, and deletes the pins of closed clients, so the
@@ -10,7 +10,7 @@
 // CLEANUP (added 2026-11-18): remove once all three games deploy the router. Version caches and
 // routing records an earlier kit's worker wrote are left in place for the page to migrate and
 // delete; the router never reads or serves them.
-import { mapLimit } from "../../mapLimit.ts";
+import { mapLimit } from "../../../mapLimit.ts";
 import {
   ACTIVE_RECORD_PATH,
   BUILD_HASH_HEADER,

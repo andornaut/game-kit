@@ -1,6 +1,6 @@
-import { isBuildId } from "../pwa/index.ts";
+import { isBuildId } from "../web/pwa/index.ts";
 
-export { isBuildId } from "../pwa/buildIdentity.ts";
+export { isBuildId } from "../web/pwa/index.ts";
 
 // What the build shows when it knows no commit: no CI variable and no git repository.
 export const UNKNOWN_COMMIT = "dev";
@@ -37,7 +37,7 @@ export function buildMetadata(
 }
 
 // The build's commit, shortened to 8 characters: env's CI_COMMIT_VARIABLE, else readHead (git's
-// HEAD, such as web/build/vite/gitHead), else UNKNOWN_COMMIT. A full hash shortened here, rather
+// HEAD, such as build/vite/gitHead), else UNKNOWN_COMMIT. A full hash shortened here, rather
 // than git's --short, has the same length on every machine.
 export function shortCommit(
   readHead: () => string,

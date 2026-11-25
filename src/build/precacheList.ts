@@ -1,9 +1,10 @@
-import { type CachePolicy, isHashedAssetUrl } from "./cachePolicy.ts";
 import {
+  type CachePolicy,
+  isHashedAssetUrl,
   validateVerifiedJsonBodies,
   verifiedJsonAliasCachePrefix,
   type VerifiedJsonBody,
-} from "./verifiedJsonBody.ts";
+} from "../web/pwa/index.ts";
 
 // The build output, reduced to what the precache walk reads. Vite records the CSS and assets a
 // chunk imports under viteMetadata.

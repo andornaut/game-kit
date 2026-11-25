@@ -3,15 +3,15 @@ import { gunzipSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
-import { parseBuildArchiveIndex } from "../archive/buildArchive.ts";
+import { parseBuildArchiveIndex } from "../../web/pwa/archive/buildArchive.ts";
 import {
   BUILD_ARCHIVE_PART_BYTES,
   buildArchivePartUrl,
   buildManifestUrl,
   GROUP_ARCHIVE_IDENTITY,
-} from "../buildContract.ts";
+} from "../../web/pwa/buildContract.ts";
+import { parseBuildPointer } from "../../web/pwa/buildRecords.ts";
 import { validateBuildPointer } from "../buildManifest.ts";
-import { parseBuildPointer } from "../buildRecords.ts";
 import { encodeGroupArchive } from "./groupArchive.ts";
 
 const text = (value: string) => new TextEncoder().encode(value);

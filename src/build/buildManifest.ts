@@ -2,7 +2,6 @@
 // and the page installer and router read (buildContract). Validation returns a frozen copy built
 // only from the checked fields, and throws TypeError for a wrong shape or type and RangeError for
 // a wrong value.
-import { UNKNOWN_COMMIT } from "../build/buildVersion.ts";
 import {
   BUILD_ARCHIVE_PART_BYTES,
   type BuildArchiveReference,
@@ -11,11 +10,13 @@ import {
   type BuildManifest,
   buildManifestUrl,
   type BuildPointer,
+  isBuildId,
   MAX_UPDATE_UNITS,
-} from "./buildContract.ts";
-import { isBuildId } from "./buildIdentity.ts";
-import { validateBuildPacks } from "./buildRecords.ts";
-import { validateVerifiedJsonBodies, type VerifiedJsonBody } from "./verifiedJsonBody.ts";
+  validateBuildPacks,
+  validateVerifiedJsonBodies,
+  type VerifiedJsonBody,
+} from "../web/pwa/index.ts";
+import { UNKNOWN_COMMIT } from "./buildVersion.ts";
 
 // The buildId of a build without a clean, known source commit, such as a development build.
 export const UNKNOWN_BUILD_ID = UNKNOWN_COMMIT;

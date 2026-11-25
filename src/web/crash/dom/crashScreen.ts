@@ -31,7 +31,7 @@ export interface CrashColours {
 
 export interface CrashScreenOptions {
   readonly bindHoldAction?: HoldActionBinding;
-  // A line naming the build (web/build/buildLabel), above the details.
+  // A line naming the build (web/buildLabel), above the details.
   readonly buildLabel: string;
   readonly colours: CrashColours;
   // Whether the screen shows the message and stack, with a Copy button.

@@ -25,7 +25,7 @@ export function gitBuildMetadata(
   }, env);
 }
 
-// HEAD's full hash, for web/build/buildVersion's shortCommit. Throws when git is missing or dir
+// HEAD's full hash, for build/buildVersion's shortCommit. Throws when git is missing or dir
 // is not in a repository.
 export function gitHead(dir: string): string {
   return execFileSync("git", ["rev-parse", "HEAD"], {

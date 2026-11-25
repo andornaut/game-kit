@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-// Vite's hash length, which web/headers' VITE_HASHED_NAME expects.
+// Vite's hash length, which build/securityHeaders' VITE_HASHED_NAME expects.
 export const HASH_LENGTH = 8;
 
 // The first HASH_LENGTH characters of the bytes' SHA-256, in URL-safe base64, as Vite hashes a

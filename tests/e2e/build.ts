@@ -8,17 +8,14 @@ import { fileURLToPath } from "node:url";
 
 import { build, type Plugin } from "vite";
 
+import { validateBuildManifest, validateBuildPointer } from "../../src/build/buildManifest.ts";
+import { precachePlugin, type PrecachePluginOptions } from "../../src/build/vite/precachePlugin.ts";
 import {
   BUILD_POINTER_URL,
   type BuildManifest,
   type BuildPointer,
 } from "../../src/web/pwa/buildContract.ts";
-import { validateBuildManifest, validateBuildPointer } from "../../src/web/pwa/buildManifest.ts";
 import { parseBuildPointer } from "../../src/web/pwa/buildRecords.ts";
-import {
-  precachePlugin,
-  type PrecachePluginOptions,
-} from "../../src/web/pwa/vite/precachePlugin.ts";
 import { POLICY } from "./fixture/policy.ts";
 
 const FIXTURE = fileURLToPath(new URL("fixture/", import.meta.url));
