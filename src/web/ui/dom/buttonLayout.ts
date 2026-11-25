@@ -4,7 +4,7 @@ import {
   type ButtonMetrics,
   type ButtonPlacement,
   type ButtonRole,
-} from "../../../ui/buttonLayout.ts";
+} from "../../../ui/index.ts";
 import { writeLayoutProperties } from "./layoutProperties.ts";
 
 export interface ButtonFrameContext {

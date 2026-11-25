@@ -1,5 +1,5 @@
-import type { SaveStorage } from "../../../save/storage.ts";
-import { browserStorage, lazyStorage } from "../storage.ts";
+import type { SaveStorage } from "../../../save/index.ts";
+import { browserStorage, lazyStorage } from "../index.ts";
 
 // The page's localStorage as SaveStorage, looked up on each call (lazyStorage), so a missing or
 // blocked localStorage rejects each operation instead of throwing here.

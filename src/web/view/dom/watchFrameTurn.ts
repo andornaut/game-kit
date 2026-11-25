@@ -1,13 +1,13 @@
 // Applying the page frame's turn (../frameTurn.ts) to the page: marking it on <html> for the
 // turned-frame stylesheet as the screen turns, and asking the browser to hold the game's
 // orientation.
-import type { FrameTurn } from "../../../view/pagePoint.ts";
+import type { FrameTurn } from "../../../view/index.ts";
 import {
   FRAME_TURN_ATTRIBUTE,
   frameTurnFor,
   type GameOrientation,
   turnedFrameQuery,
-} from "../frameTurn.ts";
+} from "../index.ts";
 
 // The parts of window watchFrameTurn reads, so tests can pass a fake.
 export interface FrameTurnHost {

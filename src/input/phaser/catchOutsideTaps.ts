@@ -6,7 +6,7 @@ import {
   outsidePressDown,
   outsidePressMove,
   outsideTapped,
-} from "../outsideTap.ts";
+} from "../index.ts";
 
 // The scene input's own events, and its stopPropagation, which keeps the event from every scene
 // under it.

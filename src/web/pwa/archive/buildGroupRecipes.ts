@@ -1,11 +1,11 @@
-import { encodeBuildArchiveIndex } from "./buildArchive.ts";
 import {
   BUILD_ARCHIVE_PART_BYTES,
   type BuildArchiveReference,
   GROUP_ARCHIVE_IDENTITY,
   MAX_UPDATE_UNITS,
-} from "./buildContract.ts";
-import { parseBuildArchiveReference } from "./buildRecords.ts";
+  parseBuildArchiveReference,
+} from "../index.ts";
+import { encodeBuildArchiveIndex } from "./buildArchive.ts";
 
 export type UpdateGroupRecipeFile = readonly [
   url: string,

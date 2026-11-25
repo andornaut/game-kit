@@ -1,4 +1,4 @@
-import { type FocusKeyAction, focusKeyAction, stepFocus } from "../../../ui/focusKeys.ts";
+import { type FocusKeyAction, focusKeyAction, stepFocus } from "../../../ui/index.ts";
 import { focusTarget, trackInputModality } from "./focusModality.ts";
 
 // One modal layer shared by every card a game opens over its UI root. The top modal alone takes

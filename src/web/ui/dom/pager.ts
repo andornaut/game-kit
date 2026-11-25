@@ -1,10 +1,13 @@
-import type { HoldRule } from "../../../input/hold.ts";
-import type {
-  ActionArrangement,
-  ActionGapSelection,
-  ActionPress,
-} from "../../../ui/actionGroup.ts";
-import { PAGER_GAP, type PagerPart, type PagerSizes, type PagerState } from "../../../ui/pager.ts";
+import type { HoldRule } from "../../../input/index.ts";
+import {
+  type ActionArrangement,
+  type ActionGapSelection,
+  type ActionPress,
+  PAGER_GAP,
+  type PagerPart,
+  type PagerSizes,
+  type PagerState,
+} from "../../../ui/index.ts";
 import { type ActionGroupView, createActionGroup } from "./actionGroup.ts";
 import { type ButtonAppearance, type ButtonView, createButton } from "./button.ts";
 import { type RefusalCue, refuse } from "./refusalCue.ts";

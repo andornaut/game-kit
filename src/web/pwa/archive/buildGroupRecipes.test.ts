@@ -1,11 +1,11 @@
 import { expect, it } from "vitest";
 
-import { encodeBuildArchiveIndex } from "./buildArchive.ts";
 import {
   BUILD_ARCHIVE_PART_BYTES,
   MAX_UPDATE_UNITS,
   updateGroupRecipesPath,
-} from "./buildContract.ts";
+} from "../buildContract.ts";
+import { encodeBuildArchiveIndex } from "./buildArchive.ts";
 import {
   encodeUpdateGroupRecipePrefix,
   parseUpdateGroupRecipes,

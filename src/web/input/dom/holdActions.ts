@@ -1,11 +1,11 @@
 import {
+  guardPassed,
   type HoldPress,
   type HoldRule,
   moveHold,
   startHold,
   tickHold,
-} from "../../../input/hold.ts";
-import { guardPassed } from "../../../input/tapGuard.ts";
+} from "../../../input/index.ts";
 import type { PressGuard } from "../../ui/dom/domPress.ts";
 
 export interface HoldAction {

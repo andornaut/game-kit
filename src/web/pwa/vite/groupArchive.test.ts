@@ -3,7 +3,7 @@ import { gunzipSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
-import { parseBuildArchiveIndex } from "../buildArchive.ts";
+import { parseBuildArchiveIndex } from "../archive/buildArchive.ts";
 import {
   BUILD_ARCHIVE_PART_BYTES,
   buildArchivePartUrl,

@@ -3,16 +3,18 @@ import {
   type BuildArchiveIndex,
   parseBuildArchiveIndex,
   readBuildArchivePrefixSize,
-} from "../buildArchive.ts";
+} from "../archive/index.ts";
 import {
   BUILD_HASH_HEADER,
   type BuildArchiveReference,
   buildCacheName,
   type BuildPointer,
   type BuildPolicy,
+  isBuildVersion,
+  parseBuildPointer,
+  RECORD_CONTENT_TYPE,
   recordsCacheName,
-} from "../buildContract.ts";
-import { isBuildVersion, parseBuildPointer, RECORD_CONTENT_TYPE } from "../buildRecords.ts";
+} from "../index.ts";
 import { withBuildStateLock } from "./buildStore.ts";
 
 // The records-cache marker uses archive-record-<version>.json alongside the legacy manifest.

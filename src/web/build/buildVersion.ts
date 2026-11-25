@@ -1,4 +1,4 @@
-import { isBuildId } from "../pwa/buildIdentity.ts";
+import { isBuildId } from "../pwa/index.ts";
 
 export { isBuildId } from "../pwa/buildIdentity.ts";
 

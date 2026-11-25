@@ -1,11 +1,12 @@
-import type { HoldRule } from "../../../input/hold.ts";
-import type { ButtonMetrics, ButtonRole } from "../../../ui/buttonLayout.ts";
+import type { HoldRule } from "../../../input/index.ts";
 import {
+  type ButtonMetrics,
+  type ButtonRole,
   type ControlAvailability,
   type ControlPresentation,
   controlPresentation,
-} from "../../../ui/controlPresentation.ts";
-import type { HoldAction } from "../../input/dom/holdActions.ts";
+} from "../../../ui/index.ts";
+import type { HoldAction } from "../../input/dom/index.ts";
 import {
   type ButtonFrameContext,
   type ButtonGroupContext,

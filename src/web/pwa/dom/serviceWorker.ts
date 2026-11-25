@@ -18,22 +18,21 @@ import {
   type BuildFile,
   buildManifestUrl,
   type BuildPolicy,
-  pinRecordPath,
-  recordsCacheName,
-  STAGED_RECORD_PATH,
-} from "../buildContract.ts";
-import { RECORD_CONTENT_TYPE, versionRecordText } from "../buildRecords.ts";
-import { cacheKeyFor } from "../cachePolicy.ts";
-import {
+  cacheKeyFor,
   intervalElapsed,
   PIN_PRUNE_MS,
   pinnedClient,
+  pinRecordPath,
+  RECORD_CONTENT_TYPE,
+  recordsCacheName,
   type RouterBuild,
   routerBuild,
   routesRequest,
   settledPins,
-} from "../routerRules.ts";
-import type { VerifiedJsonBody } from "../verifiedJsonBody.ts";
+  STAGED_RECORD_PATH,
+  type VerifiedJsonBody,
+  versionRecordText,
+} from "../index.ts";
 import { BUILD_ARCHIVE_ROUTER_PROBE, BUILD_GROUP_ROUTER_PROBE } from "./buildArchiveRouter.ts";
 import { createBuildArchiveStore } from "./buildArchiveStore.ts";
 import { type BuildGroupFile, createBuildGroupStore } from "./buildGroupStore.ts";
@@ -83,7 +82,7 @@ const versionRecord = (version: string) =>
 const CHECK_CONCURRENCY = 16;
 const RETAINED_ARCHIVES = 2;
 
-export { PIN_PRUNE_MS } from "../routerRules.ts";
+export { PIN_PRUNE_MS } from "../index.ts";
 
 type RoutedFiles = ReadonlyMap<string, BuildGroupFile>;
 

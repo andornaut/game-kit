@@ -1,7 +1,6 @@
 // The verified JSON response rules (verifiedJsonBody) that the page installer applies before it
 // stores a family member and the router applies before it serves or stores one.
-import { BUILD_HASH_HEADER } from "../buildContract.ts";
-import type { VerifiedJsonBody } from "../verifiedJsonBody.ts";
+import { BUILD_HASH_HEADER, type VerifiedJsonBody } from "../index.ts";
 
 const JSON_CONTENT_TYPE = /^application\/json(?:\s*;\s*charset\s*=\s*(?:"utf-8"|utf-8))?\s*$/i;
 

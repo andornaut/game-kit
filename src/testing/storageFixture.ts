@@ -1,5 +1,5 @@
 // SaveStorage for tests over a Map, with the failures browser storage produces.
-import type { SaveStorage } from "../save/storage.ts";
+import type { SaveStorage } from "../save/index.ts";
 import { checkRead, checkWrite, type StorageFailures } from "./storageFailures.ts";
 
 export type { StorageFailures } from "./storageFailures.ts";

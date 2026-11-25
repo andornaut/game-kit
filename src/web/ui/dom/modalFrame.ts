@@ -1,14 +1,14 @@
-import type { ModalInputGate, ModalInputScope } from "../../../input/modalInput.ts";
-import type { ActionArrangement } from "../../../ui/actionGroup.ts";
+import type { ModalInputGate, ModalInputScope } from "../../../input/index.ts";
 import {
+  type ActionArrangement,
   MODAL_FRAME,
   type ModalFrameContext,
   type ModalFrameLayout,
   modalFrameRooms,
   type ModalTitleSize,
   placeModalFrame,
-} from "../../../ui/modalFrame.ts";
-import { textRoleClass } from "../../../ui/uiTheme.ts";
+  textRoleClass,
+} from "../../../ui/index.ts";
 import {
   type ActionGroupView,
   createActionGroup,

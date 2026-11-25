@@ -1,9 +1,9 @@
-import { buildArchivePartUrl } from "../buildContract.ts";
 import {
   encodeUpdateGroupRecipePrefix,
   parseUpdateGroupRecipes,
   type UpdateGroupRecipe,
-} from "../buildGroupRecipes.ts";
+} from "../archive/index.ts";
+import { buildArchivePartUrl } from "../index.ts";
 import { checkArchiveDigest, readExactArchiveBytes } from "./verifiedArchiveBytes.ts";
 
 interface UpdateGroupArchiveReaderContext {

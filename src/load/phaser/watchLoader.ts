@@ -1,9 +1,8 @@
 import { Loader, type Scene, Scenes, type Types } from "phaser";
 
-import type { Timer } from "../../clock/timer.ts";
+import type { Timer } from "../../clock/index.ts";
 import type { ProgressHandle } from "../../progressState.ts";
-import { createFileShare } from "../fileShare.ts";
-import { RETRY_ROUNDS_MS } from "../loaderConfig.ts";
+import { createFileShare, RETRY_ROUNDS_MS } from "../index.ts";
 
 // Phaser 4.2.1's loader methods that queue a multi-file load, which a retry round queues again
 // whole.

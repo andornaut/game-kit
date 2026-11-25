@@ -1,5 +1,5 @@
 // The page's sessionStorage as a session store that never throws (createSessionStore).
-import { createSessionStore } from "../sessionStore.ts";
+import { createSessionStore } from "../index.ts";
 
 const store = createSessionStore(() => globalThis.sessionStorage);
 

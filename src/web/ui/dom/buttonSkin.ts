@@ -1,4 +1,4 @@
-import { type AsepriteSheet, type AsepriteTag, sheetTags } from "../../../art/aseprite.ts";
+import { type AsepriteSheet, type AsepriteTag, sheetTags } from "../../../art/index.ts";
 import type { Rect } from "../../../rect.ts";
 import { cutFrame } from "./sheetFrames.ts";
 

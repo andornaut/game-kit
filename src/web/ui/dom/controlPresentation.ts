@@ -5,7 +5,7 @@ import {
   type DisclosureStyle,
   type PageDividerStyle,
   validatePageDivider,
-} from "../../../ui/controlPresentation.ts";
+} from "../../../ui/index.ts";
 import { writeLayoutProperties } from "./layoutProperties.ts";
 import { createChromeSvg } from "./vectorChrome.ts";
 

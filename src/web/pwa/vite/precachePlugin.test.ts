@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CI_COMMIT_VARIABLE } from "../../build/buildVersion.ts";
 import { gitBuildMetadata, gitHead } from "../../build/vite/gitHead.ts";
-import { parseBuildArchiveIndex, readBuildArchivePrefixSize } from "../buildArchive.ts";
+import { parseBuildArchiveIndex, readBuildArchivePrefixSize } from "../archive/buildArchive.ts";
 import {
   BUILD_ARCHIVE_PART_BYTES,
   BUILD_POINTER_URL,

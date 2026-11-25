@@ -1,4 +1,4 @@
-import { originMemberArchivePath, parseOriginMemberIndex } from "../originMemberIndex.ts";
+import { originMemberArchivePath, parseOriginMemberIndex } from "../index.ts";
 import { checkArchiveDigest, inflateGzip, readExactArchiveBytes } from "./verifiedArchiveBytes.ts";
 
 interface OriginMemberReaderContext {

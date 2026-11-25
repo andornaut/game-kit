@@ -5,9 +5,8 @@
 // stylesheet takes the uiTheme text roles and colour slots set on the document root, else these
 // colours and its own type. It tracks the input modality from install and focuses Reload through
 // focusTarget (web/ui/dom/focusModality), so the focus fill shows only after keyboard input.
-import type { HoldActionBinding } from "../../input/dom/holdActions.ts";
-import { focusTarget, trackInputModality } from "../../ui/dom/focusModality.ts";
-import { createNativeButton } from "../../ui/dom/nativeButton.ts";
+import type { HoldActionBinding } from "../../input/dom/index.ts";
+import { createNativeButton, focusTarget, trackInputModality } from "../../ui/dom/index.ts";
 import {
   crashGate,
   type CrashReport,
@@ -15,7 +14,7 @@ import {
   type CrashWords,
   reportFromErrorEvent,
   reportFromRejection,
-} from "../crashModel.ts";
+} from "../index.ts";
 
 // The screen's colours, as CSS colours: the page behind the panel and a button's text, the text
 // and the panel's border, a button's face and the lip under it (its pressed edge), and the

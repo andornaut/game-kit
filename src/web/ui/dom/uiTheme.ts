@@ -3,7 +3,7 @@ import {
   textRoleProperties,
   type TextRoles,
   type UiColours,
-} from "../../../ui/uiTheme.ts";
+} from "../../../ui/index.ts";
 import { writeLayoutProperties } from "./layoutProperties.ts";
 
 // The theme root attribute. uiTheme.css applies the button face fills only inside it, so loading

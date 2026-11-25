@@ -1,4 +1,4 @@
-import { type InstallStepsKind, offersInstall } from "../installState.ts";
+import { type InstallStepsKind, offersInstall } from "../index.ts";
 import type { InstallFlow } from "./installFlow.ts";
 
 // Shows only the kind's section of the steps, or the other section where the dialog has none for

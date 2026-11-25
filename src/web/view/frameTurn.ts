@@ -6,7 +6,7 @@
 // dom/watchFrameTurn as the page loads, which picks the turn with frameTurnFor and marks it on
 // <html> as FRAME_TURN_ATTRIBUTE for the stylesheet. phaser/followFrameTurn has Phaser measure
 // and map pointers through the turn.
-import type { FrameTurn } from "../../view/pagePoint.ts";
+import type { FrameTurn } from "../../view/index.ts";
 
 export type GameOrientation = "landscape" | "portrait";
 

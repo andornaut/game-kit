@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { BUILD_ARCHIVE_HEADER_BYTES, encodeBuildArchiveIndex } from "../buildArchive.ts";
+import { BUILD_ARCHIVE_HEADER_BYTES, encodeBuildArchiveIndex } from "../archive/buildArchive.ts";
 import {
   BUILD_HASH_HEADER,
   buildCacheName,

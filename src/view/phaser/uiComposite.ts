@@ -1,4 +1,4 @@
-import type { RgbaImage } from "../../art/rgbaImageTypes.ts";
+import type { RgbaImage } from "../../art/index.ts";
 import {
   presentUi,
   releaseUiTintCache,

@@ -9,7 +9,7 @@ import {
   type LayoutSchema,
   type LayoutSlots,
   validateLayoutTree,
-} from "../../../ui/layoutTree.ts";
+} from "../../../ui/index.ts";
 import { writeLayoutProperties } from "./layoutProperties.ts";
 
 export interface LayoutPart<Props, Slot extends string> {

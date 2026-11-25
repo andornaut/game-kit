@@ -4,7 +4,7 @@ import {
   type HudDiscSize,
   type IconBearings,
   NO_BEARINGS,
-} from "../../../ui/hudDisc.ts";
+} from "../../../ui/index.ts";
 import { type ButtonOptions, type ButtonView, createButton } from "./button.ts";
 import { writeLayoutProperties } from "./layoutProperties.ts";
 import { REFUSAL_ATTRIBUTES } from "./refusalCue.ts";

@@ -18,17 +18,15 @@ import {
   type BuildPolicy,
   type BuildState,
   type InstalledManifest,
-  pinRecordPath,
-  recordsCacheName,
-  STAGED_RECORD_PATH,
-} from "../buildContract.ts";
-import {
   isBuildVersion,
   parseBuildManifest,
   parseVersionRecord,
+  pinRecordPath,
   RECORD_CONTENT_TYPE,
+  recordsCacheName,
+  STAGED_RECORD_PATH,
   versionRecordText,
-} from "../buildRecords.ts";
+} from "../index.ts";
 
 const PIN_PREFIX = pinRecordPath("");
 const BUILD_RECORD_PATH = /^\/\.game-kit\/(?:manifest|archive-record|group-record)-([^/]+)\.json$/;

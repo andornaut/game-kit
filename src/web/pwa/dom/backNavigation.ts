@@ -1,9 +1,4 @@
-import {
-  BACK_GUARD_GESTURES,
-  backGuardState,
-  ESCAPE_KEY,
-  isBackGuardState,
-} from "../backNavigation.ts";
+import { BACK_GUARD_GESTURES, backGuardState, ESCAPE_KEY, isBackGuardState } from "../index.ts";
 
 export interface HistoryLike {
   // How many entries the window's session history holds, before and after the current one.

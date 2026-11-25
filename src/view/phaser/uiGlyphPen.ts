@@ -1,6 +1,6 @@
 import type { Types } from "phaser";
 
-import type { Quad, UiGlyphPen } from "../../view/phaser/uiCommands.ts";
+import type { Quad, UiGlyphPen } from "./uiCommands.ts";
 
 export function uiGlyphPen(
   context: Readonly<{ baseline: number }>,

@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { encodeBuildArchiveIndex } from "../buildArchive.ts";
+import { encodeBuildArchiveIndex } from "../archive/buildArchive.ts";
+import type { UpdateGroupRecipeFile, UpdateGroupRecipes } from "../archive/buildGroupRecipes.ts";
 import { buildArchivePartUrl, GROUP_ARCHIVE_IDENTITY } from "../buildContract.ts";
-import type { UpdateGroupRecipeFile, UpdateGroupRecipes } from "../buildGroupRecipes.ts";
 import { createUpdateGroupArchiveReader } from "./updateGroupArchiveReader.ts";
 
 const digest = (body: Uint8Array) => createHash("sha256").update(body).digest("hex");

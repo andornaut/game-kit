@@ -3,13 +3,15 @@
 // tiers, strings, art and storage keys. This module judges conditions, orders and awards
 // badges, keeps the earned record in its own versioned save and queues unlock notices.
 import {
+  type Checked,
+  type SaveFormat,
   type SaveKeys,
+  type SaveStorage,
   saveStore,
+  type StoredObject,
   type StoreLoadResult,
   type StoreSaveResult,
-} from "./save/saveStore.ts";
-import type { SaveStorage } from "./save/storage.ts";
-import type { Checked, SaveFormat, StoredObject } from "./save/versionedSave.ts";
+} from "./save/index.ts";
 
 // A badge. It carries no display strings: a game extends it with its own presentation fields.
 export interface AchievementDef<

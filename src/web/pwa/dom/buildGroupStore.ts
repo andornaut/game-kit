@@ -2,7 +2,7 @@ import {
   BUILD_ARCHIVE_HEADER_BYTES,
   parseBuildArchiveIndex,
   readBuildArchivePrefixSize,
-} from "../buildArchive.ts";
+} from "../archive/index.ts";
 import {
   BUILD_HASH_HEADER,
   buildArchivePartUrl,
@@ -12,9 +12,11 @@ import {
   type BuildPointer,
   type BuildPolicy,
   GROUP_ARCHIVE_IDENTITY,
+  isBuildVersion,
+  parseBuildPointer,
+  RECORD_CONTENT_TYPE,
   recordsCacheName,
-} from "../buildContract.ts";
-import { isBuildVersion, parseBuildPointer, RECORD_CONTENT_TYPE } from "../buildRecords.ts";
+} from "../index.ts";
 import { withBuildStateLock } from "./buildStore.ts";
 
 // The pointer launch installs on this device (buildRecords' installedPointer), so the marker,

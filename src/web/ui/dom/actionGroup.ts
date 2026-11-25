@@ -2,8 +2,9 @@ import {
   type ActionArrangement,
   type ActionGroupContext,
   arrangeActions,
-} from "../../../ui/actionGroup.ts";
-import type { ButtonRole, ButtonSize } from "../../../ui/buttonLayout.ts";
+  type ButtonRole,
+  type ButtonSize,
+} from "../../../ui/index.ts";
 import { writeLayoutProperties } from "./layoutProperties.ts";
 import { readUnit } from "./viewUnits.ts";
 

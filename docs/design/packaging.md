@@ -24,8 +24,9 @@ Imports are relative, and runtime imports are acyclic: ESLint's `import-x/no-cyc
 ## Source bands
 
 `src/` follows the shared source structure (game-coordinator gc-0029). Each band holds layers,
-lowest first. A module imports only areas in earlier layers, type-only imports included, and a
-directory area only through its `index.ts`, which re-exports what other areas use. An area is a
+lowest first. A module imports only areas in its own layer or an earlier one, type-only imports
+included, and a directory area only through its `index.ts`, which re-exports what other areas use.
+Runtime imports form no cycle, so only type-only imports may form one, within a layer. An area is a
 file in `src/` or `src/web/`, or the files directly in one directory; `build/` and `testing/` are
 whole trees. Package exports stay the consumer surface. Tests beside their modules and
 `tests/e2e/` may import any module. The kit has no page entries, so no Entries band.
@@ -40,6 +41,7 @@ whole trees. Package exports stay the consumer surface. Tests beside their modul
 | Presentation     | 1     | `art/`, `input/`, `modalLayout`, `motion`, `progress`, `text/`, `view/`                                                                                  |
 |                  | 2     | `ui/`, `web/view/`                                                                                                                                       |
 | Platform         | 1     | `load/`, `progressState`, `web/buildLabel`, `web/crash/`, `web/pwa/`                                                                                     |
+|                  | 2     | `web/pwa/archive/` (the build archive codec, which needs `TextEncoder`)                                                                                  |
 | Engine and views | 1     | `clock/phaser/`, `input/phaser/`, `load/phaser/`, `progress/phaser/`, `text/phaser/`, `view/phaser/`, `web/input/dom/`, `web/save/dom/`, `web/view/dom/` |
 |                  | 2     | `web/ui/dom/`, `web/view/phaser/`                                                                                                                        |
 |                  | 3     | `web/crash/dom/`, `web/progress/dom/`                                                                                                                    |

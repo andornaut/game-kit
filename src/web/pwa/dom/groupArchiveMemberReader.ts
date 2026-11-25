@@ -6,13 +6,13 @@ import {
   type BuildArchiveEntry,
   parseBuildArchiveIndex,
   readBuildArchivePrefixSize,
-} from "../buildArchive.ts";
+} from "../archive/index.ts";
 import {
   type BuildGroupReference,
   buildGroupUrl,
   GROUP_ARCHIVE_IDENTITY,
-} from "../buildContract.ts";
-import { parseBuildPointer } from "../buildRecords.ts";
+  parseBuildPointer,
+} from "../index.ts";
 import { checkArchiveDigest, inflateGzip, readExactArchiveBytes } from "./verifiedArchiveBytes.ts";
 
 interface GroupArchiveMemberReaderContext {

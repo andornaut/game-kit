@@ -1,4 +1,4 @@
-import { type FormRowLayout, formRowPresentation } from "../../../ui/formRow.ts";
+import { type FormRowLayout, formRowPresentation } from "../../../ui/index.ts";
 import { type ButtonOptions, type ButtonState, type ButtonView, createButton } from "./button.ts";
 import { writeLayoutProperties } from "./layoutProperties.ts";
 import { REFUSAL_ATTRIBUTES } from "./refusalCue.ts";

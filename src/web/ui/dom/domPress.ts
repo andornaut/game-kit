@@ -1,7 +1,10 @@
-import type { ModalInputScope } from "../../../input/modalInput.ts";
-import { followOnePress } from "../../../input/onePress.ts";
-import { type OutsidePress, outsidePressMove } from "../../../input/outsideTap.ts";
-import { guardPassed } from "../../../input/tapGuard.ts";
+import {
+  followOnePress,
+  guardPassed,
+  type ModalInputScope,
+  type OutsidePress,
+  outsidePressMove,
+} from "../../../input/index.ts";
 import { readUnit } from "./viewUnits.ts";
 
 // DOM presses under the modal input gate (input/modalInput): a press captures the gate on its

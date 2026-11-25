@@ -1,6 +1,6 @@
 import type { Types } from "phaser";
 
-import type { BitmapFont, BitmapGlyph } from "../bitmapFont.ts";
+import type { BitmapFont, BitmapGlyph } from "../index.ts";
 
 // A glyph as Phaser's bitmap font parsers cache it. Phaser's typedef leaves out xAdvance, its
 // advance, which the parsers set.

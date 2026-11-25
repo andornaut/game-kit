@@ -6,7 +6,7 @@ import {
   type InstallStepsKind,
   installStepsKind,
   runsAsApp,
-} from "../installState.ts";
+} from "../index.ts";
 
 // Chromium's beforeinstallprompt event, which no TypeScript lib types.
 export interface InstallPromptEvent extends Event {

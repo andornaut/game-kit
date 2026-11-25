@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { encodeBuildArchiveIndex } from "../buildArchive.ts";
+import { encodeBuildArchiveIndex } from "../archive/buildArchive.ts";
 import {
   BUILD_HASH_HEADER,
   buildArchivePartUrl,

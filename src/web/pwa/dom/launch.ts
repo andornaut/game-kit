@@ -8,8 +8,9 @@ import {
   type LoadingFailurePresentationView,
   type LoadingFailureView,
   mountLoadingFailure,
-} from "../../progress/dom/loadingFailure.ts";
+} from "../../progress/dom/index.ts";
 import {
+  bootBytesOf,
   BUILD_POINTER_URL,
   type BuildArchiveReference,
   type BuildGroupReference,
@@ -17,28 +18,21 @@ import {
   type BuildPointer,
   type BuildPolicy,
   type BuildState,
-  type InstalledManifest,
-  type LaunchFailure,
-  type LaunchProgress,
-  type LaunchResult,
-  type NetworkPlayNotice,
-  ObsoleteUpdateOfferError,
-  type UpdateOffer,
-  type UpdateState,
-} from "../buildContract.ts";
-import {
-  installedManifest,
-  installedPointer,
-  parseBuildManifest,
-  parseBuildPointer,
-} from "../buildRecords.ts";
-import {
-  bootBytesOf,
   canPublishStaged,
   failureReason,
+  type InstalledManifest,
+  installedManifest,
+  installedPointer,
   LaunchError,
+  type LaunchFailure,
+  type LaunchProgress,
   launchProgress,
+  type LaunchResult,
+  type NetworkPlayNotice,
   nextUpdateRetryMs,
+  ObsoleteUpdateOfferError,
+  parseBuildManifest,
+  parseBuildPointer,
   parseProgressCarry,
   type ProgressCarry,
   progressCarryText,
@@ -46,7 +40,9 @@ import {
   requiredUpdateCandidate,
   sameUpdateState,
   updateCheckWait,
-} from "../launchRules.ts";
+  type UpdateOffer,
+  type UpdateState,
+} from "../index.ts";
 import { downloadBuildArchive, downloadBuildGroup } from "./buildArchiveDownload.ts";
 import { BUILD_GROUP_ROUTER_PROBE, supportsBuildArchive } from "./buildArchiveRouter.ts";
 import { type BuildArchiveStore, createBuildArchiveStore } from "./buildArchiveStore.ts";
@@ -152,7 +148,7 @@ export interface Launch {
   dispose(): void;
 }
 
-export { UPDATE_CHECK_MS, UPDATE_RETRY_MAX_MS, UPDATE_RETRY_MS } from "../launchRules.ts";
+export { UPDATE_CHECK_MS, UPDATE_RETRY_MAX_MS, UPDATE_RETRY_MS } from "../index.ts";
 
 // How long a completed first install waits for the router to control the page before reloading.
 export const CONTROL_WAIT_MS = 10_000;

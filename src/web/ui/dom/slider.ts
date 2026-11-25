@@ -5,7 +5,7 @@ import {
   sliderPresentation,
   sliderStepAt,
   sliderStepForKey,
-} from "../../../ui/slider.ts";
+} from "../../../ui/index.ts";
 import { focusTarget } from "./focusModality.ts";
 import {
   FORM_ROW_CLASS,

@@ -7,7 +7,7 @@ import {
   type BuildArchiveFile,
   type BuildArchiveIdentity,
   encodeBuildArchiveIndex,
-} from "../buildArchive.ts";
+} from "../archive/buildArchive.ts";
 import { BUILD_ARCHIVE_PART_BYTES, type BuildArchiveReference } from "../buildContract.ts";
 import { packContentType, soundFormatOf } from "../buildRecords.ts";
 

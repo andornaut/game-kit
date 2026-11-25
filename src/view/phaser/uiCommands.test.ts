@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { uiGlyphPen } from "../../text/phaser/uiGlyphPen.ts";
 import {
   presentUi,
   type Quad,
@@ -10,6 +9,7 @@ import {
   type UiWorldReadContext,
 } from "./uiCommands.ts";
 import { createUiCompositor, readUiWorldFrame } from "./uiComposite.ts";
+import { uiGlyphPen } from "./uiGlyphPen.ts";
 import { uiProjection } from "./uiProjection.ts";
 
 function surface(width: number, height: number) {

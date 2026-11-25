@@ -8,7 +8,9 @@
     "src/testing/dom/failingLocalStorage.ts",
     "src/web/crash/dom/crashScreen.ts",
     "src/web/input/dom/holdActions.ts",
+    "src/web/input/dom/index.ts",
     "src/web/input/dom/pagePresses.ts",
+    "src/web/progress/dom/index.ts",
     "src/web/progress/dom/loadingFailure.ts",
     "src/web/progress/dom/progressBar.ts",
     "src/web/progress/dom/retryFocus.ts",
@@ -45,6 +47,7 @@
     "src/web/ui/dom/formRow.ts",
     "src/web/ui/dom/hudDisc.ts",
     "src/web/ui/dom/imageReady.ts",
+    "src/web/ui/dom/index.ts",
     "src/web/ui/dom/layoutProperties.ts",
     "src/web/ui/dom/layoutTree.ts",
     "src/web/ui/dom/modalFrame.ts",
@@ -57,6 +60,7 @@
     "src/web/ui/dom/uiTheme.ts",
     "src/web/ui/dom/vectorChrome.ts",
     "src/web/ui/dom/viewUnits.ts",
+    "src/web/view/dom/index.ts",
     "src/web/view/dom/watchFrameTurn.ts"
   ]
 }

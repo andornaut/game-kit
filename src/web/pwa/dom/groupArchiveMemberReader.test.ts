@@ -3,7 +3,7 @@ import { gzipSync } from "node:zlib";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { encodeBuildArchiveIndex } from "../buildArchive.ts";
+import { encodeBuildArchiveIndex } from "../archive/buildArchive.ts";
 import {
   buildArchivePartUrl,
   buildGroupUrl,

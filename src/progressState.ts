@@ -1,5 +1,5 @@
 import { assertNever } from "./assertNever.ts";
-import type { Timer } from "./clock/timer.ts";
+import type { Timer } from "./clock/index.ts";
 import { clamp01 } from "./numbers.ts";
 import type { ProgressDisplay, ProgressValue } from "./progress.ts";
 

@@ -4,7 +4,7 @@ import {
   type BuildArchiveReference,
   type BuildGroupReference,
   buildGroupUrl,
-} from "../buildContract.ts";
+} from "../index.ts";
 import type { BuildInstallContext } from "./buildInstaller.ts";
 import { checkArchiveDigest, inflateGzip, readExactArchiveBytes } from "./verifiedArchiveBytes.ts";
 

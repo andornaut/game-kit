@@ -9,7 +9,8 @@ import ts from "typescript";
 
 // Bands lowest first, each a list of layers lowest first. An area is a file (`rect.ts`), the
 // files directly in a directory (`ui`) or a whole directory tree (`build/**`), relative to src/.
-// A module imports only areas in earlier layers, and a directory area only through its index.ts.
+// A module imports only areas in its own layer or an earlier one, type-only imports included, and
+// a directory area only through its index.ts. Runtime imports never form a cycle.
 export type SourceBands = readonly (readonly [
   band: string,
   layers: readonly (readonly string[])[],
@@ -44,7 +45,13 @@ export const SOURCE_BANDS: SourceBands = [
       ["ui", "web/view"],
     ],
   ],
-  ["Platform", [["load", "progressState.ts", "web/buildLabel.ts", "web/crash", "web/pwa"]]],
+  [
+    "Platform",
+    [
+      ["load", "progressState.ts", "web/buildLabel.ts", "web/crash", "web/pwa"],
+      ["web/pwa/archive"],
+    ],
+  ],
   [
     "Engine and views",
     [
@@ -201,7 +208,7 @@ export function sourceBandProblems(context: {
         problems.add(`support import: ${path} -> ${target}`);
       } else if (from === undefined || to === undefined || from.area === to.area) {
         continue;
-      } else if (to.layer >= from.layer) {
+      } else if (to.layer > from.layer) {
         problems.add(`upward import: ${path} -> ${target}`);
       } else if (target !== to.entry) {
         problems.add(`non-entry import: ${path} -> ${target}`);

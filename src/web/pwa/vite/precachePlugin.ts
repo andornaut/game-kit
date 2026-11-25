@@ -3,7 +3,8 @@ import type { Plugin, ResolvedConfig } from "vite";
 import { isBuildId } from "../../build/buildVersion.ts";
 import { contentHash } from "../../build/vite/contentHash.ts";
 import { gitBuildMetadata } from "../../build/vite/gitHead.ts";
-import type { BuildArchiveFile } from "../buildArchive.ts";
+import type { BuildArchiveFile } from "../archive/buildArchive.ts";
+import { parseUpdateGroupRecipes, type UpdateGroupRecipes } from "../archive/buildGroupRecipes.ts";
 import {
   BUILD_ARCHIVE_PART_BYTES,
   BUILD_POINTER_URL,
@@ -18,7 +19,6 @@ import {
   MAX_UPDATE_UNITS,
   updateGroupRecipesPath,
 } from "../buildContract.ts";
-import { parseUpdateGroupRecipes, type UpdateGroupRecipes } from "../buildGroupRecipes.ts";
 import {
   createBuildManifest,
   createBuildPointer,

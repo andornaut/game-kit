@@ -1,6 +1,6 @@
 import type { Scene, Types } from "phaser";
 
-import type { PixelFontAtlas } from "../pixelFont.ts";
+import type { PixelFontAtlas } from "../index.ts";
 
 export interface PixelFontRegistration {
   readonly colour: string;

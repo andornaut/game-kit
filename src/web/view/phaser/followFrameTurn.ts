@@ -1,11 +1,8 @@
 import { type Game, type Input, Scale } from "phaser";
 
 import type { Rect } from "../../../rect.ts";
-import { needsRefit } from "../../../view/fitCheck.ts";
-import { pageToGame } from "../../../view/pagePoint.ts";
-import { renderScale } from "../../../view/renderScale.ts";
-import { settleFit } from "../../../view/settleFit.ts";
-import type { FrameTurnWatch } from "../dom/watchFrameTurn.ts";
+import { needsRefit, pageToGame, renderScale, settleFit } from "../../../view/index.ts";
+import type { FrameTurnWatch } from "../dom/index.ts";
 
 // How often the fit is checked while the page is visible (needsRefit), in ms.
 export const FIT_CHECK_MS = 250;

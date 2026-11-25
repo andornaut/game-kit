@@ -2,21 +2,19 @@
 // the build and checks its members against the manifest, then activates it as a first install or
 // publishes it as the staged update. createLaunch supplies the page, stores and its own state.
 import {
+  bootBytesOf,
   type BuildGroupReference,
   buildGroupTransferBytes,
   type BuildManifest,
   type BuildPointer,
   type BuildPolicy,
   type BuildState,
-  type UpdateState,
-} from "../buildContract.ts";
-import { installedManifest } from "../buildRecords.ts";
-import {
-  bootBytesOf,
   groupedManifestMismatch,
+  installedManifest,
   LaunchError,
   sameDeployedGroups,
-} from "../launchRules.ts";
+  type UpdateState,
+} from "../index.ts";
 import type { BuildGroupStore } from "./buildGroupStore.ts";
 import { type BuildStore, withBuildStateLock } from "./buildStore.ts";
 

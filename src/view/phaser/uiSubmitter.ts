@@ -8,7 +8,6 @@ import {
   TintModes,
 } from "phaser";
 
-import { uiGlyphPen } from "../../text/phaser/uiGlyphPen.ts";
 import type {
   Colour,
   Owner,
@@ -28,6 +27,7 @@ import type {
   UiTextCommand,
   Vertex,
 } from "./uiCommands.ts";
+import { uiGlyphPen } from "./uiGlyphPen.ts";
 
 type Node = Renderer.WebGL.RenderNodes.RenderNode;
 type Context = Renderer.WebGL.DrawingContext;
