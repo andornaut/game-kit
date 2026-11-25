@@ -16,8 +16,10 @@ import { type RefusalCue, refuse, refusing, stopRefusal } from "./refusalCue.ts"
 // count and Next, each a direct child in that focus order. Previous and Next are standard buttons
 // (button.ts) in the game's appearance; the count is player text, shown as text or as decorative
 // dots that take no focus or presses, and announced politely. An unavailable step is a disabled
-// button, or with a refusal cue a pointer refusal: out of the Tab order, playing the cue on a
-// press unless it is already playing there. The group element can be a footer group's middle slot.
+// button, or with a refusal a pointer refusal: out of the Tab order, refused on a press. The kit
+// cue plays unless it is already playing on that step; a game's refuse callback plays instead of
+// it and owns its replay and stopping. The game's keys refuse a step through refuse(direction).
+// The group element can be a footer group's middle slot.
 
 export const PAGER_CLASS = "ui-pager";
 export const PAGER_COUNT_CLASS = "ui-pager-count";
@@ -25,6 +27,21 @@ export const PAGER_COUNT_TEXT_CLASS = "ui-pager-count-text";
 export const PAGER_DOTS_CLASS = "ui-pager-dots";
 export const PAGER_DOT_CLASS = "ui-pager-dot";
 export const PAGER_CURRENT_ATTRIBUTE = "data-ui-current";
+
+// How an unavailable step refuses: the kit's refusal cue, or the game's own. refuse runs for every
+// pointer and key refusal, in place of the kit cue, with reducedMotion() read at that refusal and
+// the refused Previous or Next button; the game decides whether a refusal restarts its cue.
+export type PagerRefusal =
+  | {
+      readonly cue: RefusalCue;
+      readonly reducedMotion: () => boolean;
+      readonly refuse?: never;
+    }
+  | {
+      readonly refuse: (reducedMotion: boolean, control: HTMLButtonElement) => void;
+      readonly reducedMotion: () => boolean;
+      readonly cue?: never;
+    };
 
 export interface PagerOptions {
   // Player text.
@@ -42,9 +59,9 @@ export interface PagerOptions {
   readonly step: (direction: -1 | 1) => void;
   // A caller guard, such as readiness or a modal scope: false blocks both steps.
   readonly active?: () => boolean;
-  // Plays the cue on a pointer press of an unavailable step instead of disabling it. A press while
+  // Refuses a pointer press of an unavailable step instead of disabling it. With cue, a press while
   // the cue plays on that step leaves it playing.
-  readonly refusal?: { readonly cue: RefusalCue; readonly reducedMotion: () => boolean };
+  readonly refusal?: PagerRefusal;
   readonly className?: string;
 }
 
@@ -68,13 +85,29 @@ export interface PagerView {
   // Each part's natural face in whole base px.
   measure(): PagerSizes;
   arrange(context: PagerArrangeContext): ActionArrangement<HTMLElement>;
-  // Stops a refusal cue playing on either step, such as when the page or the scene changes.
+  // Refuses the step in direction for the game's key, as a pointer refusal does; nothing without
+  // a refusal, after dispose or while active() is false.
+  refuse(direction: -1 | 1): void;
+  // Stops the kit cue playing on either step, such as when the page or the scene changes. A game's
+  // refuse callback stops its own cue: this leaves both steps alone.
   stopRefusal(): void;
-  // Stops any refusal cue and releases both buttons and the group.
+  // Stops the kit cue as stopRefusal does and releases both buttons and the group.
   dispose(): void;
 }
 
 export function createPager(document: Document, options: PagerOptions): PagerView {
+  const { refusal } = options;
+  // Plays the refusal on control: the game's callback, or the kit cue unless it plays there.
+  const refuseControl = (control: HTMLButtonElement) => {
+    if (refusal === undefined) {
+      return;
+    }
+    if (refusal.refuse !== undefined) {
+      refusal.refuse(refusal.reducedMotion(), control);
+    } else if (!refusing(control)) {
+      refuse(refusal.cue, refusal.reducedMotion(), control);
+    }
+  };
   const group = createActionGroup(document, {
     className: `${options.className ?? ""} ${PAGER_CLASS}`.trim(),
   });
@@ -107,18 +140,10 @@ export function createPager(document: Document, options: PagerOptions): PagerVie
         options.active?.() === false ? null : { activate: () => options.step(direction), identity },
       getState: () => ({
         availability: {
-          kind: available() ? "available" : options.refusal ? "pointer-refusal" : "disabled",
+          kind: available() ? "available" : refusal !== undefined ? "pointer-refusal" : "disabled",
         },
       }),
-      ...(options.refusal === undefined
-        ? {}
-        : {
-            onPointerRefusal: () => {
-              if (!refusing(button.element)) {
-                refuse(options.refusal!.cue, options.refusal!.reducedMotion(), button.element);
-              }
-            },
-          }),
+      ...(refusal === undefined ? {} : { onPointerRefusal: () => refuseControl(button.element) }),
       rule: options.rule,
     });
     button.face.querySelector<HTMLElement>("span")?.setAttribute("data-ui-refusal-label", "");
@@ -158,9 +183,13 @@ export function createPager(document: Document, options: PagerOptions): PagerVie
     ]);
     return { count: countSize!, next: nextSize!, previous: previousSize! };
   };
+  let disposed = false;
+  // The kit cue only: a game's cue is the game's to stop.
   const stopRefusals = () => {
-    stopRefusal(previous.element);
-    stopRefusal(next.element);
+    if (refusal?.refuse === undefined) {
+      stopRefusal(previous.element);
+      stopRefusal(next.element);
+    }
   };
   return {
     arrange(context) {
@@ -182,6 +211,7 @@ export function createPager(document: Document, options: PagerOptions): PagerVie
     },
     count,
     dispose() {
+      disposed = true;
       stopRefusals();
       previous.dispose();
       next.dispose();
@@ -193,6 +223,11 @@ export function createPager(document: Document, options: PagerOptions): PagerVie
     next,
     previous,
     refresh,
+    refuse(direction) {
+      if (!disposed && options.active?.() !== false) {
+        refuseControl(direction < 0 ? previous.element : next.element);
+      }
+    },
     stopRefusal: stopRefusals,
   };
 }

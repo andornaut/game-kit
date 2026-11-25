@@ -96,9 +96,11 @@ theme slots.
   edge on the switch's. Focus and press are fills only and a row never dips.
 - A pager is an action group of Previous, the count and Next, with one gap token on both sides
   of the count. Its buttons are standard buttons; an unavailable step is disabled or a pointer
-  refusal with the shared refusal cue, which a further press does not restart and the game can
-  stop. The cue shakes by the inherited unit, 1 where none is set. Dots are decorative. The
-  pager fits a footer's middle slot.
+  refusal, and the game's keys refuse a step through the pager the same way. A refusal plays the
+  shared refusal cue, which a further refusal does not restart and the game can stop, or the
+  game's own refuse callback in its place, whose replay and stopping the game owns. The kit cue
+  shakes by the inherited unit, 1 where none is set. Dots are decorative. The pager fits a
+  footer's middle slot.
 - A HUD disc is a round standard button whose box is its face, placed and given its press area by
   an action group. State changes only fill, face image or icon colour, never geometry; an edge
   stays the same in every state. The game's own face fill, a ring drawn as part of it and the

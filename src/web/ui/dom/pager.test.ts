@@ -13,7 +13,19 @@ import {
   PAGER_DOT_CLASS,
   type PagerOptions,
 } from "./pager.ts";
+import * as refusalCue from "./refusalCue.ts";
 import { REFUSAL_ATTRIBUTES } from "./refusalCue.ts";
+
+// The kit cue's functions, passed through as spies, so a test can prove the pager never calls them.
+vi.mock("./refusalCue.ts", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./refusalCue.ts")>();
+  return {
+    ...original,
+    refuse: vi.fn(original.refuse),
+    refusing: vi.fn(original.refusing),
+    stopRefusal: vi.fn(original.stopRefusal),
+  };
+});
 
 const rule = { holdMs: 500, slopPx: 5 };
 const css = readFileSync(join(import.meta.dirname, "pager.css"), "utf8").replace(
@@ -24,6 +36,7 @@ const css = readFileSync(join(import.meta.dirname, "pager.css"), "utf8").replace
 afterEach(() => {
   document.body.replaceChildren();
   vi.useRealTimers();
+  vi.clearAllMocks();
 });
 
 function fixture(extra: Partial<PagerOptions> = {}) {
@@ -112,6 +125,83 @@ describe("createPager", () => {
     pointerClick(previous);
     pager.dispose();
     expect(previous.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(false);
+  });
+
+  it("refuses a step for the game's key with the kit cue, leaving a playing cue to finish", () => {
+    vi.useFakeTimers();
+    const { pager, step } = fixture({
+      refusal: { cue: { shake: 2, stepMs: 50, steps: 4 }, reducedMotion: () => true },
+    });
+    const previous = pager.previous.element;
+    pager.refuse(-1);
+    expect(step).not.toHaveBeenCalled();
+    expect(previous.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(true);
+    vi.advanceTimersByTime(150);
+    pager.refuse(-1);
+    vi.advanceTimersByTime(50);
+    expect(previous.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(false);
+    expect(refusalCue.refuse).toHaveBeenCalledOnce();
+    pager.refuse(1);
+    expect(pager.next.element.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(true);
+    pager.stopRefusal();
+    expect(pager.next.element.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(false);
+  });
+
+  it("plays the game's refuse in place of the kit cue on every pointer and key refusal", () => {
+    let reduced = false;
+    let open = true;
+    const refuse = vi.fn();
+    const { pager, step } = fixture({
+      active: () => open,
+      refusal: { reducedMotion: () => reduced, refuse },
+    });
+    const previous = pager.previous.element;
+    expect(previous.getAttribute("aria-disabled")).toBe("true");
+    expect(previous.tabIndex).toBe(-1);
+    pointerClick(previous);
+    expect(refuse).toHaveBeenLastCalledWith(false, previous);
+    reduced = true;
+    pointerClick(previous);
+    expect(refuse).toHaveBeenLastCalledWith(true, previous);
+    pager.refuse(-1);
+    expect(refuse).toHaveBeenLastCalledWith(true, previous);
+    pager.refuse(1);
+    expect(refuse).toHaveBeenLastCalledWith(true, pager.next.element);
+    expect(refuse).toHaveBeenCalledTimes(4);
+    expect(step).not.toHaveBeenCalled();
+    open = false;
+    pointerClick(previous);
+    pager.refuse(-1);
+    expect(refuse).toHaveBeenCalledTimes(4);
+    open = true;
+    pager.stopRefusal();
+    pager.dispose();
+    pager.refuse(-1);
+    expect(refuse).toHaveBeenCalledTimes(4);
+    expect(previous.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(false);
+    expect(previous.hasAttribute(REFUSAL_ATTRIBUTES.shake)).toBe(false);
+    expect(refusalCue.refuse).not.toHaveBeenCalled();
+    expect(refusalCue.refusing).not.toHaveBeenCalled();
+    expect(refusalCue.stopRefusal).not.toHaveBeenCalled();
+  });
+
+  it("leaves a kit cue the game plays itself to the game when it supplies refuse", () => {
+    vi.useFakeTimers();
+    const { pager } = fixture({ refusal: { reducedMotion: () => true, refuse: vi.fn() } });
+    const previous = pager.previous.element;
+    const stop = refusalCue.refuse({ shake: 2, stepMs: 50, steps: 4 }, true, previous);
+    pager.stopRefusal();
+    pager.dispose();
+    expect(refusalCue.refusing(previous)).toBe(true);
+    stop();
+  });
+
+  it("does nothing for a key refusal without a refusal", () => {
+    const { pager, step } = fixture();
+    pager.refuse(-1);
+    expect(step).not.toHaveBeenCalled();
+    expect(pager.previous.element.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(false);
+    expect(refusalCue.refuse).not.toHaveBeenCalled();
   });
 
   it("blocks both steps while the caller's guard is closed", () => {
