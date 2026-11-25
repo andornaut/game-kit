@@ -10,6 +10,7 @@
 // CLEANUP (added 2026-11-18): remove once all three games deploy the router. Version caches and
 // routing records an earlier kit's worker wrote are left in place for the page to migrate and
 // delete; the router never reads or serves them.
+import { mapLimit } from "../../mapLimit.ts";
 import {
   ACTIVE_RECORD_PATH,
   BUILD_HASH_HEADER,
@@ -33,6 +34,7 @@ import { BUILD_ARCHIVE_ROUTER_PROBE, BUILD_GROUP_ROUTER_PROBE } from "./buildArc
 import { createBuildArchiveStore } from "./buildArchiveStore.ts";
 import { type BuildGroupFile, createBuildGroupStore } from "./buildGroupStore.ts";
 import { readCachedVersion, withBuildStateLock } from "./buildStore.ts";
+import { sha256Hex } from "./sha256.ts";
 import {
   isDataProfile,
   isDataRequest,
@@ -98,10 +100,6 @@ const JSON_HEADERS = {
   "x-content-type-options": "nosniff",
 };
 
-const digestHex = (digest: ArrayBuffer) =>
-  [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-const sha256Hex = async (body: ArrayBuffer) =>
-  digestHex(await crypto.subtle.digest("SHA-256", body));
 const jsonResponse = (body: ArrayBuffer) => new Response(body, { headers: JSON_HEADERS });
 
 // The entry stored for a verified network body. The body is already decoded, so the transfer
@@ -112,27 +110,6 @@ function storedCopy(file: BuildFile, body: ArrayBuffer, source: Response): Respo
   headers.delete("content-length");
   headers.set(BUILD_HASH_HEADER, file.sha256);
   return new Response(body, { headers, status: 200, statusText: source.statusText });
-}
-
-// Runs task on each item, at most limit at a time, and returns the results in item order.
-async function mapBounded<T, R>(
-  limit: number,
-  task: (item: T) => Promise<R>,
-  items: readonly T[],
-): Promise<R[]> {
-  const results: R[] = [];
-  let next = 0;
-  const lane = async () => {
-    while (next < items.length) {
-      const index = next;
-      next += 1;
-      // Each lane takes the next item once its last one is done.
-      // eslint-disable-next-line no-await-in-loop
-      results[index] = await task(items[index] as T);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
-  return results;
 }
 
 // A version record's version, or undefined for a missing or malformed record.
@@ -339,7 +316,7 @@ export function runServiceWorker(policy: BuildPolicy): void {
     if (files.some((file) => !stored.has(file.url))) {
       return false;
     }
-    const verified = await mapBounded(
+    const verified = await mapLimit(
       CHECK_CONCURRENCY,
       async (file) => (await cache.match(file.url))?.headers.get(BUILD_HASH_HEADER) === file.sha256,
       files,

@@ -13,6 +13,7 @@ import { packContentType, readBuildPacks, verifiedJsonFamilies } from "../buildR
 import { isHashedAssetUrl } from "../cachePolicy.ts";
 import type { VerifiedJsonBody } from "../verifiedJsonBody.ts";
 import type { BuildStore } from "./buildStore.ts";
+import { sha256Hex } from "./sha256.ts";
 import { isJsonContentType, safeJsonSource } from "./verifiedJsonSource.ts";
 
 export type BuildInstallFailure = "network" | "quota" | "verification";
@@ -143,9 +144,6 @@ async function inflatePack(
     cancel();
   }
 }
-
-const digestHex = (digest: ArrayBuffer) =>
-  [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
 const isQuotaError = (error: unknown) =>
   error instanceof Error && error.name === "QuotaExceededError";
@@ -394,7 +392,7 @@ export async function installBuild(
     };
 
     const verify = async (file: BuildFile, body: Uint8Array<ArrayBuffer>) => {
-      const digest = digestHex(await crypto.subtle.digest("SHA-256", body));
+      const digest = await sha256Hex(body);
       if (body.byteLength !== file.byteSize || digest !== file.sha256) {
         throw new BodyChanged(`Body of ${file.url} does not match its manifest size or digest`);
       }

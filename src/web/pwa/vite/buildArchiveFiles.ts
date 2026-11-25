@@ -42,7 +42,7 @@ const ARCHIVE_CONTENT_TYPES = new Map([
   ["woff2", "font/woff2"],
 ]);
 
-export function archiveContentType(url: string): string {
+function archiveContentType(url: string): string {
   // Cache keys ending in / are the canonical URLs for index.html files.
   const path = url.toLowerCase();
   const extension = path.endsWith("/") ? "html" : soundFormatOf(path);

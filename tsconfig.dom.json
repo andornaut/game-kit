@@ -27,6 +27,7 @@
     "src/web/pwa/dom/launch.ts",
     "src/web/pwa/dom/originMemberReader.ts",
     "src/web/pwa/dom/serviceWorker.ts",
+    "src/web/pwa/dom/sha256.ts",
     "src/web/pwa/dom/updateGroupArchiveReader.ts",
     "src/web/pwa/dom/verifiedArchiveBytes.ts",
     "src/web/pwa/dom/verifiedJsonSource.ts",

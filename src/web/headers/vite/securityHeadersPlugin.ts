@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { Plugin } from "vite";
 
-import { mapLimit, READ_LIMIT } from "../../build/mapLimit.ts";
+import { mapLimit, READ_LIMIT } from "../../mapLimit.ts";
 import {
   type Directives,
   headersFile,

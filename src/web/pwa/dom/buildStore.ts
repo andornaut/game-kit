@@ -7,6 +7,7 @@
 // Record keys are the same-origin absolute URLs of ACTIVE_RECORD_PATH, STAGED_RECORD_PATH,
 // pinRecordPath(clientId) and buildManifestUrl(version). File entries use the same-origin
 // absolute URL of each file.
+import { mapLimit } from "../../mapLimit.ts";
 import {
   ACTIVE_RECORD_PATH,
   BUILD_HASH_HEADER,
@@ -111,26 +112,6 @@ export function withBuildStateLock<T>(policy: BuildPolicy, action: () => Promise
   return locks === undefined ? action() : locks.request(recordsCacheName(policy), action);
 }
 
-async function mapBounded<T, R>(
-  limit: number,
-  task: (item: T) => Promise<R>,
-  items: readonly T[],
-): Promise<R[]> {
-  const results: R[] = [];
-  let next = 0;
-  const lane = async () => {
-    while (next < items.length) {
-      const index = next;
-      next += 1;
-      // Each lane takes the next item once its last one is done.
-      // eslint-disable-next-line no-await-in-loop
-      results[index] = await task(items[index] as T);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
-  return results;
-}
-
 export function createBuildStore(
   context: {
     readonly caches: CacheStorage;
@@ -215,7 +196,7 @@ export function createBuildStore(
     }
     const cache = await caches.open(name);
     const present = new Set((await cache.keys()).map((request) => keyPath(request.url)));
-    const absent = await mapBounded(
+    const absent = await mapLimit(
       SCAN_CONCURRENCY,
       async (file) => {
         if (!present.has(keyPath(file.url))) {

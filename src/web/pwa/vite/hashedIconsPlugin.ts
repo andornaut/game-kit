@@ -1,7 +1,7 @@
 import type { Plugin } from "vite";
 
-import { mapLimit, READ_LIMIT } from "../../build/mapLimit.ts";
 import { contentHash } from "../../build/vite/contentHash.ts";
+import { mapLimit, READ_LIMIT } from "../../mapLimit.ts";
 import { hashIcons } from "../hashedIcons.ts";
 
 export interface HashedIconsPluginOptions {

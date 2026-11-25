@@ -10,7 +10,7 @@ const JSON_CONTENT_TYPE = /^application\/json(?:\s*;\s*charset\s*=\s*(?:"utf-8"|
 // HTTP/1.1 connection and keep-alive, carries no body semantics and is ignored. content-type,
 // cache-control, vary, content-encoding, content-length and x-content-type-options are checked
 // by value.
-export const JSON_SEMANTIC_HEADERS = [
+const JSON_SEMANTIC_HEADERS = [
   "clear-site-data",
   "content-disposition",
   "content-location",
@@ -40,7 +40,7 @@ export function isDataRequest(request: Request): boolean {
 }
 
 // Whether a verified JSON response's status and headers leave its body's meaning unchanged.
-export function safeJsonHeaders(family: VerifiedJsonBody, response: Response): boolean {
+function safeJsonHeaders(family: VerifiedJsonBody, response: Response): boolean {
   const { headers } = response;
   if (
     response.status !== 200 ||

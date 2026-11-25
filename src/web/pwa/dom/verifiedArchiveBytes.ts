@@ -1,3 +1,5 @@
+import { sha256Hex } from "./sha256.ts";
+
 // Bound the input supplied to each gzip transform, including for highly compressible bodies.
 const INFLATE_CHUNK_BYTES = 4 * 1024;
 
@@ -53,9 +55,7 @@ export async function checkArchiveDigest(
   expected: string,
   label: string,
 ) {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-  const hex = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
-  if (hex !== expected) {
+  if ((await sha256Hex(bytes)) !== expected) {
     throw new TypeError(`${label} checksum mismatch`);
   }
 }
