@@ -16,6 +16,12 @@ it.each([
     b: 'import { a } from "./a.ts"; export const b = () => a();',
   },
   {
+    cycle: true,
+    label: "reports a runtime dependency cycle named by .js specifiers",
+    a: 'import { b } from "./b.js"; export const a = () => b();',
+    b: 'import { a } from "./a.js"; export const b = () => a();',
+  },
+  {
     cycle: false,
     label: "accepts an acyclic runtime dependency",
     a: 'import { b } from "./b.ts"; export const a = () => b();',

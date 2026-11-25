@@ -165,7 +165,10 @@ const IMPORT_X = {
   },
   settings: {
     "import-x/extensions": [".ts"],
-    "import-x/resolver-next": [createNodeResolver({ extensions: [".ts", ".js"] })],
+    // A .js specifier names its .ts source, as TypeScript emits it, so it resolves either way.
+    "import-x/resolver-next": [
+      createNodeResolver({ extensionAlias: { ".js": [".ts", ".js"] }, extensions: [".ts", ".js"] }),
+    ],
   },
 };
 

@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 
-import type { Rect } from "../rect";
+import type { Rect } from "../rect.ts";
 import { beginCrumblingStep, type CrumblingWorld, endCrumblingStep } from "./crumbling.ts";
 import {
   findTraversal,
@@ -9,7 +9,7 @@ import {
   type TraversalCommand,
   type TraversalContext,
   type TraversalState,
-} from "./traversal";
+} from "./traversal.ts";
 
 const rect = (x: number, y: number, width: number, height: number): Rect => ({
   height,
