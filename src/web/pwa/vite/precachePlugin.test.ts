@@ -98,6 +98,7 @@ interface Build {
   // Files a plugin before the precache writes into the build output, by file name.
   readonly emitted?: Readonly<Record<string, string | Uint8Array>>;
   readonly hashedFiles?: PrecachePluginOptions["hashedFiles"];
+  readonly omitDecodedGroupCopies?: PrecachePluginOptions["omitDecodedGroupCopies"];
   // A public file to delete from the site before building.
   readonly missing?: string;
   // A public file to replace with a directory, which the build cannot read.
@@ -140,6 +141,7 @@ async function precache({
   hashedFiles,
   lateEmitted = {},
   missing,
+  omitDecodedGroupCopies,
   packs,
   root = site("icon"),
   unreadable,
@@ -170,6 +172,7 @@ async function precache({
         ...(emitUpdateGroupRecipes === undefined ? {} : { emitUpdateGroupRecipes }),
         ...(groupedFirstInstall === undefined ? {} : { groupedFirstInstall }),
         ...(hashedFiles === undefined ? {} : { hashedFiles }),
+        ...(omitDecodedGroupCopies === undefined ? {} : { omitDecodedGroupCopies }),
         pageHtmlFile: "index.html",
         ...(packs === undefined ? {} : { packs }),
         policy: POLICY,
@@ -556,6 +559,31 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     // The version follows the groups' decoded identities, not their transport.
     const recipes = await precache({ ...options, emitUpdateGroupRecipes: true });
     expect(recipes.manifest.version).toBe(first.manifest.version);
+  });
+
+  it("omits only the decoded group copies when asked, keeping pointer and manifest", async () => {
+    const options: Build = {
+      emitted: { "art/level.json": JSON.stringify({ tiles: "grass ".repeat(2000) }) },
+      groupedFirstInstall: { archiveOnly: (url) => url === "/art/level.json" },
+      hashedFiles: () => ({ sounds: {}, urls: ["/art/level.json"] }),
+      root: site("icon"),
+      updateGroup: (url) => (url.startsWith("/art/") ? "art" : "core"),
+    };
+    const kept = await precache(options);
+    const omitted = await precache({ ...options, omitDecodedGroupCopies: true });
+    expect(omitted.pointer).toEqual(kept.pointer);
+    expect(omitted.manifest).toEqual(kept.manifest);
+    const decodedNames = kept.pointer.groups!.map((group) =>
+      buildArchivePartUrl(group, 0).slice(1),
+    );
+    expect(decodedNames.every((name) => kept.output.has(name))).toBe(true);
+    expect([...omitted.output.keys()].sort()).toEqual(
+      [...kept.output.keys()].filter((name) => !decodedNames.includes(name)).sort(),
+    );
+    for (const group of omitted.pointer.groups!) {
+      const name = buildGroupUrl(group).slice(1);
+      expect(omitted.output.get(name)).toEqual(kept.output.get(name));
+    }
   });
 
   it("uses the same full groups for first install and omits selected loose outputs", async () => {
@@ -1053,6 +1081,16 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
       { ...options, groupedFirstInstall: { archiveOnly: () => false }, updateGroup: () => "group" },
       "precache: groupedFirstInstall cannot be combined with packs, emitUpdateGroupRecipes or wholeBuild",
     ]),
+    [
+      "omitted decoded group copies without update groups",
+      { omitDecodedGroupCopies: true },
+      "precache: omitDecodedGroupCopies requires updateGroup without emitUpdateGroupRecipes",
+    ],
+    [
+      "omitted decoded group copies with update group recipes",
+      { emitUpdateGroupRecipes: true, omitDecodedGroupCopies: true, updateGroup: () => "group" },
+      "precache: omitDecodedGroupCopies requires updateGroup without emitUpdateGroupRecipes",
+    ],
     [
       "update group recipes without update groups",
       { emitUpdateGroupRecipes: true },

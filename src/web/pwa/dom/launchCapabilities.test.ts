@@ -5,7 +5,7 @@ import { prepareBrowserLaunch } from "./launch.ts";
 
 const POLICY = { cacheNamePrefix: "game-", hashedAssetPrefix: "/assets/" };
 
-type UnavailableApi = "caches" | "serviceWorker";
+type UnavailableApi = "caches" | "DecompressionStream" | "serviceWorker";
 type CapabilityFailure = "absent" | "undefined" | "inaccessible";
 
 function browserFixture(api?: UnavailableApi, failure?: CapabilityFailure) {
@@ -18,9 +18,10 @@ function browserFixture(api?: UnavailableApi, failure?: CapabilityFailure) {
   const browser = { onLine: true, serviceWorker: container };
   vi.stubGlobal("navigator", browser);
   vi.stubGlobal("caches", { open: cacheOpen });
+  vi.stubGlobal("DecompressionStream", class {});
   vi.stubGlobal("fetch", fetch);
   if (api !== undefined) {
-    const host = api === "caches" ? globalThis : browser;
+    const host = api === "serviceWorker" ? browser : globalThis;
     if (failure === "absent") {
       Reflect.deleteProperty(host, api);
     } else if (failure === "undefined") {
@@ -81,6 +82,9 @@ describe("prepareBrowserLaunch", () => {
     ["caches", "absent"],
     ["caches", "undefined"],
     ["caches", "inaccessible"],
+    ["DecompressionStream", "absent"],
+    ["DecompressionStream", "undefined"],
+    ["DecompressionStream", "inaccessible"],
   ] as const)("stops the bar and mounts a disposable notice when %s is %s", (api, mode) => {
     const { expectNoWork } = browserFixture(api, mode);
     const parent = document.createElement("div");

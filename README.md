@@ -53,6 +53,25 @@ Move image processing from `art/rgbaImage` to `build/rgbaImage`, which also expo
 
 Apply the mapping to JavaScript and TypeScript imports, test mocks and configuration, and stylesheet imports. Change the old build-info reference to `/// <reference types="@andornaut/game-kit/build/buildInfo" />`. This declaration-only export still provides `__APP_VERSION__`, `__BUILD_ID__` and `__COMMIT__`. Historical migration notes use the subpaths current at the time. The source inventory uses implementation paths relative to `src/`.
 
+## Decoded group copies and DecompressionStream in 0.74.0
+
+`precachePlugin({ omitDecodedGroupCopies: true })` stops emitting the decoded
+`/.game-kit/archive-<sha256>-0.bin` copy of each compressed group. The
+pointer, manifest and `group-` files are unchanged. Set it once no installed
+device of the game still runs GameKit 0.72.0 or earlier, since those pages
+stage groups only from the decoded copies. Without the option the copies are
+still emitted. The option requires `updateGroup` and rejects
+`emitUpdateGroupRecipes`, whose groups have no compressed transport. A later
+minor release, once every grouped game sets it, removes the copies and the
+option.
+
+`prepareBrowserLaunch` now also requires `DecompressionStream`. Without it the
+page shows the shared unsupported error with no Retry instead of failing a
+grouped first install with Loading failed. The check applies to every
+production launch, because the pointer that marks a build as grouped is read
+only after startup, and every browser in Vite's default build target
+(Chrome 111, Firefox 114, Safari 16.4) provides it.
+
 ## Compressed group archives in 0.73.0
 
 `updateGroup` builds without `emitUpdateGroupRecipes` emit each group as one
@@ -71,7 +90,7 @@ The build still emits each decoded archive at its
 `/.game-kit/archive-<sha256>-0.bin` path, because pages on GameKit 0.72.0 or
 earlier stage grouped updates only from those files. A device on such a build
 downloads the decoded archives once, then uses the compressed transport from
-its next update. A later release stops emitting these copies.
+its next update. `omitDecodedGroupCopies` stops emitting these copies.
 
 `validateBuildPointer` from `build/buildManifest` now accepts every pointer
 the build emits: whole-build archives, groups with sound formats and
@@ -162,8 +181,8 @@ bytes stay near the gzip size of its members without host compression. Serve
 these files as emitted, like install packs. The page checks the exact
 transport length, decodes it within the archive size and verifies the
 archive's SHA-256 before storing the decoded archive. Progress counts
-transport bytes. Browsers without `DecompressionStream` cannot install
-compressed groups.
+transport bytes. Compressed groups need `DecompressionStream`, which
+`prepareBrowserLaunch` requires.
 
 An unchanged version skips staging. For a changed version, the page reuses
 verified groups from earlier builds and downloads missing groups one at a time.
@@ -173,7 +192,8 @@ First install can use the current build’s ordinary files or install packs.
 Grouped staging requires a controller that supports group archives.
 
 At production startup, call `prepareBrowserLaunch({ parent, onUnsupported }, policy)`
-from `runtime/web/pwa/dom/launch` before creating the installer or game. With a
+from `runtime/web/pwa/dom/launch` before creating the installer or game. It
+requires Service Worker, Cache Storage and `DecompressionStream`. With a
 `supported` result, pass its context to `createLaunch`. With an `unsupported`
 result, the shared error is already visible and game startup stops. The callback
 stops the caller's existing loading progress before the error is shown. The

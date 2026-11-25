@@ -74,6 +74,10 @@ export interface PrecachePluginOptions {
   readonly groupedFirstInstall?: { readonly archiveOnly: (url: string) => boolean };
   // Use a versioned reconstruction recipe as the hosted update group transport.
   readonly emitUpdateGroupRecipes?: true;
+  // Omit the decoded archive-<sha256>-0.bin copy of each compressed group, which only pages on
+  // GameKit 0.72.0 and earlier read. Set once no live client predates the compressed transport.
+  // Requires updateGroup without emitUpdateGroupRecipes.
+  readonly omitDecodedGroupCopies?: true;
   // Explicit public, URL-independent JSON families selected from final emitted discovery.
   readonly verifiedJsonBodies?: (files: HashedFiles) => readonly VerifiedJsonFamilySelection[];
   // The hashed files beyond what the page links, read once the bundle is written: bundleFile
@@ -240,6 +244,7 @@ export function precachePlugin({
   emitUpdateGroupRecipes,
   groupedFirstInstall,
   hashedFiles = () => ({ sounds: {}, urls: [] }),
+  omitDecodedGroupCopies,
   packs,
   pageHtmlFile,
   policy,
@@ -267,6 +272,14 @@ export function precachePlugin({
   }
   if (emitUpdateGroupRecipes === true && updateGroup === undefined) {
     throw new TypeError("precache: emitUpdateGroupRecipes requires updateGroup");
+  }
+  if (
+    omitDecodedGroupCopies === true &&
+    (updateGroup === undefined || emitUpdateGroupRecipes === true)
+  ) {
+    throw new TypeError(
+      "precache: omitDecodedGroupCopies requires updateGroup without emitUpdateGroupRecipes",
+    );
   }
   let root: string;
   let config: ResolvedConfig;
@@ -628,17 +641,22 @@ export function precachePlugin({
           });
         } else if (grouped !== undefined) {
           for (const { archive, decoded, encoded } of grouped) {
-            updateAssets.push(
-              { fileName: buildGroupUrl(archive).slice(1), source: encoded!, type: "asset" },
-              // CLEANUP (added 2026-11-25): pages on GameKit 0.72.0 and earlier stage groups only
-              // from the decoded archive at this path. Remove once installed devices of every
-              // grouped game have staged a build from GameKit 0.73.0 or later.
-              {
+            updateAssets.push({
+              fileName: buildGroupUrl(archive).slice(1),
+              source: encoded!,
+              type: "asset",
+            });
+            // CLEANUP (added 2026-11-25): pages on GameKit 0.72.0 and earlier stage groups only
+            // from the decoded archive at this path. A game sets omitDecodedGroupCopies once its
+            // installed devices have staged a build from GameKit 0.73.0 or later. Remove this copy
+            // and the option, in a minor release, once every grouped game sets it.
+            if (omitDecodedGroupCopies !== true) {
+              updateAssets.push({
                 fileName: buildArchivePartUrl(archive, 0).slice(1),
                 source: decoded,
                 type: "asset",
-              },
-            );
+              });
+            }
           }
         }
         const manifestFileName = buildManifestUrl(manifest.version).slice(1);

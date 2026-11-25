@@ -305,6 +305,9 @@ export type PreparedBrowserLaunch<View extends LoadingFailureView = LoadingFailu
 
 // Resolve capability before starting the installer or game. A missing browser API cannot
 // recover through the installer's Retry. Retain the unsupported view for page teardown.
+// DecompressionStream is required on every launch, not only for grouped builds: grouped installs
+// cannot decode their groups without it, the pointer that marks a build as grouped is read only
+// later, and every browser in Vite's default build target provides it.
 export function prepareBrowserLaunch(
   preparation: BrowserLaunchPreparation & {
     readonly failure: { readonly presentation: BrowserFailurePresentation };
@@ -321,13 +324,19 @@ export function prepareBrowserLaunch(
 ): PreparedBrowserLaunch {
   let container: ServiceWorkerContainer | undefined;
   let cacheStorage: CacheStorage | undefined;
+  let decompression: unknown;
   try {
     container = globalThis.navigator?.serviceWorker;
     cacheStorage = globalThis.caches;
+    decompression = globalThis.DecompressionStream;
   } catch {
     // Browsers can expose API accessors that throw in restricted contexts.
   }
-  if (container !== undefined && cacheStorage !== undefined) {
+  if (
+    container !== undefined &&
+    cacheStorage !== undefined &&
+    typeof decompression === "function"
+  ) {
     return { context: contextForBrowser(container, cacheStorage, policy), kind: "supported" };
   }
   try {
