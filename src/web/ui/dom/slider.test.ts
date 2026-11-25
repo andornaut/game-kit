@@ -294,7 +294,7 @@ describe("slider.css", () => {
   });
 
   it("puts the track on whole units and the thumb on a whole unit at its step", () => {
-    expect(css).toContain("width: round(down, 100%, var(--ui-unit, 1) * 1px)");
+    expect(css).toContain("width: round(down, 100%, var(--ui-form-length))");
     const thumb = /:where\(\.ui-slider-track > \.ui-slider-thumb\)\s*\{([^}]*)\}/.exec(css)?.[1];
     expect(thumb).toMatch(/left: round\(\s*nearest,/);
     expect(css).toMatch(

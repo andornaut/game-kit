@@ -26,6 +26,10 @@ geometry only.
   context, so no game adds a stacking order or an inset. Inside a group nothing changes.
 - Geometry is whole game units with a game projection of edges. An odd unit always falls right or
   below.
+- Under a game projection the DOM action group, form rows and slider write whole CSS px between
+  projected edges through one length variable set to 1px, so each stylesheet keeps one rule set and
+  a caller without a projection gets the same styles and layout. Projected press context members
+  share the projection's space and are not measured.
 - Colours are role-named slots under a theme root, with system colours in forced-colours mode.
   Focus, press and selection are fills; `controls.css` owns the one focus fill. Disabled is
   distinct and never dips. Theme rules have zero specificity.
@@ -70,6 +74,8 @@ layer and modal input gate.
 - Under a projection the DOM writes whole CSS px on the game's grid, and the game supplies every
   height the frame would otherwise measure. A game that places its own title ink or footer gives
   their heights and places them from the unprojected layout `layout()` returns.
+- A projected frame arranges the kit footer action group with its own projection from the footer
+  room's corner.
 
 ## Switch, form rows, pager and HUD disc
 
@@ -80,6 +86,11 @@ theme slots.
   label names it and its note describes it. The list's grid columns are shared by every row, so
   the value column is sized by CSS, never by script. The game sets the row height, padding,
   icon slot, switch size and state word placement; rows are the stacked action gap apart.
+- A placed list writes its grid as explicit CSS px tracks between projected edges, with the
+  padding, the icon slot's sides and the column gaps as tracks of their own and each row track its
+  pitch to the next, so rows keep sharing columns through the subgrid. Rows are exactly their
+  heights and the game supplies what text would otherwise size: the value track, a centred switch
+  stack's height and a slider's first line.
 - A switch row is a switch with its state word below the switch, centred or with its ink's right
   edge on the switch's. Focus and press are fills only and a row never dips.
 - A pager is an action group of Previous, the count and Next, with one gap token on both sides

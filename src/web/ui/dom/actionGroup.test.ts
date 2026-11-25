@@ -258,14 +258,23 @@ describe("actionGroup.css", () => {
     "--ui-action-outset-right",
     "--ui-action-outset-bottom",
     "--ui-action-outset-left",
-  ])("reads %s at --ui-unit", (name) => {
-    expect(css).toContain(`var(${name}) * var(--ui-unit, 1)`);
+  ])("reads %s at the action length", (name) => {
+    expect(css).toContain(`var(${name}) * var(--ui-action-length)`);
+  });
+
+  it("measures lengths at --ui-unit, or in CSS px on a projected group", () => {
+    expect(css).toMatch(
+      /\.ui-action-group \{\s*--ui-action-length: calc\(var\(--ui-unit, 1\) \* 1px\);/,
+    );
+    expect(css).toMatch(
+      /\[data-ui-action-projected\] > :is\(\.ui-action, \.ui-action-middle\) \{\s*--ui-action-length: 1px;/,
+    );
   });
 
   it("outsets the press area as the action's own overflow, with no fixed lengths or colours", () => {
     expect(css).toMatch(/\.ui-action::before\s*\{[^}]*content: "";[^}]*position: absolute;/);
     expect(css).toContain(`[${ACTION_MEASURING_ATTRIBUTE}]`);
-    expect(css.replace(/\* -?1px\)/g, "")).not.toMatch(/\d(px|rem|em)\b/);
+    expect(css.replace(/\* -?1px\)|--ui-action-length: 1px;/g, "")).not.toMatch(/\d(px|rem|em)\b/);
     expect(css).not.toMatch(/\b(color|background|outline|box-shadow|padding)\s*:/);
   });
 });

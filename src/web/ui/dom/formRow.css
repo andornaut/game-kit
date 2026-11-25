@@ -1,9 +1,20 @@
 /* Opt-in form rows (formRow). Every rule matches through :where(), with zero specificity, so a
    game's component class always wins. Lengths are unitless base px at --ui-unit, from the list's
-   layout. The list is a grid whose icon, label and value columns every row shares as a subgrid:
-   the value column is as wide as the widest value stack, or the game's fixed track. Rows are the
-   action group's stacked gap apart and each row is one button face: the theme's state fills with
-   a clear idle face, controls.css's focus fill and no press dip. */
+   layout, or on a placed list (createFormRows place) whole CSS px on the game's grid, through
+   --ui-form-length. The list is a grid whose icon, label and value columns every row shares as a
+   subgrid: the value column is as wide as the widest value stack, or the game's fixed track. Rows
+   are the action group's stacked gap apart and each row is one button face: the theme's state
+   fills with a clear idle face, controls.css's focus fill and no press dip. */
+
+/* Each element that reads a length declares it, so a --ui-unit set on a row or a part applies
+   there. */
+:where(.ui-form-rows, .ui-form-row, .ui-form-row *) {
+  --ui-form-length: calc(var(--ui-unit, 1) * 1px);
+}
+
+:where(.ui-form-rows[data-ui-form-projected], .ui-form-rows[data-ui-form-projected] *) {
+  --ui-form-length: 1px;
+}
 
 :where(.ui-form-rows) {
   --ui-colour-button-face: transparent;
@@ -12,12 +23,12 @@
 
   display: grid;
   grid-template-columns:
-    [icon] calc(var(--ui-form-icon-slot, 0) * var(--ui-unit, 1) * 1px)
+    [icon] calc(var(--ui-form-icon-slot, 0) * var(--ui-form-length))
     [label] minmax(0, 1fr)
     [value] var(--ui-form-value-track, max-content);
   align-content: start;
-  column-gap: calc(var(--ui-form-row-column-gap, 0) * var(--ui-unit, 1) * 1px);
-  row-gap: calc(var(--ui-form-rows-gap) * var(--ui-unit, 1) * 1px);
+  column-gap: calc(var(--ui-form-row-column-gap, 0) * var(--ui-form-length));
+  row-gap: calc(var(--ui-form-rows-gap) * var(--ui-form-length));
   min-width: 0;
 }
 
@@ -36,12 +47,12 @@
   align-items: center;
   box-sizing: border-box;
   min-width: 0;
-  min-height: calc(var(--ui-form-row-height, 0) * var(--ui-unit, 1) * 1px);
+  min-height: calc(var(--ui-form-row-height, 0) * var(--ui-form-length));
   margin: 0;
-  padding: calc(var(--ui-form-row-padding-top, 0) * var(--ui-unit, 1) * 1px)
-    calc(var(--ui-form-row-padding-right, 0) * var(--ui-unit, 1) * 1px)
-    calc(var(--ui-form-row-padding-bottom, 0) * var(--ui-unit, 1) * 1px)
-    calc(var(--ui-form-row-padding-left, 0) * var(--ui-unit, 1) * 1px);
+  padding: calc(var(--ui-form-row-padding-top, 0) * var(--ui-form-length))
+    calc(var(--ui-form-row-padding-right, 0) * var(--ui-form-length))
+    calc(var(--ui-form-row-padding-bottom, 0) * var(--ui-form-length))
+    calc(var(--ui-form-row-padding-left, 0) * var(--ui-form-length));
   border: 0;
   border-radius: 0;
   font: inherit;
@@ -81,14 +92,14 @@
 }
 
 :where(.ui-form-rows[data-ui-form-align="start"] .ui-form-row-icon) {
-  margin-top: calc(var(--ui-form-icon-offset, 0) * var(--ui-unit, 1) * 1px);
+  margin-top: calc(var(--ui-form-icon-offset, 0) * var(--ui-form-length));
 }
 
 :where(.ui-form-row-icon > *) {
   display: block;
   flex: none;
-  width: calc(var(--ui-form-icon-size) * var(--ui-unit, 1) * 1px);
-  height: calc(var(--ui-form-icon-size) * var(--ui-unit, 1) * 1px);
+  width: calc(var(--ui-form-icon-size) * var(--ui-form-length));
+  height: calc(var(--ui-form-icon-size) * var(--ui-form-length));
   image-rendering: pixelated;
 }
 
@@ -132,12 +143,12 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: calc(var(--ui-form-value-gap, 0) * var(--ui-unit, 1) * 1px);
-  min-width: calc(var(--ui-switch-width, 0) * var(--ui-unit, 1) * 1px);
+  gap: calc(var(--ui-form-value-gap, 0) * var(--ui-form-length));
+  min-width: calc(var(--ui-switch-width, 0) * var(--ui-form-length));
 }
 
 :where(.ui-form-rows[data-ui-form-align="start"] .ui-form-row-value) {
-  margin-top: calc(var(--ui-form-value-offset, 0) * var(--ui-unit, 1) * 1px);
+  margin-top: calc(var(--ui-form-value-offset, 0) * var(--ui-form-length));
 }
 
 :where(.ui-form-row-state) {
@@ -152,7 +163,7 @@
 
 /* The word's ink, not its box, ends on the switch's right edge. */
 :where(.ui-form-rows[data-ui-form-state="end"] .ui-form-row-state) {
-  margin-right: calc(var(--ui-form-state-bearing, 0) * var(--ui-unit, 1) * -1px);
+  margin-right: calc(var(--ui-form-state-bearing, 0) * var(--ui-form-length) * -1);
 }
 
 /* The game's ui-switch art at its art-locked size, never stretched: off, or on in a checked
@@ -160,8 +171,8 @@
 :where(.ui-switch) {
   display: block;
   flex: none;
-  width: calc(var(--ui-switch-width) * var(--ui-unit, 1) * 1px);
-  height: calc(var(--ui-switch-height) * var(--ui-unit, 1) * 1px);
+  width: calc(var(--ui-switch-width) * var(--ui-form-length));
+  height: calc(var(--ui-switch-height) * var(--ui-form-length));
   background-image: var(--ui-switch-off-image, none);
   background-repeat: no-repeat;
   background-size: 100% 100%;
@@ -175,10 +186,44 @@
 /* A centred switch sits midway along the value column with the odd unit on its right: its right
    margin is half the spare width, rounded up to a whole unit. */
 :where(.ui-form-rows[data-ui-form-state="center"] .ui-switch) {
-  margin-right: calc((100% - var(--ui-switch-width) * var(--ui-unit, 1) * 1px) / 2);
+  margin-right: calc((100% - var(--ui-switch-width) * var(--ui-form-length)) / 2);
   margin-right: round(
     up,
-    (100% - var(--ui-switch-width) * var(--ui-unit, 1) * 1px) / 2,
-    var(--ui-unit, 1) * 1px
+    (100% - var(--ui-switch-width) * var(--ui-form-length)) / 2,
+    var(--ui-form-length)
   );
+}
+
+/* A placed list: every track is explicit, in whole CSS px between the game's projected edges,
+   the padding and gaps included as tracks, and each row is exactly its height. The icon and a
+   switch's value stack sit at their placed offsets and a centred switch at its placed end
+   margin; text keeps its alignment. */
+:where(.ui-form-rows[data-ui-form-projected]) {
+  grid-template-columns: var(--ui-form-columns);
+  grid-template-rows: var(--ui-form-rows);
+  column-gap: 0;
+  row-gap: 0;
+}
+
+:where(.ui-form-rows[data-ui-form-projected] > .ui-form-row) {
+  align-self: start;
+  height: calc(var(--ui-form-row-height) * var(--ui-form-length));
+}
+
+:where(.ui-form-rows[data-ui-form-projected] .ui-form-row-icon) {
+  align-self: start;
+  margin-top: calc(var(--ui-form-icon-offset, 0) * var(--ui-form-length));
+}
+
+:where(.ui-form-rows[data-ui-form-projected] .ui-form-row-icon > *) {
+  height: calc(var(--ui-form-icon-height) * var(--ui-form-length));
+}
+
+:where(.ui-form-rows[data-ui-form-projected] [role="switch"] > .ui-form-row-value) {
+  align-self: start;
+  margin-top: calc(var(--ui-form-value-offset, 0) * var(--ui-form-length));
+}
+
+:where(.ui-form-rows[data-ui-form-projected][data-ui-form-state="center"] .ui-switch) {
+  margin-right: calc(var(--ui-form-switch-end, 0) * var(--ui-form-length));
 }

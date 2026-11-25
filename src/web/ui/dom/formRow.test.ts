@@ -155,7 +155,7 @@ describe("formRow.css", () => {
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b/i);
     expect(css).not.toMatch(/\b(rgb|hsl)a?\(/i);
     expect(css).not.toMatch(/\b(outline|box-shadow)\s*:/);
-    expect(css.replace(/\* -?1px\b/g, "")).not.toMatch(/\d(px|rem|em)\b/);
+    expect(css.replace(/\* -?1px\b|--ui-form-length: 1px;/g, "")).not.toMatch(/\d(px|rem|em)\b/);
   });
 
   it("sizes the value column by CSS and shares it across rows", () => {

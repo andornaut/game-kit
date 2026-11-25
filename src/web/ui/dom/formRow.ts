@@ -1,6 +1,14 @@
-import { type FormRowLayout, formRowPresentation } from "../../../ui/index.ts";
+import type { Point } from "../../../rect.ts";
+import {
+  type ActionProjection,
+  type FormRowLayout,
+  formRowPresentation,
+  type FormRowsGeometry,
+  formRowsGeometry,
+} from "../../../ui/index.ts";
 import { type ButtonOptions, type ButtonState, type ButtonView, createButton } from "./button.ts";
 import { writeLayoutProperties } from "./layoutProperties.ts";
+import { placedBoxes, rowHooks } from "./placedRows.ts";
 import { REFUSAL_ATTRIBUTES } from "./refusalCue.ts";
 
 // The HTML form rows (formRow.css): a list element whose grid columns its rows share, and rows
@@ -11,6 +19,8 @@ import { REFUSAL_ATTRIBUTES } from "./refusalCue.ts";
 // word, or a value. A switch row is role switch with aria-checked; the stack is decorative and
 // the label is the row's name. Rows take the theme's button state slots with a clear idle face,
 // controls.css's one focus fill and no press dip.
+// A placed list (place) writes every track and part in whole CSS px from the game's projected
+// edges instead, so pixel art lands on the game's grid.
 
 export const FORM_ROWS_CLASS = "ui-form-rows";
 export const FORM_ROW_CLASS = "ui-form-row";
@@ -21,11 +31,31 @@ export const FORM_ROW_NOTE_CLASS = "ui-form-row-note";
 export const FORM_ROW_VALUE_CLASS = "ui-form-row-value";
 export const FORM_ROW_STATE_CLASS = "ui-form-row-state";
 export const SWITCH_CLASS = "ui-switch";
+export const FORM_ROWS_PROJECTED_ATTRIBUTE = "data-ui-form-projected";
+
+// Where a placed list is: its width and corner in the game's units, and the projection to the
+// caller's CSS px, as for arrangeActions. The list element's corner is at the projected origin.
+export interface DomFormRowsContext {
+  readonly project: ActionProjection;
+  readonly width: number;
+  readonly origin?: Point;
+}
 
 export interface FormRowsView {
   readonly element: HTMLElement;
-  // Applies layout to the list. Throws, before any change, on an invalid layout.
+  // Applies layout to the list, and on a placed list places it again. Throws, before any change,
+  // on an invalid layout.
   setLayout(layout: FormRowLayout): void;
+  // Places the list on the game's grid (formRowsGeometry): rows, the list's own kit rows
+  // (createFormRow, createSlider) in its order, each its height, the shown ones ACTION_GAPS
+  // stacked apart; every track and part in whole CSS px from the projected edges. The layout
+  // needs value.track and a slider row its layout's line. Place again after rows show, hide or
+  // change their layout, and after the projection changes. Returns the projected layout and units,
+  // the layout before projection, for the game's own ink. Throws RangeError before any change.
+  place(
+    context: DomFormRowsContext,
+    rows: readonly { readonly element: HTMLElement }[],
+  ): { readonly placed: FormRowsGeometry; readonly units: FormRowsGeometry };
 }
 
 export function createFormRows(
@@ -36,8 +66,55 @@ export function createFormRows(
   const element = document.createElement("div");
   element.className = `${options.className ?? ""} ${FORM_ROWS_CLASS}`.trim();
   let written: readonly string[] = [];
+  let current = layout;
+  let placement:
+    { context: DomFormRowsContext; rows: readonly { readonly element: HTMLElement }[] } | undefined;
+  const placeRows = (
+    next: FormRowLayout,
+    context: DomFormRowsContext,
+    rows: readonly { readonly element: HTMLElement }[],
+  ) => {
+    for (const row of rows) {
+      if (row.element.parentElement !== element || !rowHooks.has(row.element)) {
+        throw new RangeError("Placed rows must be the list's own kit rows");
+      }
+    }
+    const shown = rows.filter((row) => row.element.hidden === false);
+    const base = {
+      ...(context.origin === undefined ? {} : { origin: context.origin }),
+      rows: shown.map((row) => rowHooks.get(row.element)!.entry()),
+      width: context.width,
+    };
+    const units = formRowsGeometry(next, base);
+    const placed = formRowsGeometry(next, { ...base, project: context.project });
+    const tracks = listTracks(placed);
+    const writes = shown.map((row, i) => {
+      const lane = units.rows[i]!.lane;
+      return rowHooks.get(row.element)!.place({
+        box: placed.rows[i]!.row,
+        properties: rowLengths(next, context.project, placed.rows[i]!, units.rows[i]!),
+        ...(lane === undefined ? {} : { lane: { project: context.project, units: lane } }),
+      });
+    });
+    return {
+      result: { placed, units },
+      write() {
+        writeLayoutProperties(tracks, element);
+        element.setAttribute(FORM_ROWS_PROJECTED_ATTRIBUTE, "");
+        for (const row of rows) {
+          placedBoxes.delete(row.element);
+        }
+        shown.forEach((row, i) => {
+          placedBoxes.set(row.element, placed.rows[i]!.row);
+          writes[i]!();
+        });
+      },
+    };
+  };
   const setLayout = (next: FormRowLayout) => {
     const { attributes, properties } = formRowPresentation(next);
+    const placing =
+      placement === undefined ? undefined : placeRows(next, placement.context, placement.rows);
     for (const name of written) {
       if (!Object.hasOwn(properties, name)) {
         element.style.removeProperty(name);
@@ -48,9 +125,102 @@ export function createFormRows(
     for (const [name, value] of Object.entries(attributes)) {
       element.setAttribute(name, value);
     }
+    current = next;
+    placing?.write();
   };
   setLayout(layout);
-  return { element, setLayout };
+  return {
+    element,
+    place(context, rows) {
+      const placing = placeRows(current, context, rows);
+      placement = { context, rows: [...rows] };
+      placing.write();
+      return placing.result;
+    },
+    setLayout,
+  };
+}
+
+// The list's explicit tracks, in CSS px between projected edges: the columns with the padding,
+// the icon slot's sides and the gaps as their own tracks, and each row's pitch to the next row.
+function listTracks(placed: FormRowsGeometry): Record<string, string> {
+  const first = placed.rows[0];
+  if (first === undefined) {
+    return { "--ui-form-columns": "none", "--ui-form-rows": "none" };
+  }
+  const { icon, label, row, slot, value } = first;
+  const px = (length: number) => `${length}px`;
+  const right = (rect: { width: number; x: number }) => rect.x + rect.width;
+  const columns =
+    icon === undefined || slot === undefined
+      ? [px(label.x - row.x), "[label]"]
+      : [
+          px(slot.x - row.x),
+          px(icon.x - slot.x),
+          "[icon]",
+          px(icon.width),
+          px(label.x - right(icon)),
+          "[label]",
+        ];
+  columns.push(
+    px(label.width),
+    px(value.x - right(label)),
+    "[value]",
+    px(value.width),
+    px(right(row) - right(value)),
+  );
+  const rows = placed.rows.map((entry, i) => {
+    const next = placed.rows[i + 1];
+    return px(next === undefined ? entry.row.height : next.row.y - entry.row.y);
+  });
+  return { "--ui-form-columns": columns.join(" "), "--ui-form-rows": rows.join(" ") };
+}
+
+// A placed row's lengths in CSS px, each between projected edges, written on the row over the
+// list's base px. Its padding across is in the list's tracks.
+function rowLengths(
+  layout: FormRowLayout,
+  project: ActionProjection,
+  placed: FormRowsGeometry["rows"][number],
+  units: FormRowsGeometry["rows"][number],
+): Record<string, number> {
+  const { content, icon, line, row, stack, value } = placed;
+  const bottom = (rect: { height: number; y: number }) => rect.y + rect.height;
+  const valueRight = units.value.x + units.value.width;
+  const lengths: Record<string, number> = {
+    "--ui-form-row-height": row.height,
+    "--ui-form-row-padding-bottom": bottom(row) - bottom(content),
+    "--ui-form-row-padding-left": 0,
+    "--ui-form-row-padding-right": 0,
+    "--ui-form-row-padding-top": content.y - row.y,
+    "--ui-form-state-bearing":
+      project.x(valueRight) - project.x(valueRight - (layout.value?.bearing ?? 0)),
+    "--ui-form-switch-end": 0,
+    "--ui-form-value-gap": 0,
+    "--ui-form-value-offset": stack.y - line.y,
+    "--ui-switch-height": 0,
+    "--ui-switch-width": 0,
+  };
+  if (icon !== undefined) {
+    lengths["--ui-form-icon-height"] = icon.height;
+    lengths["--ui-form-icon-offset"] = icon.y - line.y;
+    lengths["--ui-form-icon-size"] = icon.width;
+  }
+  if (placed.switch !== undefined && units.switch !== undefined) {
+    const end = bottom(units.switch);
+    lengths["--ui-form-switch-end"] =
+      value.x + value.width - (placed.switch.x + placed.switch.width);
+    lengths["--ui-form-value-gap"] = project.y(end + (layout.value?.gap ?? 0)) - project.y(end);
+    lengths["--ui-switch-height"] = placed.switch.height;
+    lengths["--ui-switch-width"] = placed.switch.width;
+  }
+  if (placed.lane !== undefined) {
+    lengths["--ui-slider-gap"] = placed.lane.y - bottom(line);
+    lengths["--ui-slider-inset-left"] = placed.lane.x - row.x;
+    lengths["--ui-slider-inset-right"] = row.x + row.width - (placed.lane.x + placed.lane.width);
+    lengths["--ui-slider-line"] = line.height;
+  }
+  return lengths;
 }
 
 // A row's state: the button's availability and selection, whether a switch is on, and the
@@ -164,6 +334,10 @@ export function createFormRow(document: Document, options: FormRowOptions): Form
     describe(view.element, valueShown);
   };
   setNote(noteText);
+  rowHooks.set(view.element, {
+    entry: () => ({ switch: track !== undefined }),
+    place: (placement) => () => writeLayoutProperties(placement.properties, view.element),
+  });
   return {
     dispose: () => view.dispose(),
     element: view.element,

@@ -1,22 +1,31 @@
 /* Opt-in action groups (actionGroup). The DOM part writes every length as unitless base px from
-   the pure arrangement; they resolve at --ui-unit. The group box takes the whole room across and
-   its content's height, and places its actions and middle slot by their faces. */
+   the pure arrangement; they resolve at --ui-unit, or for a projected group as whole CSS px on
+   the game's grid, through --ui-action-length. The group box takes the whole room across and its
+   content's height, and places its actions and middle slot by their faces. */
 .ui-action-group {
+  --ui-action-length: calc(var(--ui-unit, 1) * 1px);
   position: relative;
   box-sizing: border-box;
   flex: none;
-  width: calc(var(--ui-action-group-width) * var(--ui-unit, 1) * 1px);
-  height: calc(var(--ui-action-group-height) * var(--ui-unit, 1) * 1px);
+  width: calc(var(--ui-action-group-width) * var(--ui-action-length));
+  height: calc(var(--ui-action-group-height) * var(--ui-action-length));
 }
 
 .ui-action-group > :is(.ui-action, .ui-action-middle) {
+  --ui-action-length: calc(var(--ui-unit, 1) * 1px);
   position: absolute;
   box-sizing: border-box;
-  top: calc(var(--ui-action-y) * var(--ui-unit, 1) * 1px);
-  left: calc(var(--ui-action-x) * var(--ui-unit, 1) * 1px);
-  width: calc(var(--ui-action-width) * var(--ui-unit, 1) * 1px);
-  height: calc(var(--ui-action-height) * var(--ui-unit, 1) * 1px);
+  top: calc(var(--ui-action-y) * var(--ui-action-length));
+  left: calc(var(--ui-action-x) * var(--ui-action-length));
+  width: calc(var(--ui-action-width) * var(--ui-action-length));
+  height: calc(var(--ui-action-height) * var(--ui-action-length));
   margin: 0;
+}
+
+/* A group arranged with a projection: its lengths are CSS px. */
+.ui-action-group[data-ui-action-projected],
+.ui-action-group[data-ui-action-projected] > :is(.ui-action, .ui-action-middle) {
+  --ui-action-length: 1px;
 }
 
 /* A skin face inside the native action fills it. */
@@ -32,10 +41,10 @@
 .ui-action-group > .ui-action::before {
   content: "";
   position: absolute;
-  top: calc(var(--ui-action-outset-top) * var(--ui-unit, 1) * -1px);
-  right: calc(var(--ui-action-outset-right) * var(--ui-unit, 1) * -1px);
-  bottom: calc(var(--ui-action-outset-bottom) * var(--ui-unit, 1) * -1px);
-  left: calc(var(--ui-action-outset-left) * var(--ui-unit, 1) * -1px);
+  top: calc(var(--ui-action-outset-top) * var(--ui-action-length) * -1);
+  right: calc(var(--ui-action-outset-right) * var(--ui-action-length) * -1);
+  bottom: calc(var(--ui-action-outset-bottom) * var(--ui-action-length) * -1);
+  left: calc(var(--ui-action-outset-left) * var(--ui-action-length) * -1);
 }
 
 .ui-action-group > :is(.ui-action, .ui-action-middle)[hidden] {

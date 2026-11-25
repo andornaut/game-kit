@@ -1,7 +1,8 @@
 import { MODAL_CONTENT } from "../modalLayout.ts";
 import type { Rect } from "../rect.ts";
-import type { ActionOutset, ActionProjection } from "./actionGroup.ts";
+import type { ActionOutset } from "./actionGroup.ts";
 import { HIT_RULE, hitMargin } from "./hitAreas.ts";
+import { type ActionProjection, IDENTITY_PROJECTION, projectRect } from "./projection.ts";
 
 // Modal frames: a card centred in the game's content rect at a width family's width, or a
 // full-screen view or non-modal page that is the content rect itself, with a header holding an
@@ -128,8 +129,6 @@ export const MODAL_FRAME = {
   padding: MODAL_CONTENT.padding,
 } as const;
 
-const IDENTITY: ActionProjection = { x: (edge) => edge, y: (edge) => edge };
-
 function whole(name: string, value: number, least = 0): void {
   if (!Number.isInteger(value) || value < least) {
     throw new RangeError(`${name} must be a whole number of units, at least ${least}`);
@@ -182,7 +181,7 @@ function resolve(context: ModalFrameContext): Resolved {
     gap = MODAL_FRAME.gap,
     margin = MODAL_FRAME.margin,
     padding = MODAL_FRAME.padding,
-    project = IDENTITY,
+    project = IDENTITY_PROJECTION,
     variant = "card",
   } = context;
   if (variant !== "card" && variant !== "fullScreen" && variant !== "page") {
@@ -266,22 +265,6 @@ export function modalFrameRooms(context: ModalFrameContext): ModalFrameRooms {
     throw new RangeError("The modal frame leaves no room for its title or body");
   }
   return { body: inner, card: width, footer: inner, title };
-}
-
-function projectRect(projection: ActionProjection, rect: Rect): Rect {
-  const left = projection.x(rect.x);
-  const right = projection.x(rect.x + rect.width);
-  const top = projection.y(rect.y);
-  const bottom = projection.y(rect.y + rect.height);
-  for (const edge of [left, right, top, bottom]) {
-    if (!Number.isInteger(edge)) {
-      throw new RangeError("A projection must map edges to whole numbers");
-    }
-  }
-  if (right < left || bottom < top) {
-    throw new RangeError("A projection must keep edges in order");
-  }
-  return { height: bottom - top, width: right - left, x: left, y: top };
 }
 
 // Places the frame for its parts' sizes. A card is its family's width, clamped inside the margin,

@@ -382,9 +382,9 @@ describe("createModalFrame for pages, projection and Chibi's cards", () => {
     const projected = { ...pageContext, project };
     expect(() => frame.layout(projected, { ...sizes, title: { inset: 24 } })).toThrow(RangeError);
     expect(() => frame.layout(projected, { title: sizes.title })).toThrow(RangeError);
-    expect(() => frame.layout(projected, { ...sizes, footer: { actions: [] } })).toThrow(
-      RangeError,
-    );
+    // The kit footer takes the frame's projection.
+    expect(frame.layout(projected, { ...sizes, footer: { actions: [] } }).footer).toBeDefined();
+    expect(frame.footer.element.hasAttribute("data-ui-action-projected")).toBe(true);
     // Unprojected, the measured title takes no height and the sides share one inset.
     height(frame.title, 15);
     height(frame.content, 0);

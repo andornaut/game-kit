@@ -1,6 +1,7 @@
 /* Opt-in slider rows (slider), with formRow.css. Every rule matches through :where(), with zero
    specificity, so a game's component class always wins. Lengths are unitless base px at
-   --ui-unit, from the row's layout. A slider row is a form row: its icon, label and value word
+   --ui-unit, from the row's layout, or on a placed list whole CSS px through formRow.css's
+   --ui-form-length. A slider row is a form row: its icon, label and value word
    take the list's columns on its first line, and the lane spans the row's content under them,
    the gap below. The track is a whole number of units wide and the thumb's offset a whole unit,
    a half rounding right. The game supplies --ui-slider-track-image and --ui-slider-fill-image
@@ -11,7 +12,7 @@
 
 :where(.ui-slider-row) {
   align-content: start;
-  row-gap: calc(var(--ui-slider-gap, 0) * var(--ui-unit, 1) * 1px);
+  row-gap: calc(var(--ui-slider-gap, 0) * var(--ui-form-length));
 }
 
 :where(.ui-slider-row > .ui-slider-lane) {
@@ -19,20 +20,20 @@
   grid-column: 1 / -1;
   position: relative;
   display: block;
-  height: calc(var(--ui-slider-lane-height) * var(--ui-unit, 1) * 1px);
-  margin: 0 calc(var(--ui-slider-inset-right, 0) * var(--ui-unit, 1) * 1px) 0
-    calc(var(--ui-slider-inset-left, 0) * var(--ui-unit, 1) * 1px);
+  height: calc(var(--ui-slider-lane-height) * var(--ui-form-length));
+  margin: 0 calc(var(--ui-slider-inset-right, 0) * var(--ui-form-length)) 0
+    calc(var(--ui-slider-inset-left, 0) * var(--ui-form-length));
 }
 
 /* The track, the lane's width rounded down to a whole unit. */
 :where(.ui-slider-lane > .ui-slider-track) {
   position: absolute;
-  top: calc(var(--ui-slider-track-top, 0) * var(--ui-unit, 1) * 1px);
+  top: calc(var(--ui-slider-track-top, 0) * var(--ui-form-length));
   left: 0;
   display: block;
   width: 100%;
-  width: round(down, 100%, var(--ui-unit, 1) * 1px);
-  height: calc(var(--ui-slider-track-height) * var(--ui-unit, 1) * 1px);
+  width: round(down, 100%, var(--ui-form-length));
+  height: calc(var(--ui-slider-track-height) * var(--ui-form-length));
 }
 
 :where(.ui-slider-track > .ui-slider-empty, .ui-slider-track > .ui-slider-fill) {
@@ -44,8 +45,8 @@
   height: 100%;
   border-style: solid;
   border-color: transparent;
-  border-width: 0 calc(var(--ui-slider-cap-right, 0) * var(--ui-unit, 1) * 1px) 0
-    calc(var(--ui-slider-cap-left, 0) * var(--ui-unit, 1) * 1px);
+  border-width: 0 calc(var(--ui-slider-cap-right, 0) * var(--ui-form-length)) 0
+    calc(var(--ui-slider-cap-left, 0) * var(--ui-form-length));
   border-image-slice: 0 var(--ui-slider-cap-right, 0) 0 var(--ui-slider-cap-left, 0) fill;
   border-image-repeat: stretch;
   image-rendering: pixelated;
@@ -59,17 +60,17 @@
 /* The fill reaches the thumb's right edge. */
 :where(.ui-slider-track > .ui-slider-fill) {
   width: calc(
-    (100% - var(--ui-slider-thumb-width) * var(--ui-unit, 1) * 1px) * var(--ui-slider-step) /
-      var(--ui-slider-steps) + var(--ui-slider-thumb-width) * var(--ui-unit, 1) * 1px
+    (100% - var(--ui-slider-thumb-width) * var(--ui-form-length)) * var(--ui-slider-step) /
+      var(--ui-slider-steps) + var(--ui-slider-thumb-width) * var(--ui-form-length)
   );
   width: calc(
     round(
         nearest,
-        (100% - var(--ui-slider-thumb-width) * var(--ui-unit, 1) * 1px) * var(--ui-slider-step) /
+        (100% - var(--ui-slider-thumb-width) * var(--ui-form-length)) * var(--ui-slider-step) /
           var(--ui-slider-steps),
-        var(--ui-unit, 1) * 1px
+        var(--ui-form-length)
       ) +
-      var(--ui-slider-thumb-width) * var(--ui-unit, 1) * 1px
+      var(--ui-slider-thumb-width) * var(--ui-form-length)
   );
   border-image-source: var(--ui-slider-fill-image, none);
 }
@@ -77,24 +78,46 @@
 /* The thumb's left edge is the travel's share at the step, on a whole unit. */
 :where(.ui-slider-track > .ui-slider-thumb) {
   position: absolute;
-  top: calc(var(--ui-slider-thumb-top, 0) * var(--ui-unit, 1) * 1px);
+  top: calc(var(--ui-slider-thumb-top, 0) * var(--ui-form-length));
   left: calc(
-    (100% - var(--ui-slider-thumb-width) * var(--ui-unit, 1) * 1px) * var(--ui-slider-step) /
+    (100% - var(--ui-slider-thumb-width) * var(--ui-form-length)) * var(--ui-slider-step) /
       var(--ui-slider-steps)
   );
   left: round(
     nearest,
-    (100% - var(--ui-slider-thumb-width) * var(--ui-unit, 1) * 1px) * var(--ui-slider-step) /
+    (100% - var(--ui-slider-thumb-width) * var(--ui-form-length)) * var(--ui-slider-step) /
       var(--ui-slider-steps),
-    var(--ui-unit, 1) * 1px
+    var(--ui-form-length)
   );
   display: block;
-  width: calc(var(--ui-slider-thumb-width) * var(--ui-unit, 1) * 1px);
-  height: calc(var(--ui-slider-thumb-height) * var(--ui-unit, 1) * 1px);
+  width: calc(var(--ui-slider-thumb-width) * var(--ui-form-length));
+  height: calc(var(--ui-slider-thumb-height) * var(--ui-form-length));
   background-image: var(--ui-slider-thumb-image, none);
   background-repeat: no-repeat;
   background-size: 100% 100%;
   image-rendering: pixelated;
+}
+
+/* On a placed list the first line is the game's line height, the lane gap under it and inset
+   from the row's edges, and the track's caps, fill and thumb take their placed lengths in whole
+   CSS px; the caps' slices stay in art pixels. */
+:where(.ui-form-rows[data-ui-form-projected] > .ui-slider-row) {
+  grid-template-rows: calc(var(--ui-slider-line) * var(--ui-form-length)) auto;
+}
+
+:where(.ui-form-rows[data-ui-form-projected] .ui-slider-track > .ui-slider-empty) {
+  border-width: 0 calc(var(--ui-slider-empty-cap-right) * var(--ui-form-length)) 0
+    calc(var(--ui-slider-empty-cap-left) * var(--ui-form-length));
+}
+
+:where(.ui-form-rows[data-ui-form-projected] .ui-slider-track > .ui-slider-fill) {
+  width: calc(var(--ui-slider-fill-width) * var(--ui-form-length));
+  border-width: 0 calc(var(--ui-slider-fill-cap-right) * var(--ui-form-length)) 0
+    calc(var(--ui-slider-fill-cap-left) * var(--ui-form-length));
+}
+
+:where(.ui-form-rows[data-ui-form-projected] .ui-slider-track > .ui-slider-thumb) {
+  left: calc(var(--ui-slider-thumb-left) * var(--ui-form-length));
 }
 
 :where(.ui-slider-row[data-ui-pressed] .ui-slider-thumb) {

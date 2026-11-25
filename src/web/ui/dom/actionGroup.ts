@@ -12,10 +12,12 @@ import {
   separatePressAreas,
 } from "../../../ui/index.ts";
 import { writeLayoutProperties } from "./layoutProperties.ts";
+import { placedBoxes } from "./placedRows.ts";
 import { readUnit } from "./viewUnits.ts";
 
 // The HTML action group (actionGroup.css): the group element holds the game's action elements as
-// direct children and places each one by the pure arrangement, in base px times --ui-unit. Layout
+// direct children and places each one by the pure arrangement, in base px times --ui-unit, or
+// with a projection in whole CSS px on the game's grid (--ui-action-length: 1px). Layout
 // boxes equal the faces. Each action's press area is its ::before, outset by the arranged press
 // outsets, so it takes presses as the action without changing layout. A clipping ancestor (an
 // overflow scroller) clips the outsets that reach past it. DOM order, focus order and identities
@@ -26,6 +28,7 @@ export const ACTION_GROUP_CLASS = "ui-action-group";
 export const ACTION_CLASS = "ui-action";
 export const ACTION_MIDDLE_CLASS = "ui-action-middle";
 export const ACTION_MEASURING_ATTRIBUTE = "data-ui-action-measuring";
+export const ACTION_PROJECTED_ATTRIBUTE = "data-ui-action-projected";
 
 const BOX = ["x", "y", "width", "height"] as const;
 const SIDES = ["top", "right", "bottom", "left"] as const;
@@ -43,20 +46,20 @@ export interface DomAction {
   readonly locked?: boolean;
 }
 
-// The pure context less placement in other spaces: the DOM places in base px from the group's
-// corner. The footer's middle slot is a direct child the game supplies, such as a pager.
+// The pure context less text placement. The footer's middle slot is a direct child the game
+// supplies, such as a pager. Without project the DOM places in base px from the group's corner.
+// With project, origin is the group's corner in the game's units and the arrangement is in the
+// projection's space, written in whole CSS px from the group's projected corner (group.x and
+// group.y), where the game places the element. origin takes project.
 export type DomActionGroupContext = Omit<
   ActionGroupContext<HTMLElement>,
-  "middle" | "origin" | "placeText" | "project"
+  "middle" | "placeText"
 > & {
   readonly middle?: { readonly element: HTMLElement; readonly size: ButtonSize };
 };
 
-// The pure grid context less placement in other spaces.
-export type DomActionGridContext = Omit<
-  ActionGridContext<HTMLElement>,
-  "origin" | "placeText" | "project"
->;
+// The pure grid context less text placement, with origin and project as for a group.
+export type DomActionGridContext = Omit<ActionGridContext<HTMLElement>, "placeText">;
 
 export interface ActionGroupView {
   readonly element: HTMLElement;
@@ -85,8 +88,10 @@ function clear(element: HTMLElement): void {
   }
 }
 
-function box(rect: { height: number; width: number; x: number; y: number }) {
-  return Object.fromEntries(BOX.map((field) => [`--ui-action-${field}`, rect[field]]));
+// A rect's properties from the group's corner: (0, 0) unprojected, its projected corner otherwise.
+function box(rect: Rect, corner: { readonly x: number; readonly y: number }) {
+  const local = { ...rect, x: rect.x - corner.x, y: rect.y - corner.y };
+  return Object.fromEntries(BOX.map((field) => [`--ui-action-${field}`, local[field]]));
 }
 
 type Arranged = ActionArrangement<HTMLElement> | ActionGridArrangement<HTMLElement>;
@@ -104,15 +109,23 @@ function writeOutsets(arrangement: Arranged): void {
   }
 }
 
-// What a press context needs of a group: its own last arrangement and its context.
+// What a press context needs of a group: its own last arrangement, whether it is in a
+// projection's space, and its context.
 interface GroupState {
   arranged?: Arranged;
   context?: PressContext;
   disposed?: true;
+  projected?: boolean;
 }
 
 // By the group's element, so a view that wraps a group (a modal frame's footer) is the group.
 const groupStates = new WeakMap<HTMLElement, GroupState>();
+
+function checkOrigin(context: { readonly origin?: unknown; readonly project?: unknown }): void {
+  if (context.origin !== undefined && context.project === undefined) {
+    throw new RangeError("An action group's origin takes a projection");
+  }
+}
 
 export function createActionGroup(
   document: Document,
@@ -146,8 +159,10 @@ export function createActionGroup(
   const place = (
     arrangement: Arranged,
     actions: readonly DomAction[],
+    projected: boolean,
     middle?: { readonly element: HTMLElement },
   ) => {
+    const corner = arrangement.group;
     const current = new Set(actions.map((action) => action.element));
     if (middle !== undefined) {
       current.add(middle.element);
@@ -171,6 +186,7 @@ export function createActionGroup(
       "variant" in arrangement ? arrangement.variant : "group",
     );
     element.setAttribute("data-ui-action-gap", arrangement.gap.name);
+    element.toggleAttribute(ACTION_PROJECTED_ATTRIBUTE, projected);
     for (const action of arrangement.actions) {
       const child = action.key;
       marked.add(child);
@@ -183,7 +199,7 @@ export function createActionGroup(
       }
       writeLayoutProperties(
         {
-          ...box(action.face),
+          ...box(action.face, corner),
           ...Object.fromEntries(
             SIDES.map((side) => [`--ui-action-outset-${side}`, action.outset[side]]),
           ),
@@ -194,27 +210,30 @@ export function createActionGroup(
     if (middle !== undefined && "middle" in arrangement && arrangement.middle !== undefined) {
       marked.add(middle.element);
       middle.element.classList.add(ACTION_MIDDLE_CLASS);
-      writeLayoutProperties(box(arrangement.middle), middle.element);
+      writeLayoutProperties(box(arrangement.middle, corner), middle.element);
     }
     state.arranged = arrangement;
+    state.projected = projected;
     state.context?.apply();
   };
   const view: ActionGroupView = {
     arrange(context, actions) {
       assertLive();
+      checkOrigin(context);
       const { middle, ...rest } = context;
       const items = children(actions, middle?.element);
       const arrangement = arrangeActions(
         { ...rest, ...(middle === undefined ? {} : { middle: middle.size }) },
         items,
       );
-      place(arrangement, actions, middle);
+      place(arrangement, actions, context.project !== undefined, middle);
       return arrangement;
     },
     arrangeGrid(context, actions) {
       assertLive();
+      checkOrigin(context);
       const arrangement = arrangeActionGrid(context, children(actions));
-      place(arrangement, actions);
+      place(arrangement, actions, context.project !== undefined);
       return arrangement;
     },
     dispose() {
@@ -257,7 +276,9 @@ export function createActionGroup(
 // other members' faces and boxes (separatePressAreas), so their press areas meet without overlap
 // and no member needs a stacking order or an inset. It measures the boxes as drawn, so apply after
 // layout. A member group's arrange() and arrangeGrid() apply it again; apply after anything else
-// moves a member.
+// moves a member. With projected groups the members share the projection's space instead: each
+// group is as arranged, each element its placed form row box (createFormRows place), nothing is
+// measured, and every group must be projected with the same projection.
 export interface PressContext {
   // Adds a group, or an element that is its own press target. A view that wraps a group, such as
   // a modal frame's footer, is that group. Throws on a group already in another context or one
@@ -277,6 +298,31 @@ export function createPressContext(root: HTMLElement): PressContext {
     "arrange" in member ? member.element : member;
   const shown = (element: HTMLElement) =>
     element.isConnected && element.closest("[hidden]") === null;
+  // Projected groups are already in the projection's one space, and a placed form row takes its
+  // placed box, so nothing is measured.
+  const applyProjected = () => {
+    const placed = [...members].flatMap(([element, state]): PressMember<HTMLElement>[] => {
+      if (!shown(element)) {
+        return [];
+      }
+      if (state === undefined) {
+        const box = placedBoxes.get(element);
+        return box === undefined ? [] : [box];
+      }
+      if (state.arranged === undefined) {
+        return [];
+      }
+      if (state.projected !== true) {
+        throw new RangeError("A press context's groups are all projected or none");
+      }
+      return [state.arranged];
+    });
+    for (const member of separatePressAreas(placed)) {
+      if ("actions" in member) {
+        writeOutsets(member as Arranged);
+      }
+    }
+  };
   const context: PressContext = {
     add(member) {
       const element = elementOf(member);
@@ -293,6 +339,11 @@ export function createPressContext(root: HTMLElement): PressContext {
       members.set(element, "arrange" in member ? state : undefined);
     },
     apply() {
+      const groups = [...members.values()].filter((state) => state?.arranged !== undefined);
+      if (groups.some((state) => state!.projected === true)) {
+        applyProjected();
+        return;
+      }
       const unit = readUnit(root);
       const origin = root.getBoundingClientRect();
       const measure = (element: HTMLElement): Rect => {

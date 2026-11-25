@@ -1,5 +1,5 @@
 import type { Point, Rect } from "../rect.ts";
-import type { ActionProjection } from "./actionGroup.ts";
+import { type ActionProjection, IDENTITY_PROJECTION, projectRect } from "./projection.ts";
 
 // Sliders: a stepped value from 0 to a set number of steps, shown as the game's track art with a
 // thumb that slides along it. The track is a three-slice (fixed caps, a stretched middle) at its
@@ -47,12 +47,14 @@ export interface SliderGeometry {
 
 // A slider row's layout in a form row list (web/ui/dom/slider): the art, the least row height
 // where it differs from the list's, the gap from the row's first line (icon, label and value
-// word) down to the lane, and the lane's insets from the row's content sides.
+// word) down to the lane, and the lane's insets from the row's content sides. line, the first
+// line's height, places the lane in a placed list (formRowsGeometry), which measures nothing.
 export interface SliderLayout {
   readonly art: SliderArt;
   readonly gap?: number;
   readonly height?: number;
   readonly inset?: { readonly left?: number; readonly right?: number };
+  readonly line?: number;
 }
 
 function whole(name: string, value: number | undefined, least: number): void {
@@ -154,25 +156,12 @@ export function sliderLane(art: SliderArt): SliderLane {
 export function sliderGeometry(context: SliderContext, step: number): SliderGeometry {
   const offset = sliderThumbOffset(context, step);
   const { art, origin = { x: 0, y: 0 }, width } = context;
-  const project = context.project ?? { x: (edge: number) => edge, y: (edge: number) => edge };
+  const project = context.project ?? IDENTITY_PROJECTION;
   whole("origin.x", origin.x, Number.MIN_SAFE_INTEGER);
   whole("origin.y", origin.y, Number.MIN_SAFE_INTEGER);
   const lane = sliderLane(art);
-  const place = (x: number, y: number, w: number, h: number): Rect => {
-    const left = project.x(origin.x + x);
-    const top = project.y(origin.y + y);
-    const right = project.x(origin.x + x + w);
-    const bottom = project.y(origin.y + y + h);
-    for (const edge of [left, top, right, bottom]) {
-      if (!Number.isInteger(edge)) {
-        throw new RangeError("A projection must map edges to whole numbers");
-      }
-    }
-    if (right < left || bottom < top) {
-      throw new RangeError("A projection must keep edges in order");
-    }
-    return { height: bottom - top, width: right - left, x: left, y: top };
-  };
+  const place = (x: number, y: number, w: number, h: number): Rect =>
+    projectRect(project, { height: h, width: w, x: origin.x + x, y: origin.y + y });
   return {
     fill: place(0, lane.trackTop, offset + art.thumb.width, art.track.height),
     lane: place(0, 0, width, lane.height),
@@ -184,10 +173,11 @@ export function sliderGeometry(context: SliderContext, step: number): SliderGeom
 // A slider row's custom properties: unitless base px for its art, lane and insets, and the row
 // height where the layout sets one. Throws RangeError on a length that is not a whole unit.
 export function sliderPresentation(layout: SliderLayout): Readonly<Record<string, number>> {
-  const { art, gap, height, inset } = layout;
+  const { art, gap, height, inset, line } = layout;
   const lane = sliderLane(art);
   whole("gap", gap, 0);
   whole("height", height, 0);
+  whole("line", line, 0);
   whole("inset.left", inset?.left, 0);
   whole("inset.right", inset?.right, 0);
   return {

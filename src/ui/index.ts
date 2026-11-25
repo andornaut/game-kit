@@ -6,6 +6,7 @@ export {
   type ActionGridContext,
   type ActionGroupContext,
   type ActionPress,
+  type ActionProjection,
   arrangeActionGrid,
   arrangeActions,
   type PressMember,
@@ -29,7 +30,14 @@ export {
   validatePageDivider,
 } from "./controlPresentation.ts";
 export { type FocusKeyAction, focusKeyAction, stepFocus } from "./focusKeys.ts";
-export { type FormRowLayout, formRowPresentation } from "./formRow.ts";
+export {
+  type FormRowLayout,
+  formRowPresentation,
+  type FormRowsContext,
+  type FormRowsGeometry,
+  formRowsGeometry,
+  type FormRowsRow,
+} from "./formRow.ts";
 export {
   checkHudDiscSize,
   hudDiscIconOffset,
@@ -60,6 +68,8 @@ export { PAGER_GAP, type PagerPart, type PagerSizes, type PagerState } from "./p
 export {
   checkSliderStep,
   checkSliderSteps,
+  sliderGeometry,
+  sliderLane,
   type SliderLayout,
   sliderPresentation,
   sliderStepAt,

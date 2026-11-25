@@ -1,6 +1,9 @@
+import type { Rect } from "../../../rect.ts";
 import {
   checkSliderStep,
   checkSliderSteps,
+  sliderGeometry,
+  sliderLane,
   type SliderLayout,
   sliderPresentation,
   sliderStepAt,
@@ -17,6 +20,7 @@ import {
   FORM_ROW_VALUE_CLASS,
 } from "./formRow.ts";
 import { writeLayoutProperties } from "./layoutProperties.ts";
+import { rowHooks, type RowPlacement } from "./placedRows.ts";
 import { REFUSAL_ATTRIBUTES, type RefusalCue, refuse } from "./refusalCue.ts";
 import { readUnit } from "./viewUnits.ts";
 
@@ -32,6 +36,8 @@ import { readUnit } from "./viewUnits.ts";
 // touch drags once it travels slop sideways, a tap sets the step where it lifts, and a vertical
 // travel is left to the browser's scrolling. A refused slider keeps its focus and value and plays
 // the game's refusal cue on a press or a step key.
+// In a placed list (createFormRows place) the lane, track, fill and thumb are whole CSS px from the
+// game's projected edges, the thumb and fill again at every step.
 
 export const SLIDER_CLASS = "ui-slider-row";
 export const SLIDER_LANE_CLASS = "ui-slider-lane";
@@ -151,6 +157,77 @@ export function createSlider(document: Document, options: SliderOptions): Slider
 
   let layout = options.layout;
   let written: readonly string[] = [];
+  let placement: RowPlacement | undefined;
+  // The lane's parts at step in CSS px between the projected edges, each from its holder's corner:
+  // the track from the lane's, the thumb from the track's. The caps' border widths are projected
+  // apart from their slices, which stay in art pixels.
+  const writeLane = (placed: NonNullable<RowPlacement["lane"]>, step: number) => {
+    const context = {
+      art: layout.art,
+      origin: { x: placed.units.x, y: placed.units.y },
+      steps,
+      width: placed.units.width,
+    };
+    const units = sliderGeometry(context, step);
+    const at = sliderGeometry({ ...context, project: placed.project }, step);
+    const { caps } = layout.art.track;
+    const right = (rect: Rect) => rect.x + rect.width;
+    const x = (edge: number) => placed.project.x(edge);
+    const capLeft = x(units.track.x + caps.left) - at.track.x;
+    writeLayoutProperties(
+      {
+        "--ui-slider-empty-cap-left": capLeft,
+        "--ui-slider-empty-cap-right": right(at.track) - x(right(units.track) - caps.right),
+        "--ui-slider-fill-cap-left": capLeft,
+        "--ui-slider-fill-cap-right": right(at.fill) - x(right(units.fill) - caps.right),
+        "--ui-slider-fill-width": at.fill.width,
+        "--ui-slider-lane-height": at.lane.height,
+        "--ui-slider-thumb-height": at.thumb.height,
+        "--ui-slider-thumb-left": at.thumb.x - at.track.x,
+        "--ui-slider-thumb-top": at.thumb.y - at.track.y,
+        "--ui-slider-thumb-width": at.thumb.width,
+        "--ui-slider-track-height": at.track.height,
+        "--ui-slider-track-top": at.track.y - at.lane.y,
+      },
+      element,
+    );
+  };
+  const writePlacement = (placed: RowPlacement, step: number) => {
+    writeLayoutProperties(placed.properties, element);
+    if (placed.lane !== undefined) {
+      writeLane(placed.lane, step);
+    }
+  };
+  rowHooks.set(element, {
+    entry() {
+      if (layout.line === undefined) {
+        throw new RangeError("A placed slider row needs its layout's line");
+      }
+      return {
+        ...(layout.height === undefined ? {} : { height: layout.height }),
+        lane: {
+          ...(layout.gap === undefined ? {} : { gap: layout.gap }),
+          height: sliderLane(layout.art).height,
+          ...(layout.inset === undefined ? {} : { inset: layout.inset }),
+          line: layout.line,
+        },
+      };
+    },
+    place(placed) {
+      const step = state().step;
+      if (placed.lane !== undefined) {
+        const { project, units } = placed.lane;
+        sliderGeometry(
+          { art: layout.art, origin: units, project, steps, width: units.width },
+          step,
+        );
+      }
+      return () => {
+        placement = placed;
+        writePlacement(placed, step);
+      };
+    },
+  });
   const setLayout = (next: SliderLayout) => {
     const properties = sliderPresentation(next);
     for (const name of written) {
@@ -161,6 +238,9 @@ export function createSlider(document: Document, options: SliderOptions): Slider
     writeLayoutProperties(properties, element);
     written = Object.keys(properties);
     layout = next;
+    if (placement !== undefined) {
+      writePlacement(placement, state().step);
+    }
   };
   setLayout(layout);
 
@@ -202,6 +282,9 @@ export function createSlider(document: Document, options: SliderOptions): Slider
       value.textContent = word;
     }
     writeLayoutProperties({ "--ui-slider-step": step }, element);
+    if (placement?.lane !== undefined) {
+      writeLane(placement.lane, step);
+    }
   };
   refresh();
 
@@ -244,9 +327,16 @@ export function createSlider(document: Document, options: SliderOptions): Slider
     }
   };
 
+  // Page px per unit: --ui-unit, or on a placed lane its drawn track over its width in units,
+  // which holds through a transform such as a device-pixel root's scale.
+  const pageUnit = () => {
+    const units = placement?.lane?.units.width;
+    const drawn = units === undefined ? 0 : track.getBoundingClientRect().width;
+    return drawn > 0 ? drawn / units! : readUnit(element);
+  };
   // The step at a pointer's x, from the track as drawn: its width is a whole number of units.
   const stepAt = (event: PointerEvent) => {
-    const unit = readUnit(element);
+    const unit = pageUnit();
     const box = track.getBoundingClientRect();
     const width = Math.max(layout.art.thumb.width, Math.round(box.width / unit));
     return sliderStepAt({ art: layout.art, steps, width }, (event.clientX - box.left) / unit);
@@ -284,7 +374,7 @@ export function createSlider(document: Document, options: SliderOptions): Slider
       return;
     }
     if (current.mode === "pending") {
-      const unit = readUnit(element);
+      const unit = pageUnit();
       const dx = Math.abs(event.clientX - current.start.x);
       const dy = Math.abs(event.clientY - current.start.y);
       if (Math.max(dx, dy) > options.slop * unit) {

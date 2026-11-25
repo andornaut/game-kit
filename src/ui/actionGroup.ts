@@ -1,6 +1,7 @@
 import type { Point, Rect } from "../rect.ts";
 import type { ButtonRole, ButtonSize } from "./buttonLayout.ts";
 import { HIT_RULE, hitMargin, type HitRule, pressedArea } from "./hitAreas.ts";
+import { type ActionProjection, IDENTITY_PROJECTION, projectRect } from "./projection.ts";
 import { BUTTON_GAP, SMALL_BUTTON_GAP, STACK_BUTTON_GAP } from "./spacing.ts";
 
 // Action groups: a row or a stack of action faces that owns the spacing between them and each
@@ -44,13 +45,8 @@ export type ActionPress = HitRule | { readonly margin: number };
 // (pressedAction). Toward a footer's middle slot both clamp.
 export type ActionPressOverlap = "clamp" | "nearest";
 
-// Maps a whole-unit edge to the caller's output space, such as integer device pixels. Each axis
-// must be nondecreasing and return whole numbers. Neighbours share projected edges, so projection
-// keeps press areas touching without overlap.
-export interface ActionProjection {
-  x(edge: number): number;
-  y(edge: number): number;
-}
+// Maps a whole-unit edge to the caller's output space (projection.ts).
+export type { ActionProjection };
 
 export interface ActionOutset {
   readonly bottom: number;
@@ -120,8 +116,6 @@ export interface ActionArrangement<K, T = never> {
   readonly pressOverlap: ActionPressOverlap;
   readonly variant: ActionVariant;
 }
-
-const IDENTITY: ActionProjection = { x: (edge) => edge, y: (edge) => edge };
 
 function whole(name: string, value: number, least = 0): void {
   if (!Number.isInteger(value) || value < least) {
@@ -325,22 +319,6 @@ function routeNeighbours(axis: ActionAxis, entries: readonly Entry[]): void {
   }
 }
 
-function project(projection: ActionProjection, rect: Rect): Rect {
-  const left = projection.x(rect.x);
-  const right = projection.x(rect.x + rect.width);
-  const top = projection.y(rect.y);
-  const bottom = projection.y(rect.y + rect.height);
-  for (const edge of [left, right, top, bottom]) {
-    if (!Number.isInteger(edge)) {
-      throw new RangeError("A projection must map edges to whole numbers");
-    }
-  }
-  if (right < left || bottom < top) {
-    throw new RangeError("A projection must keep edges in order");
-  }
-  return { height: bottom - top, width: right - left, x: left, y: top };
-}
-
 // Arranges actions as a row when they fit in context.width at full size, otherwise as a stack.
 // Secondary actions keep the caller's order and the primary goes last: rightmost in a row, at the
 // bottom of a stack. A sole visible action is centred, including in a footer without a middle
@@ -356,7 +334,7 @@ export function arrangeActions<K, T = never>(
     origin = { x: 0, y: 0 },
     press = HIT_RULE,
     pressOverlap = "clamp",
-    project: projection = IDENTITY,
+    project: projection = IDENTITY_PROJECTION,
     stackWidth = "content",
     variant = "group",
     width,
@@ -444,7 +422,7 @@ export function arrangeActions<K, T = never>(
   const placed = new Map<K, PlacedAction<K, T>>();
   let middleRect: Rect | undefined;
   const around = (entry: Entry, outset: { x: Span; y: Span }) =>
-    project(
+    projectRect(
       projection,
       shift({
         height: entry.face.height + outset.y.before + outset.y.after,
@@ -454,7 +432,7 @@ export function arrangeActions<K, T = never>(
       }),
     );
   for (const [index, entry] of withOutsets.entries()) {
-    const face = project(projection, shift(entry.face));
+    const face = projectRect(projection, shift(entry.face));
     if (entry.item === undefined) {
       middleRect = face;
       continue;
@@ -484,7 +462,7 @@ export function arrangeActions<K, T = never>(
     ),
     axis: placedAxis,
     gap,
-    group: project(projection, shift({ height, width, x: 0, y: 0 })),
+    group: projectRect(projection, shift({ height, width, x: 0, y: 0 })),
     ...(middleRect === undefined ? {} : { middle: middleRect }),
     pressOverlap,
     variant,
@@ -742,7 +720,7 @@ export function arrangeActionGrid<K, T = never>(
     origin = { x: 0, y: 0 },
     press = HIT_RULE,
     pressOverlap = "clamp",
-    project: projection = IDENTITY,
+    project: projection = IDENTITY_PROJECTION,
     width,
   } = context;
   whole("width", width);
@@ -780,7 +758,7 @@ export function arrangeActionGrid<K, T = never>(
   separateRegions(pressOverlap, () => true, regions);
   const shift = (rect: Rect): Rect => ({ ...rect, x: rect.x + origin.x, y: rect.y + origin.y });
   const around = (face: Rect, outset: ActionOutset) =>
-    project(
+    projectRect(
       projection,
       shift({
         height: face.height + outset.top + outset.bottom,
@@ -792,7 +770,7 @@ export function arrangeActionGrid<K, T = never>(
   const actions = new Map<K, PlacedAction<K, T>>();
   for (const [index, item] of ordered.entries()) {
     const region = regions[index]!;
-    const face = project(projection, shift(region.face));
+    const face = projectRect(projection, shift(region.face));
     const taken = around(region.face, region.drawn);
     actions.set(item.key, {
       face,
@@ -817,7 +795,7 @@ export function arrangeActionGrid<K, T = never>(
     axis: "grid",
     columns: used,
     gap,
-    group: project(projection, shift({ height: placed.height, width, x: 0, y: 0 })),
+    group: projectRect(projection, shift({ height: placed.height, width, x: 0, y: 0 })),
     pressOverlap,
     rows: placed.rows,
   };

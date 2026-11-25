@@ -1,6 +1,7 @@
 import type { ModalInputGate, ModalInputScope } from "../../../input/index.ts";
 import {
   type ActionArrangement,
+  arrangeActions,
   MODAL_FRAME,
   type ModalFrameContext,
   type ModalFrameLayout,
@@ -64,16 +65,23 @@ export interface ModalFrameOptions {
 // project in the game's units, which project maps to CSS px from that corner.
 export type DomModalFrameContext = ModalFrameContext;
 
+// The footer group's context; the frame sets its room, variant and, projected, its place.
+export type ModalFooterContext = Omit<
+  DomActionGroupContext,
+  "origin" | "project" | "variant" | "width"
+>;
+
 export interface ModalFrameParts {
   // The game's close control, such as a createButton view's element. Required with
   // context.close and only then. The frame keeps it the card's last child.
   readonly close?: HTMLElement;
   // The footer's actions, direct children of footer.element, or the game's own footer: its height
-  // in units, its content in footerSlot. Omit for no footer.
+  // in units, its content in footerSlot. Omit for no footer. A projected frame projects its kit
+  // footer with its own projection.
   readonly footer?:
     | {
         readonly actions: readonly DomAction[];
-        readonly context?: Omit<DomActionGroupContext, "variant" | "width">;
+        readonly context?: ModalFooterContext;
       }
     | { readonly height: number };
   // The title's insets and ink offset, and its height in units where the game owns its content
@@ -173,6 +181,24 @@ function removeProperties(element: HTMLElement, names: readonly string[]): void 
 function wholeHeight(element: HTMLElement, unit: number): number {
   // A rounding allowance keeps an exact length from rounding up a whole unit.
   return Math.max(0, Math.ceil(element.getBoundingClientRect().height / unit - 1e-6));
+}
+
+// A kit footer's arrangement in units, placing nothing.
+function arrangeFooter(
+  footer: { readonly actions: readonly DomAction[]; readonly context?: ModalFooterContext },
+  width: number,
+): ActionArrangement<HTMLElement> {
+  const { middle, ...rest } = footer.context ?? {};
+  return arrangeActions(
+    { ...rest, ...(middle === undefined ? {} : { middle: middle.size }), variant: "footer", width },
+    footer.actions.map((action) => ({
+      hidden: action.element.hidden !== false,
+      key: action.element,
+      role: action.role,
+      size: action.size,
+      ...(action.locked === undefined ? {} : { locked: action.locked }),
+    })),
+  );
 }
 
 // Removes the frame's marks from a close control it placed, and takes it out of the card.
@@ -400,15 +426,15 @@ export function createModalFrame(document: Document, options: ModalFrameOptions)
       const { height: givenTitle, ...titleRest } = parts.title ?? {};
       const owned =
         parts.footer !== undefined && "height" in parts.footer ? parts.footer : undefined;
+      const kit =
+        parts.footer !== undefined && "actions" in parts.footer ? parts.footer : undefined;
       const { project } = context;
       if (
         project !== undefined &&
-        ((titled && givenTitle === undefined) ||
-          parts.body === undefined ||
-          (parts.footer !== undefined && owned === undefined))
+        ((titled && givenTitle === undefined) || parts.body === undefined)
       ) {
         throw new RangeError(
-          "A projected modal frame takes its title and body heights and its own footer from the game",
+          "A projected modal frame takes its title and body heights from the game",
         );
       }
       if (session !== undefined && (laidOut === "page") !== (context.variant === "page")) {
@@ -427,12 +453,12 @@ export function createModalFrame(document: Document, options: ModalFrameOptions)
       // Validates the parts before any change; the measured sizes are whole by construction.
       placeModalFrame(context, sizes(givenTitle ?? 0, parts.body ?? 0, owned?.height));
       const arrangement =
-        parts.footer === undefined || "height" in parts.footer
+        kit === undefined || project !== undefined
           ? undefined
-          : group.arrange(
-              { ...parts.footer.context, variant: "footer", width: rooms.footer },
-              parts.footer.actions,
-            );
+          : group.arrange({ ...kit.context, variant: "footer", width: rooms.footer }, kit.actions);
+      // A projected kit footer's height in units, for the frame's layout before projection.
+      const footerUnits =
+        kit === undefined || project === undefined ? undefined : arrangeFooter(kit, rooms.footer);
       // The widths and insets first, so the title wraps and the content flows at their rooms.
       if (project === undefined) {
         writeLayoutProperties(
@@ -450,13 +476,27 @@ export function createModalFrame(document: Document, options: ModalFrameOptions)
       const placed = sizes(
         givenTitle ?? (titled ? wholeHeight(title, unit) : 0),
         parts.body ?? Math.max(0, wholeHeight(content, unit) - inset),
-        owned?.height ?? arrangement?.group.height,
+        owned?.height ?? (arrangement ?? footerUnits)?.group.height,
       );
       const frame = placeModalFrame(context, placed);
       const units =
         project === undefined
           ? frame
           : placeModalFrame({ ...context, project: { x: (x) => x, y: (y) => y } }, placed);
+      // The kit footer on the frame's grid, from the footer room's corner in units.
+      const projectedFooter =
+        kit === undefined || project === undefined || units.footer === undefined
+          ? undefined
+          : group.arrange(
+              {
+                ...kit.context,
+                origin: { x: units.footer.x, y: units.footer.y },
+                project,
+                variant: "footer",
+                width: rooms.footer,
+              },
+              kit.actions,
+            );
       if (close !== undefined && close !== parts.close) {
         releaseClose(close);
       }
@@ -539,7 +579,12 @@ export function createModalFrame(document: Document, options: ModalFrameOptions)
           close,
         );
       }
-      return { ...(arrangement === undefined ? {} : { footer: arrangement }), frame, units };
+      const footerArrangement = arrangement ?? projectedFooter;
+      return {
+        ...(footerArrangement === undefined ? {} : { footer: footerArrangement }),
+        frame,
+        units,
+      };
     },
     open(openOptions) {
       assertLive();
