@@ -15,6 +15,10 @@ familiar operations with unambiguous roles. A factory's read hook can receive th
 reads so callers can use it during construction. Keep lifecycle and persistence details
 behind the public operation that owns them.
 
+Imports are relative and acyclic. ESLint's `import-x/no-cycle` covers runtime edges in `src/`,
+`scripts/` and `tests/`; `scripts/import-cycles.test.ts` also rejects cycles made only of type
+imports, which that rule skips.
+
 Reference: [Standalone verification](../../README.md#standalone-verification), [Release artifacts and consumer proof](../../README.md#release-artifacts-and-consumer-proof).
 
 ## Work items

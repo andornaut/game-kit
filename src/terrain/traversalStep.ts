@@ -1,17 +1,73 @@
 // The fixed-step traversal kernel shared by `traversal` and `movementMap`. Not a package export:
 // `stepTraversal` validates every call's geometry, and `stepStaticTraversal` serves a builder that
 // validated its static geometry once.
-import type { Rect } from "../rect.ts";
-import type {
-  TraversalCollider,
-  TraversalContext,
-  TraversalGeometry,
-  TraversalInput,
-  TraversalMotionSegment,
-  TraversalSafety,
-  TraversalState,
-  TraversalStepResult,
-} from "./traversal.ts";
+import type { Point, Rect } from "../rect.ts";
+
+export interface TraversalMotionSegment {
+  readonly startSeconds: number;
+  readonly endSeconds: number;
+  readonly from: Readonly<Rect>;
+  readonly to: Readonly<Rect>;
+}
+export interface TraversalCollider<Id> {
+  readonly supportId: Id;
+  readonly kind: "solid" | "ledge";
+  readonly before: Readonly<Rect>;
+  readonly after: Readonly<Rect>;
+  readonly segments?: readonly TraversalMotionSegment[];
+}
+export interface TraversalGeometry<Id> {
+  readonly complete: boolean;
+  readonly colliders: readonly TraversalCollider<Id>[];
+}
+export interface TraversalProfile {
+  readonly gravity: number;
+  readonly jumpSpeed: number;
+  readonly maxFallSpeed: number;
+  readonly walkSpeed: number;
+}
+export interface TraversalState<Id> {
+  readonly x: number;
+  readonly y: number;
+  readonly vy: number;
+  readonly grounded: boolean;
+  readonly supportId?: Id;
+  readonly fallFromY: number;
+}
+export interface TraversalInput {
+  readonly move: -1 | 0 | 1;
+  readonly jump: boolean;
+  readonly timeSeconds: number;
+}
+export type TraversalCommand = Pick<TraversalInput, "move" | "jump">;
+export interface TraversalSafety {
+  readonly from: Readonly<Rect>;
+  readonly to: Readonly<Rect>;
+  readonly startSeconds: number;
+  readonly endSeconds: number;
+  readonly phase: "sweep" | "landing";
+}
+export interface TraversalContext<Id> {
+  readonly body: { readonly width: number; readonly height: number; readonly offset: Point };
+  readonly profile: TraversalProfile;
+  readonly dtSeconds: number;
+  readonly epsilon: number;
+  readonly bounds: Readonly<Rect>;
+  readonly maxDrop: number;
+  readonly maxCollisionSteps: number;
+  readonly sampleColliders: (
+    timeSeconds: number,
+    dtSeconds: number,
+    queryBounds: Readonly<Rect>,
+  ) => TraversalGeometry<Id>;
+  readonly safe: (request: TraversalSafety) => boolean;
+}
+export interface TraversalStepResult<Id> {
+  readonly status:
+    "ok" | "blocked" | "unsafe" | "out-of-bounds" | "geometry-unavailable" | "budget-exhausted";
+  readonly state: TraversalState<Id>;
+  readonly segments: readonly TraversalSafety[];
+}
 
 export function validRect(rect: Readonly<Rect>): boolean {
   return (

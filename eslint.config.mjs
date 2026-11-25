@@ -8,6 +8,8 @@ import ts from "typescript-eslint";
 import { plugins, sourceRules, toolingRules } from "./eslint.config.base.mjs";
 
 const KIT_FILES = ["src/**/*.ts"];
+const TEST_FILES = ["src/**/*.test.ts", "scripts/**/*.test.ts"];
+const TOOLING_FILES = ["*.ts", "*.js", "*.mjs", "scripts/**/*.ts", "tests/**/*.ts"];
 // Each environment directory: phaser/ (Phaser and the browser), dom/ (the browser without
 // Phaser) and vite/ (Node and Vite at build time). Everything else is pure.
 const PHASER_FILES = ["src/**/phaser/**"];
@@ -41,7 +43,7 @@ const VITE = {
 
 export default defineConfig(
   {
-    ignores: [".claude/", ".worktrees/", "node_modules/"],
+    ignores: [".claude/", ".worktrees/", "dist/", "node_modules/"],
   },
   js.configs.recommended,
   ts.configs.recommended,
@@ -53,7 +55,10 @@ export default defineConfig(
   {
     files: KIT_FILES,
     plugins,
-    rules: sourceRules,
+    rules: {
+      ...sourceRules,
+      "no-restricted-syntax": ["error", "WithStatement", "ImportExpression"],
+    },
   },
   // A later no-restricted-imports replaces an earlier one, so each file gets one list.
   {
@@ -74,9 +79,10 @@ export default defineConfig(
     rules: { "no-restricted-imports": ["error", { patterns: [OUTSIDE_KIT, PHASER, DOM] }] },
   },
   // No import cycles: a module in a cycle can run before what it imports has loaded. Type-only
-  // imports are erased at build time, so they never form one.
+  // imports are erased at build time, so this rule skips them; scripts/import-cycles.test.ts
+  // rejects type cycles too.
   {
-    files: KIT_FILES,
+    files: [...KIT_FILES, ...TOOLING_FILES],
     plugins: { "import-x": { rules: { "no-cycle": noCycle } } },
     rules: { "import-x/no-cycle": "error" },
     settings: {
@@ -84,9 +90,9 @@ export default defineConfig(
       "import-x/resolver-next": [createNodeResolver({ extensions: [".ts", ".js"] })],
     },
   },
-  // Config files: they produce what ships rather than being it.
+  // Tests and tooling: they verify or produce what ships rather than being it.
   {
-    files: ["*.ts", "*.js", "*.mjs", "scripts/**/*.ts", "tests/**/*.ts"],
+    files: [...TEST_FILES, ...TOOLING_FILES],
     plugins,
     rules: toolingRules,
   },

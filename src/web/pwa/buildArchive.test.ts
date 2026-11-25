@@ -24,7 +24,7 @@ function prefixWith(index: string | Uint8Array): Uint8Array<ArrayBuffer> {
 }
 
 function prefixWithFiles(files: readonly (readonly unknown[])[]) {
-  // eslint-disable-next-line sort-keys -- The fixture uses the v1 wire order.
+  // The fixture uses the v1 wire order.
   return prefixWith(JSON.stringify({ schema: 1, version: ID.version, buildId: ID.buildId, files }));
 }
 
