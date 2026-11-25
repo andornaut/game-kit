@@ -143,3 +143,4 @@ in `src/web/ui/dom/slider.ts` with `slider.css`, in the form row list's grid.
 | gk-0063 | Add a panel highlight token and fill crash details focus                | [gk-0063.md](../work/gk-0063.md) |
 | gk-0064 | Place DOM action groups, form rows and sliders on the game grid         | [gk-0064.md](../work/gk-0064.md) |
 | gk-0065 | Fix themed crash details contrast and inset the HUD disc ring           | [gk-0065.md](../work/gk-0065.md) |
+| gk-0066 | Let the pager play the game's refusal cue                               | [gk-0066.md](../work/gk-0066.md) |
