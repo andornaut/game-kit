@@ -33,6 +33,23 @@ import {
   parseBuildManifest,
   parseBuildPointer,
 } from "../buildRecords.ts";
+import {
+  bootBytesOf,
+  canPublishStaged,
+  failureReason,
+  type FirstInstallFailure,
+  groupedManifestMismatch,
+  launchProgress,
+  nextUpdateRetryMs,
+  parseProgressCarry,
+  type ProgressCarry,
+  progressCarryText,
+  type ProgressCounts,
+  requiredUpdateCandidate,
+  sameDeployedGroups,
+  sameUpdateState,
+  updateCheckWait,
+} from "../launchRules.ts";
 import { downloadBuildArchive, downloadBuildGroup } from "./buildArchiveDownload.ts";
 import { BUILD_GROUP_ROUTER_PROBE, supportsBuildArchive } from "./buildArchiveRouter.ts";
 import { type BuildArchiveStore, createBuildArchiveStore } from "./buildArchiveStore.ts";
@@ -131,14 +148,7 @@ export interface Launch {
   dispose(): void;
 }
 
-// The shortest time between update checks, so resuming the app asks the server at most once a
-// minute.
-export const UPDATE_CHECK_MS = 60_000;
-
-// A failed background update is retried while the page stays visible: first after
-// UPDATE_RETRY_MS, then after twice the previous wait, up to UPDATE_RETRY_MAX_MS.
-export const UPDATE_RETRY_MS = 60_000;
-export const UPDATE_RETRY_MAX_MS = 15 * 60_000;
+export { UPDATE_CHECK_MS, UPDATE_RETRY_MAX_MS, UPDATE_RETRY_MS } from "../launchRules.ts";
 
 // How long a completed first install waits for the router to control the page before reloading.
 export const CONTROL_WAIT_MS = 10_000;
@@ -146,15 +156,10 @@ export const CONTROL_WAIT_MS = 10_000;
 // A redeploy restarts an install on the new manifest; this bounds repeated restarts.
 const MAX_RESTARTS = 3;
 
-// The progress share held back until the active record is written.
-const RECORD_SHARE = 0.01;
-
 // Session keys: the build a launch reload targeted, and first-install progress carried across the
 // reload that boots the new build.
 const LAUNCH_RELOAD_KEY = "game-kit:launch-reload";
 const LAUNCH_PROGRESS_KEY = "game-kit:launch-progress";
-
-type FirstInstallFailure = LaunchFailure["reason"] | NetworkPlayNotice["reason"];
 
 class LaunchError extends Error {
   readonly reason: FirstInstallFailure;
@@ -166,41 +171,20 @@ class LaunchError extends Error {
   }
 }
 
-function failureReason(error: unknown): FirstInstallFailure {
-  const reason = (error as { reason?: unknown } | null)?.reason;
-  return reason === "network" ||
-    reason === "quota" ||
-    reason === "verification" ||
-    reason === "unsupported"
-    ? reason
-    : "network";
-}
-
-function bootBytesOf(manifest: BuildManifest): number {
-  const sizes = new Map(manifest.files.map((file) => [file.url, file.byteSize]));
-  return [...new Set(manifest.boot)].reduce((sum, url) => sum + (sizes.get(url) ?? 0), 0);
-}
-
-interface ProgressCarry {
-  readonly bootBytes: number;
-  readonly receivedBytes: number;
-  readonly version: string;
-}
-
 function readCarry(session: SessionLike | undefined): ProgressCarry | undefined {
   try {
-    const text = session?.getItem(LAUNCH_PROGRESS_KEY);
-    if (text === null || text === undefined) {
-      return undefined;
-    }
-    const carry = JSON.parse(text) as Partial<ProgressCarry>;
-    return typeof carry.version === "string" &&
-      Number.isFinite(carry.receivedBytes) &&
-      Number.isFinite(carry.bootBytes)
-      ? (carry as ProgressCarry)
-      : undefined;
+    return parseProgressCarry(session?.getItem(LAUNCH_PROGRESS_KEY));
   } catch {
     return undefined;
+  }
+}
+
+// Calls a game callback, logging instead of propagating its failure.
+function notify(label: string, callback: () => void): void {
+  try {
+    callback();
+  } catch (error) {
+    console.error(`${label} callback failed.`, error);
   }
 }
 
@@ -384,28 +368,36 @@ export function createLaunch(
   let visible = page.visibility.visibilityState !== "hidden";
   const cleanups: (() => void)[] = [];
 
-  // One determinate value over download bytes plus boot bytes. RECORD_SHARE of it is held back
-  // until the active record is written, so only a recorded, fully booted build reaches 1.
-  let progress = { bootBytes: 0, received: 0, recorded: false, total: 0 };
+  // First-install progress (launchRules' launchProgress).
+  let progress: ProgressCounts = { bootBytes: 0, received: 0, recorded: false, total: 0 };
   let lastValue = 0;
   let ready = false;
   const report = (phase: LaunchProgress["phase"], bootFraction: number) => {
-    const { bootBytes, received, recorded, total } = progress;
-    const all = total + bootBytes;
-    const read = phase === "ready" ? all : received + bootBytes * bootFraction;
-    const share = all > 0 ? read / all : bootFraction;
-    const raw = (1 - RECORD_SHARE) * Math.min(1, share) + (recorded ? RECORD_SHARE : 0);
-    lastValue = phase === "ready" ? 1 : Math.max(lastValue, Math.min(raw, 1 - Number.EPSILON));
-    try {
-      options.onProgress({
-        phase,
-        receivedBytes: Math.round(read),
-        totalBytes: all,
-        value: lastValue,
-      });
-    } catch (error) {
-      console.error("Launch progress callback failed.", error);
+    const next = launchProgress(progress, lastValue, phase, bootFraction);
+    lastValue = next.value;
+    notify("Launch progress", () => options.onProgress(next));
+  };
+  // The active record is written: report it and keep the progress for the launch reload.
+  const recordProgress = (version: string, carry: boolean) => {
+    progress = { ...progress, received: progress.total, recorded: true };
+    report("installing", 0);
+    if (carry) {
+      carryProgress(version);
     }
+  };
+  const carryProgress = (version: string) =>
+    writeSession(
+      session,
+      LAUNCH_PROGRESS_KEY,
+      progressCarryText({ bootBytes: progress.bootBytes, receivedBytes: progress.total, version }),
+    );
+
+  // A redeploy restarts an install or staging on the new manifest, at most MAX_RESTARTS times.
+  const nextRestart = (restarts: number, during: "install" | "staging"): number => {
+    if (restarts + 1 >= MAX_RESTARTS) {
+      throw new LaunchError("verification", `The deployed build kept changing during ${during}`);
+    }
+    return restarts + 1;
   };
 
   const reload = () => {
@@ -555,13 +547,7 @@ export function createLaunch(
         }
         throw error;
       });
-      if (result !== "changed") {
-        return result;
-      }
-      if (restarts + 1 >= MAX_RESTARTS) {
-        throw new LaunchError("verification", "The deployed build kept changing during install");
-      }
-      return installDeployed(restarts + 1);
+      return result === "changed" ? installDeployed(nextRestart(restarts, "install")) : result;
     }
     const manifest = await readPinnedManifest(pointer);
     progress = { ...progress, bootBytes: bootBytesOf(manifest), received: 0, total: 0 };
@@ -585,10 +571,7 @@ export function createLaunch(
       signal: aborts.signal,
     });
     if (result === "changed") {
-      if (restarts + 1 >= MAX_RESTARTS) {
-        throw new LaunchError("verification", "The deployed build kept changing during install");
-      }
-      return installDeployed(restarts + 1);
+      return installDeployed(nextRestart(restarts, "install"));
     }
     await store.saveManifest(manifest);
     const active = await withBuildStateLock(policy, async () => {
@@ -603,8 +586,7 @@ export function createLaunch(
       reload();
       return "reloading";
     }
-    progress = { ...progress, received: progress.total, recorded: true };
-    report("installing", 0);
+    recordProgress(manifest.version, false);
     // A controlled document plays the installed build only when it booted from it. A redeploy
     // mid-install activated a newer build, whose files this document does not reference, so it
     // reloads once into the router's active build.
@@ -618,15 +600,7 @@ export function createLaunch(
         return "reloading";
       }
     }
-    writeSession(
-      session,
-      LAUNCH_PROGRESS_KEY,
-      JSON.stringify({
-        bootBytes: progress.bootBytes,
-        receivedBytes: progress.total,
-        version: manifest.version,
-      } satisfies ProgressCarry),
-    );
+    carryProgress(manifest.version);
     reload();
     return "reloading";
   };
@@ -655,11 +629,7 @@ export function createLaunch(
             }
             writeSession(session, LAUNCH_RELOAD_KEY, undefined);
             console.warn("First install failed; playing from the network.", error);
-            try {
-              options.onNetworkPlay({ reason });
-            } catch (callbackError) {
-              console.error("Network play callback failed.", callbackError);
-            }
+            notify("Network play", () => options.onNetworkPlay({ reason }));
             resolve("play");
             return;
           }
@@ -674,11 +644,7 @@ export function createLaunch(
               }
             },
           };
-          try {
-            options.onFailure(failure);
-          } catch (callbackError) {
-            console.error("Launch failure callback failed.", callbackError);
-          }
+          notify("Launch failure", () => options.onFailure(failure));
         });
       };
       attempt();
@@ -716,19 +682,11 @@ export function createLaunch(
   let updateState: UpdateState = { phase: "idle" };
   const offered = new Set<string>();
   const reportUpdate = (next: UpdateState) => {
-    if (
-      next.phase === updateState.phase &&
-      (next as { version?: string }).version === (updateState as { version?: string }).version &&
-      (next as { value?: number }).value === (updateState as { value?: number }).value
-    ) {
+    if (sameUpdateState(next, updateState)) {
       return;
     }
     updateState = next;
-    try {
-      options.onUpdateState(next);
-    } catch (error) {
-      console.error("Update state callback failed.", error);
-    }
+    notify("Update state", () => options.onUpdateState(next));
   };
 
   let switching: Promise<void> | undefined;
@@ -826,15 +784,13 @@ export function createLaunch(
       return;
     }
     offered.add(version);
-    try {
+    notify("Update ready", () =>
       options.onUpdateReady({
         dismiss: () => undefined,
         updateNow: (save) => updateNow(activeAtOffer, version, save),
         version,
-      });
-    } catch (error) {
-      console.error("Update ready callback failed.", error);
-    }
+      }),
+    );
   };
 
   // A download can finish after another context stages or activates a different build.
@@ -852,13 +808,7 @@ export function createLaunch(
         return false;
       }
       const current = await store.readState();
-      if (
-        disposed ||
-        reloading ||
-        current.active === version ||
-        current.active !== previous.active ||
-        (current.staged !== previous.staged && current.staged !== version)
-      ) {
+      if (disposed || reloading || !canPublishStaged(previous, current, version)) {
         return false;
       }
       if (current.staged !== version) {
@@ -955,16 +905,7 @@ export function createLaunch(
     if (groupStore === undefined || groups === undefined) {
       throw new LaunchError("verification", "Grouped build storage unavailable");
     }
-    const stillDeployed = (deployed: BuildPointer) =>
-      deployed.version === version &&
-      deployed.buildId === pointer.buildId &&
-      deployed.groupedFirstInstall === pointer.groupedFirstInstall &&
-      deployed.groups?.length === groups.length &&
-      groups.every(
-        ({ byteSize, sha256 }, index) =>
-          deployed.groups?.[index]?.byteSize === byteSize &&
-          deployed.groups?.[index]?.sha256 === sha256,
-      );
+    const stillDeployed = (deployed: BuildPointer) => sameDeployedGroups(pointer, deployed);
     const alreadySealed = await groupStore.complete(version, pointer);
     if (!alreadySealed) {
       const missing: BuildGroupReference[] = [];
@@ -1026,24 +967,15 @@ export function createLaunch(
     return "complete";
   };
 
-  // Every stored member is a deployed file of its size, and every file this device installs is
-  // stored. Groups without a sound format, such as an earlier kit's, may also hold left-out
-  // alternatives.
+  // The stored groups hold the deployed manifest's files (launchRules' groupedManifestMismatch).
   const verifyGroupedManifest = async (deployed: BuildManifest) => {
     const grouped = await context.groupStore?.read(deployed.version);
     if (grouped?.kind !== "ready") {
       throw new LaunchError("verification", "Grouped build members do not match the manifest");
     }
-    const sizes = new Map(deployed.files.map(({ byteSize, url }) => [url, byteSize]));
-    for (const [url, { byteSize }] of grouped.files) {
-      if (sizes.get(url) !== byteSize) {
-        throw new LaunchError("verification", `Grouped build member does not match ${url}`);
-      }
-    }
-    for (const { url } of installedManifest(options.soundFormat, deployed).files) {
-      if (!grouped.files.has(url)) {
-        throw new LaunchError("verification", `Grouped build member is missing for ${url}`);
-      }
+    const mismatch = groupedManifestMismatch(options.soundFormat, deployed, grouped.files);
+    if (mismatch !== undefined) {
+      throw new LaunchError("verification", mismatch);
     }
   };
 
@@ -1090,17 +1022,7 @@ export function createLaunch(
       return "reloading";
     }
     if (active === version) {
-      progress = { ...progress, received: progress.total, recorded: true };
-      report("installing", 0);
-      writeSession(
-        session,
-        LAUNCH_PROGRESS_KEY,
-        JSON.stringify({
-          bootBytes: progress.bootBytes,
-          receivedBytes: progress.total,
-          version,
-        } satisfies ProgressCarry),
-      );
+      recordProgress(version, true);
     }
     // Bootstrap has no pin yet. The new navigation obtains the active build and its pin together.
     reload();
@@ -1146,10 +1068,7 @@ export function createLaunch(
           ? await stageGroups(pointer, state)
           : await stageArchive(pointer, state);
       if (result === "changed") {
-        if (restarts + 1 >= MAX_RESTARTS) {
-          throw new LaunchError("verification", "The deployed build kept changing during staging");
-        }
-        await stageDeployed(restarts + 1, attempt);
+        await stageDeployed(nextRestart(restarts, "staging"), attempt);
       }
       return;
     }
@@ -1175,10 +1094,7 @@ export function createLaunch(
       return;
     }
     if (result === "changed") {
-      if (restarts + 1 >= MAX_RESTARTS) {
-        throw new LaunchError("verification", "The deployed build kept changing during staging");
-      }
-      await stageDeployed(restarts + 1, attempt);
+      await stageDeployed(nextRestart(restarts, "staging"), attempt);
       return;
     }
     await publishStaged(state, version);
@@ -1200,7 +1116,7 @@ export function createLaunch(
       if (attempt.version !== undefined) {
         reportUpdate({ phase: "failed", version: attempt.version });
       }
-      retryMs = retryMs === 0 ? UPDATE_RETRY_MS : Math.min(retryMs * 2, UPDATE_RETRY_MAX_MS);
+      retryMs = nextUpdateRetryMs(retryMs);
       armRetry();
     }
   };
@@ -1228,8 +1144,9 @@ export function createLaunch(
     }
     retryTimer = page.timers.setTimeout(() => {
       retryTimer = undefined;
+      // A pending timer implies a failed update, so retryMs is above 0 and doubles here.
       if (!check(true)) {
-        retryMs = Math.min(retryMs * 2, UPDATE_RETRY_MAX_MS);
+        retryMs = nextUpdateRetryMs(retryMs);
         armRetry();
       }
     }, retryMs);
@@ -1245,10 +1162,7 @@ export function createLaunch(
       return true;
     }
     const now = page.timers.now();
-    if (
-      !page.online() ||
-      (!force && lastCheck !== undefined && now - lastCheck < UPDATE_CHECK_MS)
-    ) {
+    if (!page.online() || (!force && updateCheckWait(now, lastCheck) > 0)) {
       return false;
     }
     cancelDiscovery();
@@ -1276,8 +1190,7 @@ export function createLaunch(
     if (!canDiscover()) {
       return;
     }
-    const remaining =
-      lastCheck === undefined ? 0 : UPDATE_CHECK_MS - (page.timers.now() - lastCheck);
+    const remaining = updateCheckWait(page.timers.now(), lastCheck);
     if (remaining <= 0) {
       check(false);
     } else if (discoveryTimer === undefined) {
@@ -1299,11 +1212,7 @@ export function createLaunch(
       return;
     }
     requiredState = next;
-    try {
-      options.onRequireNewer?.(next);
-    } catch (error) {
-      console.error("Required update callback failed.", error);
-    }
+    notify("Required update", () => options.onRequireNewer?.(next));
   };
   const stepRequired = async (retry: boolean) => {
     if (!required || reloading || disposed) {
@@ -1315,12 +1224,8 @@ export function createLaunch(
     }
     try {
       const state = await store.readState();
-      const { staged } = state;
-      const verified =
-        (state.active === undefined || state.active === documentVersion) &&
-        staged !== undefined &&
-        staged !== documentVersion &&
-        (await completeBuild(staged));
+      const staged = requiredUpdateCandidate(documentVersion, state);
+      const verified = staged !== undefined && (await completeBuild(staged));
       const activated = await withBuildStateLock(policy, async () => {
         const current = await store.readState();
         if (disposed || reloading) {

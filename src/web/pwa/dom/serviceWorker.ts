@@ -22,13 +22,17 @@ import {
   recordsCacheName,
   STAGED_RECORD_PATH,
 } from "../buildContract.ts";
-import {
-  parseBuildManifest,
-  RECORD_CONTENT_TYPE,
-  verifiedJsonFamilies,
-  versionRecordText,
-} from "../buildRecords.ts";
+import { RECORD_CONTENT_TYPE, versionRecordText } from "../buildRecords.ts";
 import { cacheKeyFor } from "../cachePolicy.ts";
+import {
+  intervalElapsed,
+  PIN_PRUNE_MS,
+  pinnedClient,
+  type RouterBuild,
+  routerBuild,
+  routesRequest,
+  settledPins,
+} from "../routerRules.ts";
 import type { VerifiedJsonBody } from "../verifiedJsonBody.ts";
 import { BUILD_ARCHIVE_ROUTER_PROBE, BUILD_GROUP_ROUTER_PROBE } from "./buildArchiveRouter.ts";
 import { createBuildArchiveStore } from "./buildArchiveStore.ts";
@@ -79,19 +83,7 @@ const versionRecord = (version: string) =>
 const CHECK_CONCURRENCY = 16;
 const RETAINED_ARCHIVES = 2;
 
-// The shortest time between pin prunes that navigations start. A pin this worker wrote within it
-// is never pruned, because a navigation's client is not listed until its document runs.
-export const PIN_PRUNE_MS = 60_000;
-
-const PIN_PREFIX = pinRecordPath("");
-
-interface Build {
-  readonly version: string;
-  // Each file by its logical URL.
-  readonly files: ReadonlyMap<string, BuildFile>;
-  // The verified JSON family of each member URL.
-  readonly families: ReadonlyMap<string, VerifiedJsonBody>;
-}
+export { PIN_PRUNE_MS } from "../routerRules.ts";
 
 type RoutedFiles = ReadonlyMap<string, BuildGroupFile>;
 
@@ -117,23 +109,6 @@ async function readVersion(records: Cache, url: string): Promise<string | undefi
   return readCachedVersion(await records.match(url));
 }
 
-// The build of a saved manifest, or undefined where it is missing or invalid.
-function parseBuild(version: string, value: unknown): Build | undefined {
-  try {
-    const manifest = parseBuildManifest(value);
-    if (manifest.version !== version) {
-      return undefined;
-    }
-    return {
-      families: verifiedJsonFamilies(manifest),
-      files: new Map(manifest.files.map((file) => [file.url, file])),
-      version,
-    };
-  } catch {
-    return undefined;
-  }
-}
-
 // Serves each navigation and same-origin GET other than a no-store one from the build its
 // document is pinned to, or the active build for a document with no pin, and pins the document to
 // the build that served it. A navigation with a complete staged build first promotes it to
@@ -146,7 +121,7 @@ export function runServiceWorker(policy: BuildPolicy): void {
   let archiveStore: ReturnType<typeof createBuildArchiveStore> | undefined;
   let groupStore: ReturnType<typeof createBuildGroupStore> | undefined;
   // Manifests are immutable per version, and a pin never changes for its client.
-  const builds = new Map<string, Promise<Build | undefined>>();
+  const builds = new Map<string, Promise<RouterBuild | undefined>>();
   const pins = new Map<string, string>();
 
   const readArchivedFiles = async (version: string): Promise<RoutedFiles | undefined> => {
@@ -205,12 +180,12 @@ export function runServiceWorker(policy: BuildPolicy): void {
     return archive;
   };
 
-  const loadBuild = (records: Cache, version: string): Promise<Build | undefined> => {
+  const loadBuild = (records: Cache, version: string): Promise<RouterBuild | undefined> => {
     let build = builds.get(version);
     if (build === undefined) {
       build = (async () => {
         try {
-          return parseBuild(
+          return routerBuild(
             version,
             await (await records.match(buildManifestUrl(version)))?.json(),
           );
@@ -262,20 +237,13 @@ export function runServiceWorker(policy: BuildPolicy): void {
         (client) => client.id,
       ),
     );
-    const now = Date.now();
-    for (const [clientId, time] of pinnedAt) {
-      if (now - time >= PIN_PRUNE_MS) {
-        pinnedAt.delete(clientId);
-      }
+    for (const clientId of settledPins(Date.now(), pinnedAt)) {
+      pinnedAt.delete(clientId);
     }
     await Promise.all(
       (await records.keys()).map(async (request) => {
-        const path = new URL(request.url).pathname;
-        if (!path.startsWith(PIN_PREFIX)) {
-          return;
-        }
-        const clientId = decodeURIComponent(path.slice(PIN_PREFIX.length));
-        if (live.has(clientId) || pinnedAt.has(clientId)) {
+        const clientId = pinnedClient(new URL(request.url).pathname);
+        if (clientId === undefined || live.has(clientId) || pinnedAt.has(clientId)) {
           return;
         }
         pins.delete(clientId);
@@ -289,10 +257,7 @@ export function runServiceWorker(policy: BuildPolicy): void {
   let pruning: Promise<void> | undefined;
   const prune = (force: boolean): Promise<void> | undefined => {
     const now = Date.now();
-    if (
-      pruning !== undefined ||
-      (!force && lastPrune !== undefined && now - lastPrune < PIN_PRUNE_MS)
-    ) {
+    if (pruning !== undefined || (!force && !intervalElapsed(now, lastPrune, PIN_PRUNE_MS))) {
       return pruning;
     }
     lastPrune = now;
@@ -305,7 +270,7 @@ export function runServiceWorker(policy: BuildPolicy): void {
   };
 
   // Complete: every file of the manifest is stored with its verified digest in the header.
-  const complete = async (build: Build): Promise<boolean> => {
+  const complete = async (build: RouterBuild): Promise<boolean> => {
     const name = buildCacheName(policy, build.version);
     if (!(await caches.has(name))) {
       return false;
@@ -428,7 +393,7 @@ export function runServiceWorker(policy: BuildPolicy): void {
   // evicted file, is served and stored only after verifying the network response.
   const serve = async (
     event: FetchRequestEvent,
-    build: Build,
+    build: RouterBuild,
     file: BuildFile,
   ): Promise<Response> => {
     const cache = await caches.open(buildCacheName(policy, build.version));
@@ -509,15 +474,8 @@ export function runServiceWorker(policy: BuildPolicy): void {
   });
   worker.addEventListener("fetch", (event) => {
     const { request } = event;
-    // A no-store request, such as the page installer's download of a newer build's unhashed file
-    // at a URL the active build also lists, asks for the network, so the browser answers it. The
-    // installer fetches hashed files in the default mode, and serving one from the document's
-    // build is correct because a hashed URL always has the same bytes.
-    if (
-      request.method !== "GET" ||
-      request.cache === "no-store" ||
-      new URL(request.url).origin !== worker.location.origin
-    ) {
+    const { cache, method, url } = request;
+    if (!routesRequest(worker.location.origin, { cache, method, origin: new URL(url).origin })) {
       return;
     }
     event.respondWith(route(event));

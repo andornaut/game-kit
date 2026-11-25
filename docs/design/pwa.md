@@ -4,6 +4,10 @@ The kit supplies the app window, install, back and exit handling, offline play, 
 worker with its precache manifest, update offers and never-throwing save storage. Games own
 registration, policies and copy.
 
+`dom/launch` and `dom/serviceWorker` bind pages, Cache Storage, the network and timers. Their
+decisions are pure functions in `launchRules` and `routerRules`: progress, the progress carry,
+update-check timing and backoff, deploy and staged-record checks, routed requests and pin pruning.
+
 The first install downloads and verifies the complete build from the page under the one loading screen; updates stage in the background and switch silently at launch or through the game's Update now. See the [install and update design](../install-and-update.md).
 
 Reference: [Build output](../../README.md#build-output).
