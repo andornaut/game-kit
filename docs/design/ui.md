@@ -23,7 +23,9 @@ geometry only.
   columns. Its press areas clamp toward every neighbour along and between rows.
 - Press areas of neighbouring groups, and of a group and a control that is its own press target
   such as a form row, clamp toward each other by the same share rule through a shared press
-  context, so no game adds a stacking order or an inset. Inside a group nothing changes.
+  context, so no game adds a stacking order or an inset. Inside a group nothing changes. The
+  context measures layout positions: each box as drawn less the CSS translate of the member and
+  its ancestors below the root, so a playing shake or press shift moves no clamp.
 - Geometry is whole game units with a game projection of edges. An odd unit always falls right or
   below.
 - Under a game projection the DOM action group, form rows and slider write whole CSS px between

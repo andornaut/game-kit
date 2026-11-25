@@ -227,6 +227,36 @@ describe("createPressContext", () => {
     root.remove();
   });
 
+  it("measures a member at its layout position while a translate shakes it or its parent", () => {
+    const { arrange, root, row, stack, unlock } = cheats();
+    arrange();
+    const right = () => value(unlock, "--ui-action-outset-right");
+    const face =
+      Number(value(unlock, "--ui-action-x")) + Number(value(unlock, "--ui-action-width"));
+    // The row stands 10 base px right of the face, so their press areas meet halfway.
+    const beside = (shift: number) => at(row, 2 * (face + 10) + shift, 0, 200, 96);
+    const context = createPressContext(root);
+    context.add(stack);
+    context.add(row);
+    beside(0);
+    context.apply();
+    expect(right()).toBe("5");
+    row.style.setProperty("translate", "6px 0");
+    beside(6);
+    context.apply();
+    expect(right()).toBe("5");
+    const shaker = document.createElement("div");
+    root.append(shaker);
+    shaker.append(row);
+    shaker.style.setProperty("translate", "-50%");
+    Object.defineProperty(shaker, "offsetWidth", { value: 20 });
+    beside(-4);
+    context.apply();
+    expect(right()).toBe("5");
+    context.dispose();
+    root.remove();
+  });
+
   it("keeps a group in one context and refuses a disposed one", () => {
     const { footer, root, stack } = cheats();
     const context = createPressContext(root);

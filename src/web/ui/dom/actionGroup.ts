@@ -274,11 +274,13 @@ export function createActionGroup(
 // own press target, such as form rows. apply() measures where each shown member is under root, in
 // whole base px at root's --ui-unit, and writes each group's press outsets clamped toward the
 // other members' faces and boxes (separatePressAreas), so their press areas meet without overlap
-// and no member needs a stacking order or an inset. It measures the boxes as drawn, so apply after
-// layout. A member group's arrange() and arrangeGrid() apply it again; apply after anything else
-// moves a member. With projected groups the members share the projection's space instead: each
-// group is as arranged, each element its placed form row box (createFormRows place), nothing is
-// measured, and every group must be projected with the same projection.
+// and no member needs a stacking order or an inset. It measures each member at its layout
+// position: the box as drawn less the CSS translate of the member and of each ancestor below root,
+// so a refusal shake or press shift that is playing moves no clamp. Apply after layout. A member
+// group's arrange() and arrangeGrid() apply it again; apply after anything else moves a member.
+// With projected groups the members share the projection's space instead: each group is as
+// arranged, each element its placed form row box (createFormRows place), nothing is measured, and
+// every group must be projected with the same projection.
 export interface PressContext {
   // Adds a group, or an element that is its own press target. A view that wraps a group, such as
   // a modal frame's footer, is that group. Throws on a group already in another context or one
@@ -289,6 +291,23 @@ export interface PressContext {
   apply(): void;
   // Removes every member.
   dispose(): void;
+}
+
+// The computed CSS translate of element in px, x then y. A percentage is of its layout box; a
+// value other than a length or percentage counts as 0.
+function translateOf(element: HTMLElement): readonly [number, number] {
+  const value =
+    element.ownerDocument.defaultView?.getComputedStyle(element).getPropertyValue("translate") ??
+    "";
+  const [x = "0", y = "0"] = value.trim() === "none" ? [] : value.trim().split(/\s+/);
+  const length = (token: string, size: number) => {
+    const number = Number.parseFloat(token);
+    if (!Number.isFinite(number)) {
+      return 0;
+    }
+    return token.endsWith("%") ? (number * size) / 100 : number;
+  };
+  return [length(x, element.offsetWidth), length(y, element.offsetHeight)];
 }
 
 export function createPressContext(root: HTMLElement): PressContext {
@@ -346,13 +365,22 @@ export function createPressContext(root: HTMLElement): PressContext {
       }
       const unit = readUnit(root);
       const origin = root.getBoundingClientRect();
+      // The layout box: as drawn, less each translate from element up to root's children.
       const measure = (element: HTMLElement): Rect => {
         const rect = element.getBoundingClientRect();
-        const x = Math.round((rect.left - origin.left) / unit);
-        const y = Math.round((rect.top - origin.top) / unit);
+        let left = rect.left - origin.left;
+        let top = rect.top - origin.top;
+        for (let node: HTMLElement | null = element; node !== null && node !== root;) {
+          const [x, y] = translateOf(node);
+          left -= x;
+          top -= y;
+          node = node.parentElement;
+        }
+        const x = Math.round(left / unit);
+        const y = Math.round(top / unit);
         return {
-          height: Math.round((rect.bottom - origin.top) / unit) - y,
-          width: Math.round((rect.right - origin.left) / unit) - x,
+          height: Math.round((top + rect.height) / unit) - y,
+          width: Math.round((left + rect.width) / unit) - x,
           x,
           y,
         };

@@ -48,6 +48,7 @@ export interface BuildGroupStore {
     body: Blob,
     signal?: AbortSignal,
   ): Promise<void>;
+  // Writes the marker, replacing one sealed for another sound format. Throws on any other marker.
   seal(pointer: BuildPointer, signal?: AbortSignal): Promise<void>;
   complete(version: string, expected?: BuildPointer): Promise<boolean>;
   // Only an absent marker yields "unknown". Marker I/O errors propagate.
@@ -85,18 +86,34 @@ const sameGroup = (a: BuildGroupReference, b: BuildGroupReference) =>
   a.sha256 === b.sha256 &&
   a.soundFormat === b.soundFormat;
 
+const sameGroups = (a: readonly BuildGroupReference[], b: readonly BuildGroupReference[]) =>
+  a.length === b.length && a.every((group, i) => sameGroup(group, b[i]!));
+
+const sameBuild = (a: GroupedPointer, b: BuildPointer) =>
+  a.schema === b.schema &&
+  a.version === b.version &&
+  a.buildId === b.buildId &&
+  a.manifest === b.manifest &&
+  a.groupedFirstInstall === b.groupedFirstInstall &&
+  b.archive === undefined;
+
 function samePointer(a: GroupedPointer, b: BuildPointer): boolean {
-  const { groups } = b;
+  return sameBuild(a, b) && b.groups !== undefined && sameGroups(a.groups, b.groups);
+}
+
+const untagged = (pointer: GroupedPointer) =>
+  pointer.groups.filter(({ soundFormat }) => soundFormat === undefined);
+const formats = (pointer: GroupedPointer) =>
+  [...new Set(pointer.groups.flatMap(({ soundFormat }) => soundFormat ?? []))].sort().join(" ");
+
+// A marker sealed for another sound format: the same build and the same groups without a format,
+// with groups of other formats. The device's format changed since, so the build is installed again
+// for the new one and its marker replaced.
+function otherFormat(marker: GroupedPointer, pointer: GroupedPointer): boolean {
   return (
-    a.schema === b.schema &&
-    a.version === b.version &&
-    a.buildId === b.buildId &&
-    a.manifest === b.manifest &&
-    a.groupedFirstInstall === b.groupedFirstInstall &&
-    b.archive === undefined &&
-    groups !== undefined &&
-    a.groups.length === groups.length &&
-    a.groups.every((group, i) => sameGroup(group, groups[i]!))
+    sameBuild(marker, pointer) &&
+    sameGroups(untagged(marker), untagged(pointer)) &&
+    formats(marker) !== formats(pointer)
   );
 }
 
@@ -219,15 +236,22 @@ export function createBuildGroupStore({
     return files;
   };
 
-  const matchingMarker = async (pointer: GroupedPointer) => {
+  // The version's marker, unless it conflicts with pointer. "replaced": it was sealed for another
+  // sound format, so groups are stored beside its own and sealing pointer replaces it.
+  const matchingMarker = async (
+    pointer: GroupedPointer,
+  ): Promise<GroupMarker | { readonly kind: "replaced" }> => {
     const marker = await readMarker(pointer.version);
     if (
-      marker.kind === "unavailable" ||
-      (marker.kind === "known" && !samePointer(marker.pointer, pointer))
+      marker.kind === "unknown" ||
+      (marker.kind === "known" && samePointer(marker.pointer, pointer))
     ) {
-      throw new TypeError("Conflicting cached build group pointer");
+      return marker;
     }
-    return marker;
+    if (marker.kind === "known" && otherFormat(marker.pointer, pointer)) {
+      return { kind: "replaced" };
+    }
+    throw new TypeError("Conflicting cached build group pointer");
   };
 
   return {
@@ -299,16 +323,20 @@ export function createBuildGroupStore({
           throw new TypeError("Build groups are unavailable or contain duplicate URLs");
         }
         signal?.throwIfAborted();
-        if (marker.kind === "unknown") {
-          const cache = await caches.open(records);
-          signal?.throwIfAborted();
-          await cache.put(
-            recordKey(pointer.version),
-            new Response(JSON.stringify(pointer), {
-              headers: { "content-type": RECORD_CONTENT_TYPE },
-            }),
-          );
+        if (marker.kind === "known") {
+          return;
         }
+        const cache = await caches.open(records);
+        signal?.throwIfAborted();
+        // One write swaps a replaced marker, so a read finds either format's complete build. The
+        // other format's groups stay until the build is reclaimed, for a router snapshot that
+        // still reads them and for a later change back.
+        await cache.put(
+          recordKey(pointer.version),
+          new Response(JSON.stringify(pointer), {
+            headers: { "content-type": RECORD_CONTENT_TYPE },
+          }),
+        );
       });
     },
   };

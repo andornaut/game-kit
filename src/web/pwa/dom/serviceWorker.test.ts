@@ -7,6 +7,7 @@ import {
   BUILD_HASH_HEADER,
   buildArchivePartUrl,
   buildCacheName,
+  type BuildGroupReference,
   type BuildManifest,
   buildManifestUrl,
   type BuildPointer,
@@ -14,12 +15,18 @@ import {
   GROUP_ARCHIVE_IDENTITY,
   recordsCacheName,
 } from "../buildContract.ts";
-import { installedManifest } from "../buildRecords.ts";
+import { installedManifest, installedPointer } from "../buildRecords.ts";
 import type { VerifiedJsonBody } from "../verifiedJsonBody.ts";
 import { BUILD_ARCHIVE_ROUTER_PROBE, BUILD_GROUP_ROUTER_PROBE } from "./buildArchiveRouter.ts";
 import { createBuildArchiveStore } from "./buildArchiveStore.ts";
 import { createBuildGroupStore } from "./buildGroupStore.ts";
 import { createBuildStore } from "./buildStore.ts";
+import {
+  type GroupedInstallContext,
+  type GroupedStagingContext,
+  installGrouped,
+  stageGroups,
+} from "./launchGroups.ts";
 import { PIN_PRUNE_MS, runServiceWorker } from "./serviceWorker.ts";
 
 const ORIGIN = "https://game.test";
@@ -514,6 +521,130 @@ describe("group storage and routing", () => {
     await expect(worker.get("/app.js", "missing")).rejects.toThrow("Build groups unavailable");
     expect(worker.fetches).not.toHaveBeenCalled();
   });
+});
+
+describe("group storage after a sound format change", () => {
+  const page = groupOf("/play/", "text/html; charset=utf-8", "<p>grouped</p>");
+  const ogg = groupOf("/hit.ogg", "audio/ogg", "ogg bytes");
+  const m4a = groupOf("/hit.m4a", "audio/mp4", "m4a bytes");
+  const deployed = (cold: boolean): BuildPointer => ({
+    ...groupedBuild("v1", page),
+    ...(cold ? { groupedFirstInstall: true as const } : {}),
+    groups: [
+      page.reference,
+      { ...ogg.reference, soundFormat: "ogg" },
+      { ...m4a.reference, soundFormat: "m4a" },
+    ],
+  });
+  const stored = async (worker: ReturnType<typeof startWorker>) =>
+    [...(await worker.storage.open(buildCacheName(POLICY, "v1"))).entries.keys()].sort();
+  const keys = (...groups: ReturnType<typeof groupOf>[]) =>
+    groups.map(({ reference }) => buildArchivePartUrl(reference, 0)).sort();
+
+  // An earlier session sealed v1 for Ogg.
+  async function sealedForOgg(worker: ReturnType<typeof startWorker>, cold = false) {
+    const store = createBuildGroupStore({
+      caches: worker.storage as unknown as CacheStorage,
+      origin: ORIGIN,
+      policy: POLICY,
+    });
+    const before = installedPointer("ogg", deployed(cold));
+    await store.put(before, page.reference, page.blob);
+    await store.put(before, ogg.reference, ogg.blob);
+    await store.seal(before);
+    return { before, store };
+  }
+
+  it("replaces a marker sealed for another format and reuses the shared groups by digest", async () => {
+    const worker = startWorker(new FakeServer({ "/hit.ogg": "network ogg" }));
+    const { before, store } = await sealedForOgg(worker);
+    const after = installedPointer("m4a", deployed(false));
+    expect(await store.complete("v1", after)).toBe(false);
+    expect(await store.reuse(after, page.reference)).toBe(true);
+    expect(await store.reuse(after, m4a.reference)).toBe(false);
+    await store.put(after, m4a.reference, m4a.blob);
+    // Until the seal the router serves the build sealed for Ogg.
+    await worker.setRecord(ACTIVE, "v1");
+    expect(await (await worker.get("/hit.ogg", "tab"))!.text()).toBe("ogg bytes");
+    await store.seal(after);
+    expect(await store.complete("v1", after)).toBe(true);
+    expect(await store.complete("v1", before)).toBe(false);
+    expect(await stored(worker)).toEqual(keys(page, ogg, m4a));
+    // The running router keeps its snapshot; a router that reads the build anew serves M4A.
+    expect(await (await worker.get("/hit.ogg", "tab"))!.text()).toBe("ogg bytes");
+    const next = startWorker(new FakeServer({ "/hit.ogg": "network ogg" }), worker.storage);
+    expect(await (await next.get("/hit.m4a", "tab"))!.text()).toBe("m4a bytes");
+    expect(await (await next.get("/hit.ogg", "tab"))!.text()).toBe("network ogg");
+    // A change back reuses the stored groups; other groups of one format conflict.
+    expect(await store.reuse(before, ogg.reference)).toBe(true);
+    const other = groupOf("/hit.m4a", "audio/mp4", "other m4a");
+    const changed: BuildPointer = {
+      ...after,
+      groups: [page.reference, { ...other.reference, soundFormat: "m4a" }],
+    };
+    await expect(store.reuse(changed, other.reference)).rejects.toThrow("Conflicting");
+  });
+
+  it.each(["install", "staging"] as const)(
+    "recovers a grouped %s sealed for another format",
+    async (path) => {
+      const worker = startWorker(new FakeServer({}));
+      const { store } = await sealedForOgg(worker, path === "install");
+      const caches = worker.storage as unknown as CacheStorage;
+      const pointer = installedPointer("m4a", deployed(path === "install"));
+      const manifest: BuildManifest = {
+        ...manifestOf("v1", {
+          "/hit.m4a": "m4a bytes",
+          "/hit.ogg": "ogg bytes",
+          "/play/": "<p>grouped</p>",
+        }),
+        sounds: { "/hit": ["/hit.ogg", "/hit.m4a"] },
+      };
+      const downloaded: string[] = [];
+      const context = {
+        downloadGroup: async ({ sha256 }: BuildGroupReference) => {
+          downloaded.push(sha256);
+          return [page, ogg, m4a].find(({ reference }) => reference.sha256 === sha256)!.blob;
+        },
+        fetch: async () => new Response(""),
+        groupRouterReady: async () => true,
+        groupStore: store,
+        policy: POLICY,
+        readDeployedManifest: async () => manifest,
+        readPointer: async () => pointer,
+        signal: new AbortController().signal,
+        soundFormat: "m4a",
+        store: createBuildStore({ caches, origin: ORIGIN }, POLICY),
+      };
+      if (path === "install") {
+        const reload = vi.fn();
+        const install: GroupedInstallContext = {
+          ...context,
+          disposed: () => false,
+          onBootBytes: () => undefined,
+          onBytes: () => undefined,
+          onRecorded: () => undefined,
+          reload,
+          waitForRouter: async () => undefined,
+        };
+        await expect(installGrouped(install, pointer)).resolves.toBe("reloading");
+        expect(reload).toHaveBeenCalledOnce();
+        expect(await worker.readRecord(ACTIVE)).toBe("v1");
+      } else {
+        const publishStaged = vi.fn(async () => undefined);
+        const staging: GroupedStagingContext = {
+          ...context,
+          publishStaged,
+          reportUpdate: () => undefined,
+        };
+        await expect(stageGroups(staging, {}, pointer)).resolves.toBe("complete");
+        expect(publishStaged).toHaveBeenCalledExactlyOnceWith({}, "v1", pointer);
+      }
+      expect(downloaded).toEqual([m4a.reference.sha256]);
+      expect(await store.complete("v1", pointer)).toBe(true);
+      expect(await stored(worker)).toEqual(keys(page, ogg, m4a));
+    },
+  );
 });
 
 describe("archive routing", () => {
