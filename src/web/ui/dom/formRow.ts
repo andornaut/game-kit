@@ -21,8 +21,9 @@ import { REFUSAL_ATTRIBUTES } from "./refusalCue.ts";
 // the label is the row's name. Rows take the theme's button state slots with a clear idle face,
 // controls.css's one focus fill and no press dip unless the row sets pressDip, which moves its art
 // down while pressed and never while disabled. A one-action row hosts one standard button face
-// (the label, and the icon before it) centred in the row, which stays the button and its whole
-// press target; the face dips by the theme's --ui-button-press-dip, as a standard button's does.
+// (the label, and the icon before it) centred in the whole row, padding included; the row stays
+// the button and its whole press target, and the face dips by the theme's --ui-button-press-dip,
+// as a standard button's does.
 // A placed list (place) writes every track and part in whole CSS px from the game's projected
 // edges instead, so pixel art lands on the game's grid, and with artPixel keeps art at its size.
 
@@ -51,11 +52,13 @@ export interface DomFormRowsContext {
   readonly artPixel?: number;
 }
 
-// A row to place: the list's own kit row, and the gap above it from the previous shown row in
-// whole units, the layout's gap by default.
+// A row to place: the list's own kit row, the gap above it from the previous shown row in whole
+// units, the layout's gap by default, and its height in whole units, by default a slider's
+// layout.height or the layout's height.
 export interface PlacedFormRowEntry {
   readonly element: HTMLElement;
   readonly gap?: number;
+  readonly height?: number;
 }
 
 export interface FormRowsView {
@@ -64,12 +67,12 @@ export interface FormRowsView {
   // on an invalid layout.
   setLayout(layout: FormRowLayout): void;
   // Places the list on the game's grid (formRowsGeometry): rows, the list's own kit rows
-  // (createFormRow, createSlider) in its order, each its height, the shown ones each its gap below
-  // the one before (the layout's gap by default); every track and part in whole CSS px from the
-  // projected edges. The layout needs value.track and a slider row its layout's line. Place again
-  // after rows show, hide or change their layout, and after the projection changes. Returns the
-  // projected layout and units, the layout before projection, for the game's own ink. Throws
-  // RangeError before any change.
+  // (createFormRow, createSlider) in its order, each its own height (the entry's, a slider's or the
+  // layout's), the shown ones each its gap below the one before (the layout's gap by default);
+  // every track and part in whole CSS px from the projected edges. The layout needs value.track
+  // and a slider row its layout's line. Place again after rows show, hide or change their layout,
+  // and after the projection changes. Returns the projected layout and units, the layout before
+  // projection, for the game's own ink. Throws RangeError before any change.
   place(
     context: DomFormRowsContext,
     rows: readonly PlacedFormRowEntry[],
@@ -103,6 +106,7 @@ export function createFormRows(
       rows: shown.map((row) => ({
         ...rowHooks.get(row.element)!.entry(),
         ...(row.gap === undefined ? {} : { gap: row.gap }),
+        ...(row.height === undefined ? {} : { height: row.height }),
       })),
       width: context.width,
     };
@@ -247,7 +251,7 @@ function rowLengths(
   if (face !== undefined) {
     lengths["--ui-form-action-height"] = face.height;
     lengths["--ui-form-action-left"] = face.x - row.x;
-    lengths["--ui-form-action-top"] = face.y - content.y;
+    lengths["--ui-form-action-top"] = face.y - row.y;
     lengths["--ui-form-action-width"] = face.width;
   }
   if (placed.pressDip !== undefined) {
@@ -278,8 +282,8 @@ export interface FormRowOptions extends Omit<ButtonOptions, "appearance" | "cont
   // Makes the row a switch.
   readonly switch?: boolean;
   // Makes the row a one-action row: the label (and the icon before it) on one standard button
-  // face of this whole-unit size, in the game's className and role, centred in the row's content.
-  // It takes no switch, note or value.
+  // face of this whole-unit size, in the game's className and role, centred in the whole row, its
+  // padding included. It takes no switch, note or value.
   readonly action?: {
     readonly size: { readonly height: number; readonly width: number };
     readonly className?: string;

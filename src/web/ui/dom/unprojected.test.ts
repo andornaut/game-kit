@@ -15,7 +15,8 @@ import { createSlider } from "./slider.ts";
 // digests are of 0.83.0's output for the same calls, and of its stylesheets with comments removed
 // and whitespace collapsed. Rules for opt-in parts (one-action rows and press dips, 0.90.0) apply
 // only to rows that set them, so they are removed too. A placed list without the 0.90.0 options
-// (artPixel and gaps) writes what 0.89.0 wrote.
+// (artPixel and gaps) writes what 0.89.0 wrote. A placed list without per-row heights, and every
+// row without an action, writes what 0.90.0 wrote; those digests are of 0.90.0's output.
 
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 const markup = (...elements: Element[]) => elements.map((e) => e.outerHTML).join("\n");
@@ -221,6 +222,104 @@ describe("unprojected callers", () => {
     const state = markup(rows.element) + JSON.stringify(placed);
     rows.element.remove();
     expect(digest(state)).toBe("c302a8e5895ec0b99300c0644920327704ed6840025deda99ae29ce259adcc5c");
+  });
+
+  it("place a list without per-row heights as 0.90.0 did", () => {
+    // Archie's grid at 390x844@3 with its 0.90.0 options: art pixels, gaps and a press dip.
+    const grid = (edge: number) => Math.round((edge * 3.25) / 3) * 3;
+    const rows = createFormRows(document, {
+      align: "start",
+      columnGap: 4,
+      gap: 17,
+      height: 82,
+      icon: { offset: 9, size: 16, slot: 16 },
+      padding: { bottom: 0, left: 6, right: 8, top: 0 },
+      switch: { height: 16, width: 32 },
+      value: { gap: 8, offset: 9, state: "center", track: 46 },
+    });
+    document.body.append(rows.element);
+    const toggle = createFormRow(document, {
+      getAction: () => null,
+      getState: () => ({ checked: true, value: "On" }),
+      icon: document.createElement("img"),
+      label: "Sound",
+      note: "Plays effects.",
+      pressDip: 1,
+      rule,
+      switch: true,
+    });
+    const slider = createSlider(document, {
+      change: () => undefined,
+      getState: () => ({ step: 7, value: "35%" }),
+      icon: document.createElement("img"),
+      label: "Music",
+      layout: { art: ART, height: 56, inset: { left: 20, right: 0 }, line: 27 },
+      slop: 4,
+      steps: 20,
+    });
+    const motion = createFormRow(document, {
+      getAction: () => null,
+      getState: () => ({ checked: false, value: "Off" }),
+      label: "Motion",
+      rule,
+      switch: true,
+    });
+    rows.element.append(toggle.element, slider.element, motion.element);
+    toggle.refresh();
+    motion.refresh();
+    const { placed } = rows.place(
+      { artPixel: 3, origin: { x: 8, y: 103 }, project: { x: grid, y: grid }, width: 330 },
+      [toggle, slider, { element: motion.element, gap: 0 }],
+    );
+    const state = markup(rows.element) + JSON.stringify(placed);
+    rows.element.remove();
+    expect(digest(state)).toBe("a5e7284d4c0751be1ee6828926288bf716d8b64d666c8c0dc5945b53cf19a8af");
+  });
+
+  it("keep rows without an action as 0.90.0 did beside a one-action row", () => {
+    // A padded list: only the one-action row's face moves (centred in the full row).
+    const grid = (edge: number) => Math.round((edge * 3.25) / 3) * 3;
+    const rows = createFormRows(document, {
+      columnGap: 4,
+      height: 48,
+      icon: { size: 16, slot: 16 },
+      padding: { bottom: 3, left: 6, right: 8, top: 5 },
+      switch: { height: 16, width: 32 },
+      value: { state: "end", track: 46 },
+    });
+    document.body.append(rows.element);
+    const install = createFormRow(document, {
+      action: { role: "secondary", size: { height: 33, width: 145 } },
+      getAction: () => null,
+      icon: document.createElement("img"),
+      label: "Install",
+      rule,
+    });
+    const fps = createFormRow(document, {
+      getAction: () => null,
+      getState: () => ({ checked: true, value: "Shown" }),
+      icon: document.createElement("img"),
+      label: "FPS",
+      pressDip: 1,
+      rule,
+      switch: true,
+    });
+    rows.element.append(install.element, fps.element);
+    fps.refresh();
+    const unplaced = markup(rows.element);
+    const { placed } = rows.place(
+      { artPixel: 3, origin: { x: 8, y: 447 }, project: { x: grid, y: grid }, width: 330 },
+      [install, fps],
+    );
+    const state = [
+      unplaced,
+      rows.element.getAttribute("style"),
+      markup(fps.element),
+      JSON.stringify(placed.list),
+      JSON.stringify(placed.rows[1]),
+    ].join("\n");
+    rows.element.remove();
+    expect(digest(state)).toBe("a272174fbff4699da8bb7caf69b0ea6876ac4ba2fd24c972aa7f2cae02ceae78");
   });
 
   it("get the same modal frame markup with a kit footer", () => {

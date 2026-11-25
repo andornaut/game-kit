@@ -641,3 +641,92 @@ describe("a placed list with art pixels, gaps, a one-action row and a press dip"
     ).toThrow(RangeError);
   });
 });
+
+describe("a placed list with per-row heights", () => {
+  it("places Archie's 82 and 48 tall Settings rows in one list at 390x844@3", () => {
+    const { art, project } = archieViewport(390, 3);
+    const { x, y } = project;
+    const rows = createFormRows(document, {
+      align: "start",
+      columnGap: 4,
+      gap: 17,
+      height: 82,
+      icon: { offset: 9, size: 16, slot: 16 },
+      padding: { bottom: 0, left: 6, right: 8, top: 0 },
+      switch: { height: 16, width: 32 },
+      value: { gap: 8, offset: 9, state: "center", track: 46 },
+    });
+    const toggle = (label: string) =>
+      createFormRow(document, {
+        getAction: () => null,
+        getState: () => ({ checked: true, value: "On" }),
+        icon: document.createElement("img"),
+        label,
+        pressDip: 1,
+        rule,
+        switch: true,
+      });
+    const sound = toggle("Sound");
+    const fps = toggle("FPS");
+    const music = createSlider(document, {
+      change: () => undefined,
+      getState: () => ({ step: 7, value: "35%" }),
+      icon: document.createElement("img"),
+      label: "Music",
+      layout: { art: ART, height: 56, inset: { left: 20, right: 0 }, line: 27 },
+      slop: 4,
+      steps: 20,
+    });
+    const install = createFormRow(document, {
+      action: { role: "secondary", size: { height: 33, width: 145 } },
+      getAction: () => null,
+      icon: document.createElement("img"),
+      label: "Install",
+      rule,
+    });
+    rows.element.append(sound.element, music.element, install.element, fps.element);
+    document.body.append(rows.element);
+    const context = { artPixel: art, origin: { x: 8, y: 103 }, project, width: 330 };
+    const { units } = rows.place(context, [
+      sound,
+      music,
+      { element: install.element, height: 48 },
+      { element: fps.element, height: 48 },
+    ]);
+    expect(units.rows.map(({ row }) => [row.y, row.height])).toEqual([
+      [103, 82],
+      [202, 56],
+      [275, 48],
+      [340, 48],
+    ]);
+    const pitches = [y(202) - y(103), y(275) - y(202), y(340) - y(275), y(388) - y(340)];
+    expect(value(rows.element, "--ui-form-rows")).toBe(pitches.map((px) => `${px}px`).join(" "));
+    expect(numbers(sound.element, ["--ui-form-row-height"])).toEqual([y(185) - y(103)]);
+    expect(
+      numbers(fps.element, [
+        "--ui-form-row-height",
+        "--ui-form-icon-size",
+        "--ui-form-icon-offset",
+        "--ui-switch-width",
+        "--ui-switch-height",
+        "--ui-form-row-press-dip",
+      ]),
+    ).toEqual([y(388) - y(340), 48, y(349) - y(340), 96, 48, 3]);
+    // Install's face centred in its whole 330x48 row, from the row's corner: 92 in and 7 down.
+    expect(
+      numbers(install.element, [
+        "--ui-form-row-height",
+        "--ui-form-action-left",
+        "--ui-form-action-top",
+      ]),
+    ).toEqual([y(323) - y(275), x(100) - x(8), y(282) - y(275)]);
+    // Without its own height a row takes the list's.
+    rows.place(context, [sound, music, install, { element: fps.element, height: 48 }]);
+    const fitted = numbers(install.element, ["--ui-form-row-height", "--ui-form-action-top"]);
+    expect(fitted).toEqual([y(357) - y(275), y(299) - y(275)]);
+    expect(() => rows.place(context, [{ element: sound.element, height: 81.5 }])).toThrow(
+      RangeError,
+    );
+    rows.element.remove();
+  });
+});

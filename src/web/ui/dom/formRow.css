@@ -239,10 +239,11 @@
 }
 
 /* A one-action row stays the button and its whole press target with a clear fill, and its one
-   face spans the row's columns at its whole-unit size, centred with the odd unit right, or on a
-   placed list at its placed corner. The face takes the standard button face's theme fills, focus
-   fill and press dip. */
+   face spans the row's columns at its whole-unit size, centred in the whole row (the list's
+   padding does not apply) with the odd unit right, or on a placed list at its placed corner from
+   the row's. The face takes the standard button face's theme fills, focus fill and press dip. */
 :where(.ui-form-row[data-ui-form-action]) {
+  padding: 0;
   background-color: transparent;
   color: inherit;
 }

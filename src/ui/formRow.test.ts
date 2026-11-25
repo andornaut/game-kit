@@ -236,16 +236,30 @@ describe("formRowsGeometry gaps, one-action rows, press dips and art", () => {
     expect(() => formRowsGeometry(LIST, { ...ROWS, rows: [{ gap: -1 }] })).toThrow(RangeError);
   });
 
-  it("centres a one-action row's face in its content, the odd unit right and below", () => {
+  it("centres a one-action row's face in the whole row, the odd unit right and below", () => {
     // Archie's Install: a 48 row whose sole action is a 145x33 face.
     const { rows } = formRowsGeometry(LIST, {
       ...ROWS,
       rows: [{ action: { height: 33, width: 145 } }],
     });
-    expect(rows[0]!.face).toEqual({ height: 33, width: 145, x: 8 + 8 + 91, y: 103 + 7 });
+    expect(rows[0]!.face).toEqual({ height: 33, width: 145, x: 8 + 99, y: 103 + 7 });
     expect(rows[0]!.row).toEqual({ height: 48, width: 344, x: 8, y: 103 });
+    // Padding does not move the face: centred in the 344x48 row, not the 330x40 content.
+    const padded = formRowsGeometry(
+      { ...LIST, padding: { bottom: 3, left: 6, right: 8, top: 5 } },
+      {
+        ...ROWS,
+        rows: [{ action: { height: 33, width: 145 } }, { action: { height: 44, width: 344 } }],
+      },
+    ).rows;
+    expect(padded[0]!.content).toEqual({ height: 40, width: 330, x: 14, y: 108 });
+    expect(padded[0]!.face).toEqual({ height: 33, width: 145, x: 8 + 99, y: 103 + 7 });
+    expect(padded[1]!.face).toEqual({ height: 44, width: 344, x: 8, y: 159 + 2 });
     expect(() =>
       formRowsGeometry(LIST, { ...ROWS, rows: [{ action: { height: 49, width: 10 } }] }),
+    ).toThrow(RangeError);
+    expect(() =>
+      formRowsGeometry(LIST, { ...ROWS, rows: [{ action: { height: 10, width: 345 } }] }),
     ).toThrow(RangeError);
   });
 
@@ -299,5 +313,131 @@ describe("formRowsGeometry gaps, one-action rows, press dips and art", () => {
       `${row.switch!.width}x${row.switch!.height}`,
     ]);
     expect(sizes.some((size) => size !== "48x48" && size !== "96x48")).toBe(true);
+  });
+});
+
+// Archie's Settings layout: 16 icons 9 down beside their labels, 32x16 switches centred over their
+// state words in a 46 track, rows a separator and its clearance (17) apart, 82 tall by default.
+const ARCHIE_SETTINGS: FormRowLayout = {
+  align: "start",
+  columnGap: 4,
+  gap: 17,
+  height: 82,
+  icon: { offset: 9, size: 16, slot: 16 },
+  padding: { bottom: 0, left: 6, right: 8, top: 0 },
+  switch: { height: 16, width: 32 },
+  value: { gap: 8, offset: 9, state: "center", track: 46 },
+};
+const ARCHIE_SWITCH = { pressDip: 1, switch: true } as const;
+const ARCHIE_SLIDER = { height: 56, lane: { height: 16, inset: { left: 20, right: 0 }, line: 27 } };
+const ARCHIE_INSTALL = { action: { height: 33, width: 145 }, height: 48 };
+
+describe("formRowsGeometry per-row heights", () => {
+  it("places Archie's Settings as one list at 390x844@3, as its three lists did", () => {
+    const { art, project } = archieViewport(390, 3);
+    expect(art).toBe(3);
+    const context = { artPixel: art, project, width: 330 };
+    // Sound, Music, Effects, Motion, Install and FPS: 82 and 48 tall rows in one list.
+    const one = formRowsGeometry(ARCHIE_SETTINGS, {
+      ...context,
+      origin: { x: 8, y: 103 },
+      rows: [
+        ARCHIE_SWITCH,
+        ARCHIE_SLIDER,
+        ARCHIE_SLIDER,
+        ARCHIE_SWITCH,
+        ARCHIE_INSTALL,
+        { ...ARCHIE_SWITCH, height: 48 },
+      ],
+    });
+    const units = formRowsGeometry(ARCHIE_SETTINGS, {
+      origin: { x: 8, y: 103 },
+      rows: [
+        ARCHIE_SWITCH,
+        ARCHIE_SLIDER,
+        ARCHIE_SLIDER,
+        ARCHIE_SWITCH,
+        ARCHIE_INSTALL,
+        { ...ARCHIE_SWITCH, height: 48 },
+      ],
+      width: 330,
+    });
+    expect(units.rows.map(({ row }) => [row.y, row.height])).toEqual([
+      [103, 82],
+      [202, 56],
+      [275, 56],
+      [348, 82],
+      [447, 48],
+      [512, 48],
+    ]);
+    expect(units.list).toEqual({ height: 457, width: 330, x: 8, y: 103 });
+    // Before per-row heights: [Sound, Music, Effects, Motion] at 82, Install in an unpadded list
+    // and FPS at 48, each list at its first row's corner.
+    const three = [
+      formRowsGeometry(ARCHIE_SETTINGS, {
+        ...context,
+        origin: { x: 8, y: 103 },
+        rows: [ARCHIE_SWITCH, ARCHIE_SLIDER, ARCHIE_SLIDER, ARCHIE_SWITCH],
+      }),
+      formRowsGeometry(
+        { ...ARCHIE_SETTINGS, height: 48, padding: { bottom: 0, left: 0, right: 0, top: 0 } },
+        { ...context, origin: { x: 8, y: 447 }, rows: [{ action: ARCHIE_INSTALL.action }] },
+      ),
+      formRowsGeometry(
+        { ...ARCHIE_SETTINGS, height: 48 },
+        { ...context, origin: { x: 8, y: 512 }, rows: [ARCHIE_SWITCH] },
+      ),
+    ];
+    expect(one.rows[4]!.face).toEqual(three[1]!.rows[0]!.face);
+    expect(one.rows[4]!.row).toEqual(three[1]!.rows[0]!.row);
+    expect([...one.rows.slice(0, 4), one.rows[5]]).toEqual([...three[0]!.rows, ...three[2]!.rows]);
+    // Tracks on projected edges; art at its size from its corner; dips in art pixels.
+    expect(one.list).toEqual({
+      height: project.y(560) - project.y(103),
+      width: project.x(338) - project.x(8),
+      x: project.x(8),
+      y: project.y(103),
+    });
+    one.rows.forEach((placed, i) => {
+      const { height, y } = units.rows[i]!.row;
+      expect(placed.row.height).toBe(project.y(y + height) - project.y(y));
+    });
+    for (const i of [0, 3, 5]) {
+      const placed = one.rows[i]!;
+      const top = units.rows[i]!.row.y;
+      expect(placed.icon).toEqual({
+        height: 48,
+        width: 48,
+        x: project.x(14),
+        y: project.y(top + 9),
+      });
+      expect(placed.switch).toEqual({
+        height: 48,
+        width: 96,
+        x: project.x(8 + 330 - 8 - 46 + 7),
+        y: project.y(top + 9),
+      });
+      expect(placed.pressDip).toBe(3);
+    }
+    // Install's face centred in its whole 330x48 row, 92 in and 7 down, not in the padded content
+    // (85 in from the content's left, 91 from the row's).
+    expect(units.rows[4]!.face).toEqual({ height: 33, width: 145, x: 8 + 92, y: 447 + 7 });
+    expect(one.rows[4]!.face).toEqual({
+      height: project.y(487) - project.y(454),
+      width: project.x(245) - project.x(100),
+      x: project.x(100),
+      y: project.y(454),
+    });
+  });
+
+  it("refuses a row height that is not a whole unit or too short for the padding", () => {
+    const padded = { ...ARCHIE_SETTINGS, padding: { bottom: 3, left: 6, right: 8, top: 2 } };
+    expect(() => formRowsGeometry(padded, { rows: [{ height: 5 }], width: 330 })).not.toThrow();
+    expect(() => formRowsGeometry(padded, { rows: [{ height: 4.5 }], width: 330 })).toThrow(
+      RangeError,
+    );
+    expect(() =>
+      formRowsGeometry(padded, { rows: [{ height: 82 }, { height: 4 }], width: 330 }),
+    ).toThrow(RangeError);
   });
 });

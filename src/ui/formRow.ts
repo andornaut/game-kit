@@ -144,11 +144,12 @@ export function formRowPresentation(layout: FormRowLayout): FormRowPresentation 
   };
 }
 
-// A row of a placed list, in the list's order: its height (the layout's by default), whether it
-// is a switch row, a slider row's lane (SliderLayout: the first line's height, the gap under it,
-// the lane's height and its insets from the content sides), a one-action row's face size, its
-// press dip, and the gap above it from the previous row (the layout's gap by default; none above
-// the first).
+// A row of a placed list, in the list's order: its height (the layout's by default), which places
+// its track, content, art and face as the layout's height would, so rows of different heights
+// share one list; whether it is a switch row, a slider row's lane (SliderLayout: the first line's
+// height, the gap under it, the lane's height and its insets from the content sides), a
+// one-action row's face size, its press dip, and the gap above it from the previous row (the
+// layout's gap by default; none above the first).
 export interface FormRowsRow {
   readonly height?: number;
   readonly switch?: boolean;
@@ -202,15 +203,16 @@ export interface FormRowsGeometry {
 }
 
 // Places a list's rows as formRow.css lays them out, for a caller that places every part on its
-// own grid: rows exactly their heights, each its gap below the one before (the layout's gap by
-// default); the padding, then the icon slot, the label column and the value column, columnGap
+// own grid: rows exactly their own heights, each its gap below the one before (the layout's gap
+// by default); the padding, then the icon slot, the label column and the value column, columnGap
 // apart, the value column value.track wide at the content's end. The icon is centred in its slot;
 // down the first line the icon and the value stack are centred, or with align "start" at their
 // offsets. A switch is at the value column's end, or for a centred state word midway along it. A
 // slider's lane is gap under its first line, inset from the content sides. A one-action row's
-// face is centred in its content. Each odd unit goes right or below. Every edge is projected on
-// its own, but with artPixel the icon and switch keep their art size from their projected corner
-// and a press dip is that many art pixels; without it a press dip is projected from the row's top.
+// face is centred in the whole row, padding included. Each odd unit goes right or below. Every
+// edge is projected on its own, but with artPixel the icon and switch keep their art size from
+// their projected corner and a press dip is that many art pixels; without it a press dip is
+// projected from the row's top.
 // Throws RangeError on an invalid layout, a list without value.track, or rows that do not fit.
 export function formRowsGeometry(
   layout: FormRowLayout,
@@ -270,8 +272,8 @@ export function formRowsGeometry(
     if (action !== undefined) {
       whole("action.width", action.width, 1);
       whole("action.height", action.height, 1);
-      if (action.width > contentWidth || action.height > content.height) {
-        throw new RangeError("A one-action row's face must fit its content");
+      if (action.width > width || action.height > height) {
+        throw new RangeError("A one-action row's face must fit its row");
       }
     }
     const line = { ...content, height: lane?.line ?? content.height };
@@ -344,8 +346,8 @@ export function formRowsGeometry(
         : {
             face: at({
               ...action,
-              x: content.x + Math.floor((contentWidth - action.width) / 2),
-              y: content.y + Math.floor((content.height - action.height) / 2),
+              x: Math.floor((width - action.width) / 2),
+              y: y + Math.floor((height - action.height) / 2),
             }),
           }),
       ...(dip === undefined

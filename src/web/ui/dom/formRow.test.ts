@@ -359,4 +359,10 @@ describe("formRow.css", () => {
     const row = /:where\(\.ui-form-row\)\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
     expect(row).not.toMatch(/(^|\s)(background|background-color|color)\s*:/m);
   });
+
+  it("centres a one-action row's face in the whole row, without the list's padding", () => {
+    const action = /:where\(\.ui-form-row\[data-ui-form-action\]\)\s*\{([^}]*)\}/.exec(css)?.[1];
+    expect(action).toMatch(/(^|\s)padding: 0;/);
+    expect(css.indexOf("padding: 0;")).toBeGreaterThan(css.indexOf("padding: calc("));
+  });
 });

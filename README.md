@@ -53,6 +53,11 @@ Move image processing from `art/rgbaImage` to `build/rgbaImage`, which also expo
 
 Apply the mapping to JavaScript and TypeScript imports, test mocks and configuration, and stylesheet imports. Change the old build-info reference to `/// <reference types="@andornaut/game-kit/build/buildInfo" />`. This declaration-only export still provides `__APP_VERSION__`, `__BUILD_ID__` and `__COMMIT__`. Historical migration notes use the subpaths current at the time. The source inventory uses implementation paths relative to `src/`.
 
+## Placed row heights and one-action centring in 0.91.0
+
+- Additive. A placed form row list takes a height per row: `rows.place(context, [{ element, height }])` and `FormRowsRow.height` in `formRowsGeometry`, in whole units. A row without one is a slider's `layout.height` or the layout's `height`. Each row's track, padding, icon, switch, lane, art-locked sizes and press dip follow its own height, so rows of different heights share one list instead of one list per height. Lists without per-row heights render as in 0.90.0.
+- Changed. A one-action row's face is centred in the whole row, the list's padding included, with the odd unit right and below; it was centred inside the padding. A one-action row in a list with unequal left and right, or top and bottom, padding moves its face, and the face must fit the row rather than its content. In CSS the row takes no padding, and on a placed list `--ui-form-action-top` is from the row's top. A game that gave its one-action row an unpadded list of its own can place it in the shared list. Rows without an action are unchanged.
+
 ## Migration to 0.78.0
 
 Breaking. `runtime/web/pwa/dom/launch` no longer exports the deprecated
@@ -584,7 +589,7 @@ const fps = createFormRow(document, {
 rows.element.append(fps.element);
 ```
 
-**One-action rows.** `createFormRow(document, { action: { size, className, role }, label, icon, ... })` makes a row whose only content is one standard button face of `size` (whole units), in the game's `className` and `role`, centred in the row's content with the odd unit right and below. The face holds the optional `icon` and the `label`; `view.face` is the face. The row stays the button, so its press target is the whole row with no outsets, and it takes the list's gap and the press context like any row. The face takes the standard button face's theme fills and focus fill and dips by the theme's `--ui-button-press-dip`, which the list sets to 0 and the game may set on the row. A one-action row takes no `switch`, note or value. This is the smaller shape than per-edge press margins on rows: a form row is already one press target, so a face inside it covers the row without margins, clamps or a second hit area.
+**One-action rows.** `createFormRow(document, { action: { size, className, role }, label, icon, ... })` makes a row whose only content is one standard button face of `size` (whole units), in the game's `className` and `role`, centred in the whole row, the list's padding included, with the odd unit right and below. The face holds the optional `icon` and the `label`; `view.face` is the face. The row stays the button, so its press target is the whole row with no outsets, and it takes the list's gap and the press context like any row. The face takes the standard button face's theme fills and focus fill and dips by the theme's `--ui-button-press-dip`, which the list sets to 0 and the game may set on the row. A one-action row takes no `switch`, note or value. This is the smaller shape than per-edge press margins on rows: a form row is already one press target, so a face inside it covers the row without margins, clamps or a second hit area.
 
 ```ts
 // Archie's Install row: the sole action's 145x33 face, the whole row its press.
@@ -597,31 +602,46 @@ const install = createFormRow(document, {
 });
 ```
 
-**Placed lists.** For a game that places its kit on its own pixel grid, `rows.place({ project, width, origin }, rows)` places the list through the game's projection (`ActionProjection`, as for `arrangeActions`) instead of CSS sizing. `rows` are the list's own kit rows (`createFormRow`, `createSlider`) in its order; the shown ones are each exactly their height (the layout's, or a slider's `layout.height`), each its gap below the one before from `origin`, `width` units wide. A row's gap is the layout's `gap`, or an entry's own: `{ element, gap }` sets the whole units above that row, ignored on the first shown row. The list takes `data-ui-form-projected` and writes its grid as explicit CSS px tracks between projected edges (`--ui-form-columns` and `--ui-form-rows`): the padding, the icon slot's sides and the column gaps are tracks of their own and each row track is its pitch to the next, so the rows' subgrids share whole-pixel columns. Each row's padding, icon, switch, state word gap and bearing, and a slider's line, gap, insets, lane, track, caps, fill and thumb are written in whole CSS px between their projected edges (`--ui-form-length: 1px`); text keeps its CSS alignment. With `artPixel`, the whole CSS px of one art pixel, art-locked parts keep their art size: icons, switches, a slider's thumb, its track's and fill's height and its caps are their units times `artPixel` from their projected corner, never stretched by snapping each edge, while rows, columns, the lane and the track's and fill's widths stay on projected edges. An icon starts at its column's left edge, and an end-placed state word's ink ends on the switch as drawn. A one-action row's face is placed by its projected edges, and a press dip is `pressDip` art pixels, or without `artPixel` the projected length from the row's top. The layout needs `value.track`; `value.height` gives a centred switch row's stack height (the switch's by default), and a slider's `layout.line` its first line's height, since a placed list measures nothing. The game puts the list element's corner at the projected `origin`. `place` returns `placed`, the projected layout, and `units`, the same layout in units (`runtime/ui/formRow` `formRowsGeometry`), for the game's own ink. `setLayout` places a placed list again; place it again after rows show, hide or change their layout, or the projection changes. A placed row is a press context member at its placed box.
+**Placed lists.** For a game that places its kit on its own pixel grid, `rows.place({ project, width, origin }, rows)` places the list through the game's projection (`ActionProjection`, as for `arrangeActions`) instead of CSS sizing. `rows` are the list's own kit rows (`createFormRow`, `createSlider`) in its order; the shown ones are each exactly their own height, each its gap below the one before from `origin`, `width` units wide. A row's height is an entry's own, `{ element, height }` in whole units, or a slider's `layout.height`, or the layout's `height`, so rows of different heights share one list; its track, padding, icon, switch, lane, art and press dip follow that height. A row's gap is the layout's `gap`, or an entry's own: `{ element, gap }` sets the whole units above that row, ignored on the first shown row. The list takes `data-ui-form-projected` and writes its grid as explicit CSS px tracks between projected edges (`--ui-form-columns` and `--ui-form-rows`): the padding, the icon slot's sides and the column gaps are tracks of their own and each row track is its pitch to the next, so the rows' subgrids share whole-pixel columns. Each row's padding, icon, switch, state word gap and bearing, and a slider's line, gap, insets, lane, track, caps, fill and thumb are written in whole CSS px between their projected edges (`--ui-form-length: 1px`); text keeps its CSS alignment. With `artPixel`, the whole CSS px of one art pixel, art-locked parts keep their art size: icons, switches, a slider's thumb, its track's and fill's height and its caps are their units times `artPixel` from their projected corner, never stretched by snapping each edge, while rows, columns, the lane and the track's and fill's widths stay on projected edges. An icon starts at its column's left edge, and an end-placed state word's ink ends on the switch as drawn. A one-action row's face is centred in the whole row and placed by its projected edges, and a press dip is `pressDip` art pixels, or without `artPixel` the projected length from the row's top. The layout needs `value.track`; `value.height` gives a centred switch row's stack height (the switch's by default), and a slider's `layout.line` its first line's height, since a placed list measures nothing. The game puts the list element's corner at the projected `origin`. `place` returns `placed`, the projected layout, and `units`, the same layout in units (`runtime/ui/formRow` `formRowsGeometry`), for the game's own ink. `setLayout` places a placed list again; place it again after rows show, hide or change their layout, or the projection changes. A placed row is a press context member at its placed box.
 
 ```ts
-// Archie's Settings on its device art-pixel grid, its ink and art drawn from units.
+// Archie's Settings on its device art-pixel grid, its ink and art drawn from units: one list of
+// 82 and 48 unit rows.
 const grid = { x: (edge: number) => gridX(scale, edge), y: (edge: number) => gridY(scale, edge) };
 const rows = createFormRows(document, {
+  align: "start",
   columnGap: 4,
   // A separator and its clearance between rows.
   gap: 17,
-  height: 48,
-  icon: { size: 16, slot: 24 },
-  padding: { bottom: 0, left: 8, right: 8, top: 0 },
+  height: 82,
+  icon: { offset: 9, size: 16, slot: 16 },
+  padding: { bottom: 0, left: 6, right: 8, top: 0 },
   switch: { height: 16, width: 32 },
-  value: { gap: SWITCH_STATE_GAP, state: "end", track: 40 },
+  value: { gap: SWITCH_STATE_GAP, offset: 9, state: "center", track: 46 },
 });
 const music = createSlider(document, {
   ...musicOptions,
-  layout: { art: SLIDER_ART, gap: 4, height: 56, inset: { left: 2 }, line: 20 },
+  layout: { art: SLIDER_ART, height: 56, inset: { left: 20, right: 0 }, line: 27 },
 });
 // Switch rows dip their art 1 unit while pressed.
 const sound = createFormRow(document, { ...soundOptions, pressDip: 1, switch: true });
-rows.element.append(sound.element, motion.element, music.element, install.element);
+// Install's face is centred in its whole row, padding included.
+const install = createFormRow(document, {
+  ...installOptions,
+  action: { role: "secondary", size: { height: 33, width: 145 } },
+});
+rows.element.append(sound.element, music.element, effects.element, motion.element);
+rows.element.append(install.element, fps.element);
 const { units } = rows.place(
-  { artPixel: artPixel(scale), origin: { x: 8, y: 103 }, project: grid, width: 344 },
-  [sound, motion, music, install],
+  { artPixel: artPixel(scale), origin: { x: 8, y: 103 }, project: grid, width: 330 },
+  [
+    sound,
+    music,
+    effects,
+    motion,
+    { element: install.element, height: 48 },
+    { element: fps.element, height: 48 },
+  ],
 );
 // Cheats: adjacent switches touch, other rows the list's gap apart.
 cheats.place({ artPixel: artPixel(scale), origin, project: grid, width: 344 }, [

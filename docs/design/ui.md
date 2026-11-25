@@ -100,15 +100,17 @@ theme slots.
 - A placed list writes its grid as explicit CSS px tracks between projected edges, with the
   padding, the icon slot's sides and the column gaps as tracks of their own and each row track its
   pitch to the next, so rows keep sharing columns through the subgrid. Rows are exactly their
-  heights and the game supplies what text would otherwise size: the value track, a centred switch
-  stack's height and a slider's first line.
+  own heights: a placed row may set its height, and its track, padding, art and press dip follow
+  it, so rows of different heights share one list. The game supplies what text would otherwise
+  size: the value track, a centred switch stack's height and a slider's first line.
 - Art keeps its size: with the game's art pixel a placed list projects only the corner of an
   icon, a switch, a slider's thumb and caps and the track's height, and sizes them in whole art
   pixels. Boxes (rows, columns, the lane, the track's and fill's widths) keep edge projection.
   Without an art pixel every edge projects on its own, as before.
-- A one-action row hosts a single standard button face centred in the row, which stays the
-  button, so its press covers the row with no outsets. This is the smallest shape: per-edge press
-  margins would add a second hit area and clamps to a control that is already one press target.
+- A one-action row hosts a single standard button face centred in the whole row, the list's
+  padding included, with the odd unit right and below. The row stays the button, so its press
+  covers the row with no outsets. This is the smallest shape: per-edge press margins would add a
+  second hit area and clamps to a control that is already one press target.
 - A switch row is a switch with its state word below the switch, centred or with its ink's right
   edge on the switch's. Focus and press are fills; a row dips its art only when it sets a press
   dip in whole units, never while disabled, and a one-action row's face dips by the button press
