@@ -9,7 +9,11 @@
   "scripts": {
     "check": "npm run lint && npm test && npm run build",
     "format": "prettier --write . && eslint --fix .",
-    "lint": "shellcheck -x -P SCRIPTDIR tests/container/stock tests/container/check-stock tests/container/node tests/container/e2e && markdownlint-cli2 && node scripts/typecheck.ts && prettier --check . && eslint --max-warnings 0 .",
+    "lint": "npm run lint:shell && npm run lint:markdown && npm run lint:types && npm run lint:node",
+    "lint:markdown": "markdownlint-cli2",
+    "lint:node": "prettier --check . && eslint --max-warnings 0 .",
+    "lint:shell": "shellcheck -x -P SCRIPTDIR tests/container/stock tests/container/check-stock tests/container/node tests/container/e2e",
+    "lint:types": "node scripts/typecheck.ts",
     "test": "vitest run --maxWorkers=4",
     "test:e2e": "tests/container/e2e",
     "test:e2e:long": "tests/container/e2e --long",

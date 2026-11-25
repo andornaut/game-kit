@@ -20,7 +20,11 @@ class FakeSentinel extends EventTarget implements WakeLockSentinelLike {
 class FakeWakeLock implements WakeLockLike {
   readonly sentinels: FakeSentinel[] = [];
 
-  constructor(private readonly grants: boolean) {}
+  private readonly grants: boolean;
+
+  constructor(grants: boolean) {
+    this.grants = grants;
+  }
 
   request(): Promise<WakeLockSentinelLike> {
     if (!this.grants) {

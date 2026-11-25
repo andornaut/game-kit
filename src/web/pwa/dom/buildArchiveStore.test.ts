@@ -20,7 +20,11 @@ const buildCache = (version: string) => buildCacheName(POLICY, version);
 class FakeCache {
   readonly entries = new Map<string, Response>();
 
-  constructor(readonly beforePut: (key: string) => void) {}
+  readonly beforePut: (key: string) => void;
+
+  constructor(beforePut: (key: string) => void) {
+    this.beforePut = beforePut;
+  }
 
   delete(key: string): Promise<boolean> {
     return Promise.resolve(this.entries.delete(key));

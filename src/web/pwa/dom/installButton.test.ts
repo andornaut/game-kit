@@ -20,8 +20,11 @@ class FakeDialog extends EventTarget {
   labelledBy: string | undefined;
   open = false;
 
-  constructor(readonly sections: readonly FakeSection[]) {
+  readonly sections: readonly FakeSection[];
+
+  constructor(sections: readonly FakeSection[]) {
     super();
+    this.sections = sections;
   }
 
   close(): void {

@@ -86,7 +86,11 @@ class FakeServer {
   inFlight = 0;
   maxInFlight = 0;
 
-  constructor(readonly files: Map<string, Served>) {}
+  readonly files: Map<string, Served>;
+
+  constructor(files: Map<string, Served>) {
+    this.files = files;
+  }
 
   readonly fetch = async (url: string, init: RequestInit): Promise<Response> => {
     this.calls.push({ init, url });

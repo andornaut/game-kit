@@ -98,7 +98,11 @@ class FakeServer {
   readonly headers = new Map<string, Record<string, string>>();
   offline = false;
 
-  constructor(readonly files: Record<string, string>) {}
+  readonly files: Record<string, string>;
+
+  constructor(files: Record<string, string>) {
+    this.files = files;
+  }
 
   fetch(request: Request): Promise<Response> {
     const path = pathOf(request);

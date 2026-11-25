@@ -83,11 +83,14 @@ interface Group {
   dead: boolean;
 }
 class CaptureNode extends Renderer.WebGL.RenderNodes.RenderNode {
+  private readonly receive: (method: "run" | "batch", args: unknown[]) => void;
+
   constructor(
     manager: Renderer.WebGL.RenderNodes.RenderNodeManager,
-    private readonly receive: (method: "run" | "batch", args: unknown[]) => void,
+    receive: (method: "run" | "batch", args: unknown[]) => void,
   ) {
     super("GameKitUiCapture", manager);
+    this.receive = receive;
   }
   override run(...args: unknown[]): void {
     this.receive("run", args);
