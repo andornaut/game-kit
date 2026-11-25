@@ -23,13 +23,14 @@ Reference: [Standalone verification](../../README.md#standalone-verification), [
 
 ## Work items
 
-| ID      | Title                                                           | Link                             |
-| ------- | --------------------------------------------------------------- | -------------------------------- |
-| gk-0001 | Adopt design and work files, and run only lint for docs-only CI | [gk-0001.md](../work/gk-0001.md) |
-| gk-0003 | Release the merged task and proof worktrees                     | [gk-0003.md](../work/gk-0003.md) |
-| gk-0012 | Close the kit test-reduction target                             | [gk-0012.md](../work/gk-0012.md) |
-| gk-0014 | Publish the runtime, build and test namespaces                  | [gk-0014.md](../work/gk-0014.md) |
-| gk-0033 | Bind release checks and receipts to their evidence              | [gk-0033.md](../work/gk-0033.md) |
-| gk-0035 | Use one local check runner                                      | [gk-0035.md](../work/gk-0035.md) |
-| gk-0038 | Migrate consumers and retire obsolete GameKit interfaces        | [gk-0038.md](../work/gk-0038.md) |
-| gk-0052 | Refactor for structure, encapsulation and simplicity            | [gk-0052.md](../work/gk-0052.md) |
+| ID      | Title                                                                        | Link                             |
+| ------- | ---------------------------------------------------------------------------- | -------------------------------- |
+| gk-0001 | Adopt design and work files, and run only lint for docs-only CI              | [gk-0001.md](../work/gk-0001.md) |
+| gk-0003 | Release the merged task and proof worktrees                                  | [gk-0003.md](../work/gk-0003.md) |
+| gk-0012 | Close the kit test-reduction target                                          | [gk-0012.md](../work/gk-0012.md) |
+| gk-0014 | Publish the runtime, build and test namespaces                               | [gk-0014.md](../work/gk-0014.md) |
+| gk-0033 | Bind release checks and receipts to their evidence                           | [gk-0033.md](../work/gk-0033.md) |
+| gk-0035 | Use one local check runner                                                   | [gk-0035.md](../work/gk-0035.md) |
+| gk-0038 | Migrate consumers and retire obsolete GameKit interfaces                     | [gk-0038.md](../work/gk-0038.md) |
+| gk-0052 | Refactor for structure, encapsulation and simplicity                         | [gk-0052.md](../work/gk-0052.md) |
+| gk-0057 | Retire browserLaunchContext, add kit Makefile targets and split createLaunch | [gk-0057.md](../work/gk-0057.md) |
