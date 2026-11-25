@@ -28,6 +28,24 @@ const theme = `
   .fixture-face-button { background: transparent; border: 0; padding: 0; }
   #selected svg { display: block; }
 `;
+// HUD discs at 4 px a unit, with an edge, ring and fill in plain colours to sample, and pagers
+// outside any --ui-unit.
+const partsMarkup = `<!doctype html>
+  <link rel="stylesheet" href="/src/web/ui/dom/ui.css?direct">
+  <link rel="stylesheet" href="/src/web/ui/dom/hudDisc.css?direct">
+  <link rel="stylesheet" href="/parts.css">
+  <main id="discs"></main>
+  <div id="pagers"><div id="scaled-pager"></div></div>`;
+const partsCss = `
+  body { margin: 0; background: #000000; }
+  #discs { display: flex; gap: 8px; padding: 8px; --ui-unit: 4; }
+  #scaled-pager { --ui-unit: 2; }
+  .fixture-disc { --ui-colour-frame: #ff0000; --ui-hud-disc-edge: 1; --ui-hud-disc-ring: 2;
+    --ui-hud-disc-fill: #0000ff; --ui-hud-disc-ring-colour: #ffffff;
+    --ui-hud-disc-focus-fill: #00ff00; --ui-hud-disc-pressed-fill: #ffff00; outline: none; }
+  .fixture-zero { --ui-hud-disc-ring-inset: 0; }
+  .fixture-inset { --ui-hud-disc-ring-inset: 1; }
+`;
 const csp = "default-src 'self'; style-src 'self'; style-src-attr 'none'";
 const hostCss = `
   body { margin: 0; }
@@ -145,6 +163,16 @@ try {
     );
     await page.route(`${origin}host.css`, (route) =>
       route.fulfill({ body: hostCss, contentType: "text/css" }),
+    );
+    await page.route(`${origin}parts`, (route) =>
+      route.fulfill({
+        body: partsMarkup,
+        contentType: "text/html",
+        headers: { "Content-Security-Policy": csp },
+      }),
+    );
+    await page.route(`${origin}parts.css`, (route) =>
+      route.fulfill({ body: partsCss, contentType: "text/css" }),
     );
     await page.goto(origin);
     await page.evaluate(async () => {
@@ -915,7 +943,7 @@ try {
       ".crash-panel": "15px/20px 500 rgb(16, 32, 48) on rgb(224, 240, 255) in rgb(64, 80, 96)",
       ".crash-title": "28px/32px 800 rgb(16, 32, 48) on rgba(0, 0, 0, 0) in rgb(16, 32, 48)",
       ".crash-body": "15px/20px 500 rgb(16, 32, 48) on rgba(0, 0, 0, 0) in rgb(16, 32, 48)",
-      ".crash-stack": "11px/14px 300 rgb(16, 32, 48) on rgb(33, 27, 20) in rgb(16, 32, 48)",
+      ".crash-stack": "11px/14px 300 rgb(16, 32, 48) on rgb(224, 240, 255) in rgb(16, 32, 48)",
       ".crash-actions .crash-button":
         "17px/22px 600 rgb(240, 240, 240) on rgb(112, 128, 144) in rgb(33, 27, 20)",
       ".crash-panel > .crash-button":
@@ -946,6 +974,160 @@ try {
       ".crash-panel > .crash-button":
         "17px/22px 600 rgb(224, 208, 192) on rgb(48, 64, 80) in rgb(33, 27, 20)",
     });
+    // A theme whose text slot is the screen's ink, as Chibi's: the details take the panel body's
+    // pair, never the ink on an ink face.
+    await page.evaluate(async () => {
+      const themePath = "/src/web/ui/dom/uiTheme.ts";
+      const { setUiColours } = (await import(
+        themePath
+      )) as typeof import("../../src/web/ui/dom/uiTheme.ts");
+      setUiColours(
+        { cardFace: 0xd0d4d8, frame: 0x211b14, textPrimary: 0x211b14 },
+        document.documentElement,
+      );
+    });
+    const inked = await page.evaluate(() => {
+      const style = (selector: string) => getComputedStyle(document.querySelector(selector)!);
+      return {
+        body: [style(".crash-body").color, style(".crash-panel").backgroundColor],
+        stack: [style(".crash-stack").color, style(".crash-stack").backgroundColor],
+      };
+    });
+    console.log(JSON.stringify({ inked }));
+    assert.notEqual(inked.stack[0], inked.stack[1]);
+    assert.deepEqual(inked.stack, inked.body);
+    assert.deepEqual(inked.stack, ["rgb(33, 27, 20)", "rgb(208, 212, 216)"]);
+
+    // A HUD disc's ring sits --ui-hud-disc-ring-inset units inside the edge in every state, with
+    // the state's fill between; unset or 0 it touches the edge, as before. The disc's box and hit
+    // area do not move.
+    await page.goto(`${origin}parts`);
+    await page.evaluate(async () => {
+      const discPath = "/src/web/ui/dom/hudDisc.ts";
+      const { createHudDisc } = (await import(
+        discPath
+      )) as typeof import("../../src/web/ui/dom/hudDisc.ts");
+      const pagerPath = "/src/web/ui/dom/pager.ts";
+      const { createPager } = (await import(
+        pagerPath
+      )) as typeof import("../../src/web/ui/dom/pager.ts");
+      const statePath = "/src/ui/pager.ts";
+      const { pagerState } = (await import(statePath)) as typeof import("../../src/ui/pager.ts");
+      const rule = { holdMs: 500, slopPx: 5 };
+      const discs = document.querySelector<HTMLElement>("#discs")!;
+      const views: Record<string, ReturnType<typeof createHudDisc>> = {};
+      for (const kind of ["inset", "unset", "zero"]) {
+        const view = createHudDisc(document, {
+          className: `fixture-disc fixture-${kind}`,
+          getAction: () => ({ activate: () => {} }),
+          name: kind,
+          rule,
+          size: "disc",
+          sizes: { disc: { face: 20, icon: 8 } },
+        });
+        view.element.id = `disc-${kind}`;
+        discs.append(view.element);
+        views[kind] = view;
+      }
+      Object.assign(window, { fixtureDiscs: views });
+      for (const parent of ["#pagers", "#scaled-pager"]) {
+        const pager = createPager(document, {
+          countText: (state) => `${state.page + 1} / ${state.pages}`,
+          labels: { next: "Next", previous: "Previous" },
+          refusal: { cue: { shake: 3, stepMs: 5000, steps: 2 }, reducedMotion: () => false },
+          rule,
+          state: () => pagerState(0, 3),
+          step: () => {},
+        });
+        document.querySelector(parent)!.prepend(pager.element);
+      }
+    });
+    const decoder = await browser.newPage();
+    const ringRow = async (id: string) => {
+      const png = await page.locator(id).screenshot({ animations: "disabled" });
+      return decoder.evaluate(async (data) => {
+        const image = new Image();
+        image.src = `data:image/png;base64,${data}`;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const context = canvas.getContext("2d")!;
+        context.drawImage(image, 0, 0);
+        // Depths along the centre row from the left edge, at 4 px a unit: the edge, the unit
+        // inside it, the next two and the fill beyond.
+        return [2, 6, 10, 14, 20].map((x) => {
+          const [r, g, b] = context.getImageData(x, image.height / 2, 1, 1).data;
+          return `${r},${g},${b}`;
+        });
+      }, png.toString("base64"));
+    };
+    const [red, blue, white, green, yellow] = [
+      "255,0,0",
+      "0,0,255",
+      "255,255,255",
+      "0,255,0",
+      "255,255,0",
+    ];
+    const boxes = await page.evaluate(() =>
+      ["inset", "unset", "zero"].map((kind) => {
+        const { height, width } = document.querySelector(`#disc-${kind}`)!.getBoundingClientRect();
+        return [width, height];
+      }),
+    );
+    assert.deepEqual(boxes, [
+      [80, 80],
+      [80, 80],
+      [80, 80],
+    ]);
+    // Circle edges antialias by page position, so unset and 0 compare as computed layers.
+    const layers = await page.evaluate(() =>
+      ["unset", "zero"].map((kind) => {
+        const face = document.querySelector(`#disc-${kind} > .ui-hud-disc-face`)!;
+        const { borderTopWidth, boxShadow, inset } = getComputedStyle(face, "::before");
+        return `${inset} | ${borderTopWidth} | ${boxShadow}`;
+      }),
+    );
+    assert.deepEqual(layers, [
+      "0px | 8px | rgb(0, 0, 255) 0px 0px 0px 0px",
+      "0px | 8px | rgb(0, 0, 255) 0px 0px 0px 0px",
+    ]);
+    assert.deepEqual(await ringRow("#disc-unset"), [red, white, white, blue, blue]);
+    assert.deepEqual(await ringRow("#disc-inset"), [red, blue, white, white, blue]);
+    const bandHit = await page.evaluate(() => {
+      const { height, x, y } = document.querySelector("#disc-inset")!.getBoundingClientRect();
+      return document.elementFromPoint(x + 6, y + height / 2)?.closest("button")?.id;
+    });
+    assert.equal(bandHit, "disc-inset");
+    await page.keyboard.press("Tab");
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "disc-inset");
+    assert.deepEqual(await ringRow("#disc-inset"), [red, green, white, white, green]);
+    await page.evaluate(() => {
+      (document.activeElement as HTMLElement).blur();
+      const { fixtureDiscs } = window as unknown as {
+        fixtureDiscs: Record<string, { setPressed(pressed: boolean): void }>;
+      };
+      fixtureDiscs.inset!.setPressed(true);
+      fixtureDiscs.unset!.setPressed(true);
+    });
+    assert.deepEqual(await ringRow("#disc-inset"), [red, yellow, white, white, yellow]);
+    assert.deepEqual(await ringRow("#disc-unset"), [red, white, white, yellow, yellow]);
+    await decoder.close();
+
+    // A pager's refused Previous shakes outside any --ui-unit at the default unit of 1, and by the
+    // unit where one is set.
+    const shake = async (selector: string) => {
+      const previous = page.locator(`${selector} > button`).first();
+      // An unavailable step is aria-disabled, so the press skips the enabled check.
+      await previous.click({ force: true });
+      return previous.evaluate(
+        (element) =>
+          `${element.getAttribute("data-ui-refusal-shake")} ${getComputedStyle(element).translate}`,
+      );
+    };
+    const shakes = [await shake("#pagers > .ui-pager"), await shake("#scaled-pager > .ui-pager")];
+    console.log(JSON.stringify({ shakes }));
+    assert.deepEqual(shakes, ["left -3px", "left -6px"]);
   } finally {
     await browser.close();
   }

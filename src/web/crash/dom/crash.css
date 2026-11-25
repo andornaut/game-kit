@@ -156,13 +156,16 @@
   }
 }
 
-/* The supporting role, in the panel's text colour over the dark backdrop. */
+/* The supporting role. Its text and face are textPrimary on cardFace, the pair the panel's body
+   takes, so a theme whose text slot is the ink colour still reads; each slot falls back to the
+   screen's own text over the dark backdrop. */
 .crash-stack {
   max-height: 40vh;
   margin: 8px 0 12px;
   padding: 8px;
   overflow: auto;
-  background: var(--crash-ink);
+  background: var(--ui-colour-card-face, var(--crash-ink));
+  color: var(--ui-colour-text-primary, var(--crash-text));
   font-size: var(--crash-supporting-size, 12px);
   font-weight: var(--ui-text-supporting-weight);
   line-height: var(--crash-supporting-line-height, 1.4);

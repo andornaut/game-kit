@@ -42,6 +42,16 @@ describe("ui.css", () => {
     expect(css).toContain(`[${name}`);
   });
 
+  // A control outside the layer, such as a pager on a page, has no --ui-unit: the shake takes
+  // the default unit of 1 rather than dropping its translate.
+  it("shakes at the default unit where none is set", () => {
+    const shakes = [...css.matchAll(/translate: ([^;]+);/g)].map((match) => match[1]);
+    expect(shakes).toEqual([
+      "calc(var(--ui-unit, 1) * var(--ui-refusal-shake) * -1px) 0",
+      "calc(var(--ui-unit, 1) * var(--ui-refusal-shake) * 1px) 0",
+    ]);
+  });
+
   it.each(["left", "right", "out", "back"])("styles the %s shake stroke", (stroke) => {
     expect(css).toContain(`[${REFUSAL_ATTRIBUTES.shake}="${stroke}"]`);
   });

@@ -60,6 +60,7 @@ describe("crash.css", () => {
     "var(--ui-colour-text-primary, var(--crash-text))",
     "var(--ui-colour-frame, var(--crash-text))",
     "var(--ui-colour-card-face, transparent)",
+    "var(--ui-colour-card-face, var(--crash-ink))",
     "var(--ui-colour-button-face, var(--crash-button-face))",
     "var(--ui-colour-button-text, var(--crash-background))",
     "var(--ui-colour-button-pressed-face, var(--crash-action-face))",
@@ -67,6 +68,15 @@ describe("crash.css", () => {
     "var(--ui-colour-button-primary-face, var(--ui-colour-button-face, var(--crash-button-face)))",
   ])("falls back from the slot in %s", (declaration) => {
     expect(flat).toContain(declaration);
+  });
+
+  // The details' text and face are one pair of slots, the panel body's, so a theme whose text
+  // slot is the ink colour never draws the stack in ink on the ink backdrop.
+  it("pairs the stack's text and face as the panel's body", () => {
+    const stack = /\.crash-stack \{([^{}]*)\}/.exec(flat)?.[1] ?? "";
+    expect(stack).toContain("background: var(--ui-colour-card-face, var(--crash-ink));");
+    expect(stack).toContain("color: var(--ui-colour-text-primary, var(--crash-text));");
+    expect(stack).not.toMatch(/background: var\(--crash-ink\)/);
   });
 
   // Focus fills the summary row, as it does a button, in forced colours too; nothing outlines it.

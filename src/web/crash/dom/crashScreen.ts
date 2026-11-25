@@ -20,7 +20,7 @@ import {
 // and the panel's border, a button's face and the lip under it (its pressed edge), and the
 // darkest colour, for the panel's shadow, the button's border and the details' backdrop. Where a
 // game sets them, the uiTheme slots replace the text, panel border and button colours, and
-// cardFace fills the panel.
+// cardFace fills the panel and the details' backdrop.
 export interface CrashColours {
   readonly background: string;
   readonly buttonFace: string;

@@ -134,6 +134,8 @@ describe("createHudDisc", () => {
   });
 });
 
+const RING_INSET = "calc(var(--ui-hud-disc-ring-inset, 0) * var(--ui-unit, 1) * 1px)";
+
 describe("hudDisc.css", () => {
   it("matches only through zero-specificity selectors", () => {
     const selectors = [...css.matchAll(/(^|\n)\s*([^@{}\s][^{}]*)\{/g)].map((match) =>
@@ -148,16 +150,24 @@ describe("hudDisc.css", () => {
   it("changes only fills and images by state, with no rings, colour literals or fixed lengths", () => {
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b/i);
     expect(css).not.toMatch(/\b(rgb|hsl)a?\(/i);
-    expect(css).not.toMatch(/\b(outline|box-shadow)\s*:/);
+    expect(css).not.toMatch(/\boutline\s*:/);
+    // The one shadow is the fill layer's own fill, spread over the band inside the edge.
+    expect(
+      css.match(/\bbox-shadow\s*:[^;]*;/g)?.map((shadow) => shadow.replace(/\s+/g, " ")),
+    ).toEqual([`box-shadow: 0 0 0 ${RING_INSET} var(--ui-hud-disc-layer-fill);`]);
     expect(css.replace(/\* -?1px\b/g, "")).not.toMatch(/\d(px|rem|em)\b/);
     for (const state of [
       ...css.matchAll(/(:focus-visible|\[data-ui-pressed\]|:disabled)[^{]*\{([^}]*)\}/g),
     ]) {
       const properties = [...state[2]!.matchAll(/([a-z-]+)\s*:/g)].map((match) => match[1]);
       for (const property of properties) {
-        expect(["background-color", "background-image", "border-color", "color"]).toContain(
-          property,
-        );
+        expect([
+          "--ui-hud-disc-layer-fill",
+          "background-color",
+          "background-image",
+          "border-color",
+          "color",
+        ]).toContain(property);
       }
     }
     expect(css).toContain("@media (forced-colors: active)");
@@ -171,8 +181,27 @@ describe("hudDisc.css", () => {
     }
     // The ring is one width in every state, part of the fill layer under the art and icon.
     expect(css.match(/--ui-hud-disc-ring,/g)).toHaveLength(1);
+    expect(css).toContain("background-color: var(--ui-hud-disc-layer-fill);");
+    for (const state of ["selected-", "focus-", "pressed-", "disabled-"]) {
+      expect(css).toContain(
+        `--ui-hud-disc-layer-fill: var(--ui-hud-disc-${state}fill, transparent);`,
+      );
+    }
     const forced = css.slice(css.indexOf("@media (forced-colors: active)"));
     expect(forced).toMatch(/\.ui-hud-disc-face\)::before\s*\{\s*display: none;/);
     expect(forced).toMatch(/\.ui-hud-disc-icon\)\s*\{\s*color: currentColor;/);
+  });
+
+  // The ring sits its inset inside the edge in every state, 0 by default, and the fill covers the
+  // band between: only the fill layer's box moves, never the disc's.
+  it("insets the ring by one token, in every state, with the fill under the band", () => {
+    const layers = [...css.matchAll(/::before\s*\{([^}]*)\}/g)].map((match) => match[1]!);
+    const [base, ...states] = layers;
+    expect(base).toContain(`inset: ${RING_INSET};`);
+    expect(base).toContain(`box-shadow: 0 0 0 ${RING_INSET}`);
+    for (const state of states) {
+      expect(state).not.toMatch(/\b(inset|box-shadow|border-width|border)\s*:/);
+    }
+    expect(css.match(/--ui-hud-disc-ring-inset\b/g)).toHaveLength(2);
   });
 });

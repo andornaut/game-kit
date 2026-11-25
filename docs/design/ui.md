@@ -42,7 +42,8 @@ geometry only.
   roles and colour slots from an ancestor such as the document root, each with its own type and
   colours as the fallback. The crash screen does this in CSS alone, so it needs no game code.
   Its details summary shows focus as a fill, from the focus slots, else its text and backdrop
-  swapped, with no outline.
+  swapped, with no outline. Its details text and face are one slot pair, the panel body's, so a
+  theme never draws them in one colour.
 - `.ui-control-row` and `.ui-control-copy` remain for one control beside its copy in flow, with no
   press outsets.
 
@@ -96,12 +97,15 @@ theme slots.
 - A pager is an action group of Previous, the count and Next, with one gap token on both sides
   of the count. Its buttons are standard buttons; an unavailable step is disabled or a pointer
   refusal with the shared refusal cue, which a further press does not restart and the game can
-  stop. Dots are decorative. The pager fits a footer's middle slot.
+  stop. The cue shakes by the inherited unit, 1 where none is set. Dots are decorative. The
+  pager fits a footer's middle slot.
 - A HUD disc is a round standard button whose box is its face, placed and given its press area by
   an action group. State changes only fill, face image or icon colour, never geometry; an edge
   stays the same in every state. The game's own face fill, a ring drawn as part of it and the
-  icon's ink take state tokens, so no per-state art is needed; a ring is never a focus outline. The icon's ink, less its side bearings, centres on the face with
-  the odd unit right and below.
+  icon's ink take state tokens, so no per-state art is needed; a ring is never a focus outline.
+  The ring may sit a whole-unit inset inside the edge, the same in every state, with the fill
+  between, and only the fill layer moves. The icon's ink, less its side bearings, centres on the
+  face with the odd unit right and below.
 - An action group may keep each full press area and route overlaps to the nearest face centre,
   the earlier action on a tie; the DOM draws each area cut where its face stops being nearest.
 
