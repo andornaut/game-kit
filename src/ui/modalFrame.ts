@@ -4,13 +4,14 @@ import type { ActionOutset, ActionProjection } from "./actionGroup.ts";
 import { HIT_RULE, hitMargin } from "./hitAreas.ts";
 
 // Modal frames: a card centred in the game's content rect at a width family's width, or a
-// full-screen view that is the content rect itself, with a header holding a centred title and an
-// optional close control, a scroll body and an optional pinned footer. Every input and output is
-// a whole game unit, and every length is measured from the card's outer edge, so a skin (a CSS
-// face or nine-slice art) never moves the content. Where a length splits unevenly the odd unit
-// goes right or below: centring leaves it after the content.
+// full-screen view or non-modal page that is the content rect itself, with a header holding an
+// optional centred title and an optional close control, a scroll body and an optional pinned
+// footer. Every input and output is a whole game unit, and every length is measured from the
+// card's outer edge, so a skin (a CSS face or nine-slice art) never moves the content. Where a
+// length splits unevenly the odd unit goes right or below: centring leaves it after the content.
 
-export type ModalFrameVariant = "card" | "fullScreen";
+// page: placed as fullScreen; the DOM frame opens it without modal isolation.
+export type ModalFrameVariant = "card" | "fullScreen" | "page";
 
 // Width families by name, in whole units: the game's own, such as { large: 688, medium: 500,
 // small: 400 }.
@@ -35,9 +36,20 @@ export interface ModalClose {
   readonly press?: CornerRect;
 }
 
+// Insets from the frame's edges, each defaulting to the padding.
+export interface ModalFrameInsets {
+  // Between the frame's bottom and the footer, or without a footer the body content's end.
+  readonly bottom?: number;
+  // Between the frame's sides and the body content and the footer.
+  readonly side?: number;
+}
+
 export interface ModalFrameContext {
   // The game's content rect, such as its safe play area, in whole units.
   readonly content: Rect;
+  // The backdrop's rect in the same space, such as the whole screen past letterbox bars.
+  // Default: the frame root's area, unplaced.
+  readonly backdrop?: Rect;
   readonly variant?: ModalFrameVariant;
   // The card's width families and the one it takes. Card only.
   readonly families?: ModalWidthFamilies;
@@ -47,8 +59,10 @@ export interface ModalFrameContext {
   readonly gap?: number;
   // The least space between a card and the content rect's edges. Default 16. Card only.
   readonly margin?: number;
-  // The space inside the card's edges around the body and footer. Default MODAL_CONTENT.padding.
+  // The space inside the card's edges around the title and, unless insets say otherwise, the
+  // body and footer. Default MODAL_CONTENT.padding.
   readonly padding?: number;
+  readonly insets?: ModalFrameInsets;
   readonly project?: ActionProjection;
 }
 
@@ -65,7 +79,8 @@ export interface ModalTitleSize {
 export interface ModalFrameSizes {
   // The body content's natural height, without the body's insets.
   readonly body: number;
-  readonly title: ModalTitleSize;
+  // Omit for a frame without a title: its header is the padding or the close clearance.
+  readonly title?: ModalTitleSize;
   // How far the first body content's press areas reach above it, so they clear the close target
   // by the gap. Default 0.
   readonly bodyOutset?: number;
@@ -90,6 +105,8 @@ export interface PlacedModalClose {
 }
 
 export interface ModalFrameLayout {
+  // With context.backdrop only.
+  readonly backdrop?: Rect;
   // The body's scroll viewport; its content sits bodyInset in from its edges.
   readonly body: Rect;
   readonly bodyInset: ActionOutset;
@@ -100,6 +117,7 @@ export interface ModalFrameLayout {
   readonly header: Rect;
   // Whether the body content is taller than its viewport.
   readonly scrolls: boolean;
+  // Without a title, an empty box centred in the header.
   readonly title: Rect;
   readonly variant: ModalFrameVariant;
 }
@@ -147,11 +165,13 @@ function defaultPress(face: CornerRect): CornerRect {
 }
 
 interface Resolved {
+  readonly bottom: number;
   readonly close?: { readonly face: CornerRect; readonly press: CornerRect };
   readonly gap: number;
   readonly margin: number;
   readonly padding: number;
   readonly project: ActionProjection;
+  readonly side: number;
   readonly variant: ModalFrameVariant;
   readonly width: number;
 }
@@ -165,7 +185,7 @@ function resolve(context: ModalFrameContext): Resolved {
     project = IDENTITY,
     variant = "card",
   } = context;
-  if (variant !== "card" && variant !== "fullScreen") {
+  if (variant !== "card" && variant !== "fullScreen" && variant !== "page") {
     throw new RangeError("Unknown modal frame variant");
   }
   whole("content.x", content.x, ANY);
@@ -175,6 +195,16 @@ function resolve(context: ModalFrameContext): Resolved {
   whole("gap", gap);
   whole("margin", margin);
   whole("padding", padding);
+  const { bottom = padding, side = padding } = context.insets ?? {};
+  whole("insets.bottom", bottom);
+  whole("insets.side", side);
+  if (context.backdrop !== undefined) {
+    const { backdrop } = context;
+    whole("backdrop.x", backdrop.x, ANY);
+    whole("backdrop.y", backdrop.y, ANY);
+    whole("backdrop.width", backdrop.width, 1);
+    whole("backdrop.height", backdrop.height, 1);
+  }
   let width = content.width;
   if (variant === "card") {
     const { families, family } = context;
@@ -187,7 +217,7 @@ function resolve(context: ModalFrameContext): Resolved {
       throw new RangeError("The content rect leaves no room for a modal card inside its margin");
     }
   } else if (context.families !== undefined || context.family !== undefined) {
-    throw new RangeError("A full-screen modal frame takes no width family");
+    throw new RangeError("A full-screen modal frame or page takes no width family");
   }
   let close: Resolved["close"];
   if (context.close !== undefined) {
@@ -206,11 +236,13 @@ function resolve(context: ModalFrameContext): Resolved {
     close = { face, press };
   }
   return {
+    bottom,
     ...(close === undefined ? {} : { close }),
     gap,
     margin,
     padding,
     project,
+    side,
     variant,
     width,
   };
@@ -227,9 +259,9 @@ function titleReserve(resolved: Resolved): number {
 // no room between the close clearances.
 export function modalFrameRooms(context: ModalFrameContext): ModalFrameRooms {
   const resolved = resolve(context);
-  const { padding, width } = resolved;
+  const { side, width } = resolved;
   const title = width - 2 * titleReserve(resolved);
-  const inner = width - 2 * padding;
+  const inner = width - 2 * side;
   if (title < 1 || inner < 1) {
     throw new RangeError("The modal frame leaves no room for its title or body");
   }
@@ -254,12 +286,13 @@ function projectRect(projection: ActionProjection, rect: Rect): Rect {
 
 // Places the frame for its parts' sizes. A card is its family's width, clamped inside the margin,
 // and as tall as its content up to the content rect's height less the margin above and below;
-// past that its body scrolls. It is centred both ways in the content rect. A full-screen frame is
-// the content rect, and its body takes the height the header and footer leave. The header is as
-// tall as the title box and its insets, and at least reaches the gap (plus bodyOutset) below the
-// close target; the title box is centred in it, inside the mirrored close clearance, then moved by
-// inkOffset. The body runs from the header to the gap above the footer, or to the card's bottom
-// with the padding inside it; the footer sits the padding in from the card's sides and bottom.
+// past that its body scrolls. It is centred both ways in the content rect. A full-screen frame or
+// page is the content rect, and its body takes the height the header and footer leave. The header
+// is as tall as the title box and its insets (without a title, the padding), and at least reaches
+// the gap (plus bodyOutset) below the close target; the title box is centred in it, inside the
+// mirrored close clearance, then moved by inkOffset. The body runs from the header to the gap
+// above the footer, or to the card's bottom with the bottom inset inside it; the footer sits the
+// side inset in from the card's sides and the bottom inset up from its bottom.
 // The close face and press target are placed from the card's top-right corner (full screen: the
 // view's) exactly as given. Throws RangeError on invalid input or a header and footer taller than
 // the room.
@@ -269,30 +302,30 @@ export function placeModalFrame(
 ): ModalFrameLayout {
   const resolved = resolve(context);
   const rooms = modalFrameRooms(context);
-  const { close, gap, margin, padding, project, variant } = resolved;
+  const { bottom, close, gap, margin, padding, project, side, variant } = resolved;
   const { content } = context;
   const { bodyOutset = 0, footer, title } = sizes;
-  const { inkOffset = 0, inset = padding } = title;
+  const { height: titleHeight = 0, inkOffset = 0, inset = padding } = title ?? {};
   whole("body", sizes.body);
   whole("bodyOutset", bodyOutset);
-  whole("title.height", title.height);
+  whole("title.height", titleHeight);
   whole("title.inset", inset);
   whole("title.inkOffset", inkOffset, ANY);
   if (footer !== undefined) {
     whole("footer", footer);
   }
   const headerHeight = Math.max(
-    title.height + 2 * inset,
+    title === undefined ? padding : titleHeight + 2 * inset,
     close === undefined ? 0 : close.press.y + close.press.height + gap + bodyOutset,
   );
-  // Without a footer the bottom padding is inside the body, so its content scrolls through it.
+  // Without a footer the bottom inset is inside the body, so its content scrolls through it.
   const bodyInset = {
-    bottom: footer === undefined ? padding : 0,
-    left: padding,
-    right: padding,
+    bottom: footer === undefined ? bottom : 0,
+    left: side,
+    right: side,
     top: 0,
   };
-  const below = footer === undefined ? 0 : gap + footer + padding;
+  const below = footer === undefined ? 0 : gap + footer + bottom;
   const natural = bodyInset.top + sizes.body + bodyInset.bottom;
   const room =
     (variant === "card" ? content.height - 2 * margin : content.height) - headerHeight - below;
@@ -334,6 +367,7 @@ export function placeModalFrame(
   }
   const reserve = titleReserve(resolved);
   return {
+    ...(context.backdrop === undefined ? {} : { backdrop: projectRect(project, context.backdrop) }),
     body: projectRect(project, {
       height: bodyHeight,
       width: card.width,
@@ -349,17 +383,17 @@ export function placeModalFrame(
           footer: projectRect(project, {
             height: footer,
             width: rooms.footer,
-            x: card.x + padding,
-            y: card.y + card.height - padding - footer,
+            x: card.x + side,
+            y: card.y + card.height - bottom - footer,
           }),
         }),
     header: projectRect(project, { height: headerHeight, width: card.width, x: card.x, y: card.y }),
     scrolls: natural > bodyHeight,
     title: projectRect(project, {
-      height: title.height,
+      height: titleHeight,
       width: rooms.title,
       x: card.x + reserve,
-      y: card.y + Math.floor((headerHeight - title.height) / 2) + inkOffset,
+      y: card.y + Math.floor((headerHeight - titleHeight) / 2) + inkOffset,
     }),
     variant,
   };

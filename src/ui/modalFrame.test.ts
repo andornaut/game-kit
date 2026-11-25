@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { MODAL_CONTENT } from "../modalLayout.ts";
+import type { Rect } from "../rect.ts";
+import { type ActionProjection, arrangeActions } from "./actionGroup.ts";
 import {
   MODAL_FRAME,
   type ModalFrameContext,
   modalFrameRooms,
+  type ModalFrameSizes,
   placeModalFrame,
 } from "./modalFrame.ts";
 
@@ -220,5 +223,158 @@ describe("placeModalFrame", () => {
         title: { height: 28 },
       }),
     ).toThrow(RangeError);
+  });
+});
+
+// Archie's frameless full-screen page (Pet shop, Logbook, Help), from its own data: a 360x560
+// screen under a 40 tall top bar; the 16 modal padding; a header of 63, the 15 rows of a 5-row
+// capital at scale 3 with the padding and the 8 gap above and below; content 8 in from each side;
+// Back 48 tall and 12 above the screen's foot; the 8 gap over Back.
+const ARCHIE_PAGE = {
+  context: {
+    content: { height: 520, width: 360, x: 0, y: 40 },
+    insets: { bottom: 12, side: 8 },
+    variant: "page",
+  },
+  sizes: { body: 600, footer: 48, title: { height: 15, inset: 24 } },
+} as const satisfies { context: ModalFrameContext; sizes: ModalFrameSizes };
+// Archie's own rects: the title row its ink is centred in (cardTitleRow), the region from the
+// header to the gap over Back that holds its tabs, list and scrollbar, and Back at its 128 width.
+const ARCHIE = {
+  back: { height: 48, width: 128, x: 116, y: 500 },
+  region: { height: 500 - 8 - 103, width: 360, x: 0, y: 103 },
+  title: { height: 15, width: 328, x: 16, y: 64 },
+} as const;
+
+// Archie's DOM grid (domScale gridX, gridY and gridRect): a game edge's exact device place from
+// the layer's grid-snapped corner, rounded to whole art pixels.
+function archieGrid(scale: { dpr: number; origin: { x: number; y: number }; unit: number }) {
+  const art = Math.max(1, Math.floor(scale.unit * scale.dpr + 1e-9));
+  const axis = (origin: number) => (edge: number) => {
+    const exact = (origin + edge * scale.unit) * scale.dpr - Math.round(origin * scale.dpr);
+    return Math.round(exact / art) * art;
+  };
+  const project: ActionProjection = { x: axis(scale.origin.x), y: axis(scale.origin.y) };
+  const gridRect = (rect: Rect): Rect => {
+    const left = project.x(rect.x);
+    const top = project.y(rect.y);
+    return {
+      height: Math.max(art, project.y(rect.y + rect.height) - top),
+      width: Math.max(art, project.x(rect.x + rect.width) - left),
+      x: left,
+      y: top,
+    };
+  };
+  return { gridRect, project };
+}
+
+describe("a page", () => {
+  it("places Archie's page parts exactly where Archie draws them", () => {
+    const layout = placeModalFrame(ARCHIE_PAGE.context, ARCHIE_PAGE.sizes);
+    expect(layout.variant).toBe("page");
+    expect(layout.card).toEqual(ARCHIE_PAGE.context.content);
+    expect(layout.header).toEqual({ height: 63, width: 360, x: 0, y: 40 });
+    expect(layout.title).toEqual(ARCHIE.title);
+    expect(layout.body).toEqual(ARCHIE.region);
+    expect(layout.bodyInset).toEqual({ bottom: 0, left: 8, right: 8, top: 0 });
+    expect(layout.footer).toEqual({ height: 48, width: 344, x: 8, y: 500 });
+    expect(layout.scrolls).toBe(true);
+    expect(layout.close).toBeUndefined();
+    const footer = layout.footer!;
+    // Back's width follows its label's ink; Archie centres it across the padded page.
+    for (const width of [128, 49, 75, 96, 327]) {
+      const size = { height: 48, width };
+      const [archie] = arrangeActions(
+        { axis: "row", pressOverlap: "nearest", width: 360 - 2 * 16 },
+        [{ key: "back", role: "primary", size }],
+      ).actions;
+      const [back] = arrangeActions({ origin: footer, variant: "footer", width: footer.width }, [
+        { key: "back", role: "primary", size },
+      ]).actions;
+      expect(back).toMatchObject({
+        face: { ...size, x: 16 + (archie as { face: Rect }).face.x, y: 500 },
+      });
+    }
+    expect(
+      arrangeActions({ origin: footer, variant: "footer", width: footer.width }, [
+        { key: "back", role: "primary", size: { height: 48, width: 128 } },
+      ]).actions[0],
+    ).toMatchObject({ face: ARCHIE.back });
+  });
+
+  it.each([
+    { dpr: 1, origin: { x: 0, y: 0 }, unit: 1 },
+    { dpr: 2, origin: { x: 10.25, y: 3.5 }, unit: 1.5 },
+    { dpr: 3, origin: { x: 0, y: 17.4 }, unit: 2.1 },
+    { dpr: 2.625, origin: { x: 41.3, y: 0.7 }, unit: 1.17 },
+  ])("lands on Archie's device grid at $unit units and DPR $dpr", (scale) => {
+    const { gridRect, project } = archieGrid(scale);
+    const layout = placeModalFrame({ ...ARCHIE_PAGE.context, project }, ARCHIE_PAGE.sizes);
+    expect(layout.title).toEqual(gridRect(ARCHIE.title));
+    expect(layout.body).toEqual(gridRect(ARCHIE.region));
+    expect(layout.card).toEqual(gridRect(ARCHIE_PAGE.context.content));
+    const unprojected = placeModalFrame(ARCHIE_PAGE.context, ARCHIE_PAGE.sizes).footer!;
+    const [back] = arrangeActions(
+      { origin: unprojected, project, variant: "footer", width: unprojected.width },
+      [{ key: "back", role: "primary", size: { height: 48, width: 128 } }],
+    ).actions;
+    expect(back).toMatchObject({ face: gridRect(ARCHIE.back) });
+  });
+
+  it("takes no width family", () => {
+    expect(() =>
+      modalFrameRooms({ ...ARCHIE_PAGE.context, families: WIDE, family: "medium" }),
+    ).toThrow(RangeError);
+  });
+});
+
+describe("insets, an untitled frame and a placed backdrop", () => {
+  it("defaults each inset to the padding", () => {
+    const sizes = { body: 30, footer: 48, title: { height: 20 } };
+    expect(placeModalFrame(card({ insets: { bottom: 16, side: 16 } }), sizes)).toEqual(
+      placeModalFrame(card(), sizes),
+    );
+    expect(modalFrameRooms(card({ insets: { side: 4 } }))).toEqual({
+      body: 492,
+      card: 500,
+      footer: 492,
+      title: 468,
+    });
+    const open = placeModalFrame(card({ insets: { bottom: 6 } }), { body: 30 });
+    expect(open.bodyInset.bottom).toBe(6);
+    expect(open.body.height).toBe(36);
+    expect(() => modalFrameRooms(card({ insets: { side: 1.5 } }))).toThrow(RangeError);
+    expect(() => modalFrameRooms(card({ insets: { bottom: -1 } }))).toThrow(RangeError);
+  });
+
+  it("gives a frame without a title the padding or the close clearance as its header", () => {
+    const plain = placeModalFrame(card(), { body: 40 });
+    expect(plain.header.height).toBe(16);
+    expect(plain.body.y).toBe(plain.card.y + 16);
+    expect(plain.title).toEqual({
+      height: 0,
+      width: 468,
+      x: plain.card.x + 16,
+      y: plain.card.y + 8,
+    });
+    const closeable = placeModalFrame(card({ close: WIDE_CLOSE }), { body: 40, bodyOutset: 12 });
+    // The target's bottom is 42 below the card's top: 42 + 8 + 12.
+    expect(closeable.header.height).toBe(62);
+  });
+
+  it("places a backdrop independent of the content rect", () => {
+    const backdrop = { height: 600, width: 1200, x: -120, y: -30 };
+    expect(placeModalFrame(card(), { body: 0 }).backdrop).toBeUndefined();
+    const layout = placeModalFrame(
+      card({ backdrop, project: { x: (edge) => 2 * edge, y: (edge) => 2 * edge } }),
+      { body: 0 },
+    );
+    expect(layout.backdrop).toEqual({ height: 1200, width: 2400, x: -240, y: -60 });
+    expect(() =>
+      placeModalFrame(card({ backdrop: { ...backdrop, width: 0 } }), { body: 0 }),
+    ).toThrow(RangeError);
+    expect(() => placeModalFrame(card({ backdrop: { ...backdrop, x: 0.5 } }), { body: 0 })).toThrow(
+      RangeError,
+    );
   });
 });

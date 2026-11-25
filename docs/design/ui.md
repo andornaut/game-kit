@@ -49,6 +49,14 @@ layer and modal input gate.
 - The open frame takes the modal layer's dialog isolation, with the backdrop as the only outside
   target and its dim the one colour property; the focus returns to the opener. The game keeps its
   one dismissal action, which the close control, Escape, back and backdrop taps share.
+- A page is a full-screen frame that is not modal: it opens off the modal layer with no backdrop,
+  `aria-modal` or inert marks, so covered chrome stays live, and its leave is the game's own.
+- Every addition is opt-in and leaves a frame that does not use it unchanged: insets from the
+  game, an untitled frame named by its label, a backdrop rect apart from the content rect, a
+  footer that measures before its first layout, and a body the game scrolls.
+- Under a projection the DOM writes whole CSS px on the game's grid, and the game supplies every
+  height the frame would otherwise measure. A game that places its own title ink or footer gives
+  their heights and places them from the unprojected layout `layout()` returns.
 
 ## Switch, form rows, pager and HUD disc
 

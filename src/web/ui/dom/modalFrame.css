@@ -1,14 +1,20 @@
 /* Opt-in modal frames (modalFrame). The DOM part writes every length as unitless base px from the
-   pure layout; they resolve at --ui-unit. Every part is placed from the card's outer edge, so a
+   pure layout; they resolve at --ui-unit, or for a projected frame as whole CSS px on the game's
+   grid, through --ui-modal-length. Every part is placed from the card's outer edge, so a
    skin's borders never move content. Rules match through :where(), with zero specificity, so a
    game's skin and type classes always win. The only colour is --ui-modal-backdrop, the dim the
    game sets over covered chrome; unset, the backdrop paints nothing, for a game that dims on its
    canvas. */
 
 :where(.ui-modal-frame) {
+  --ui-modal-length: calc(var(--ui-unit, 1) * 1px);
   position: absolute;
   inset: 0;
   pointer-events: none;
+}
+
+:where(.ui-modal-frame[data-ui-modal-projected]) {
+  --ui-modal-length: 1px;
 }
 
 :where(.ui-modal-backdrop) {
@@ -19,13 +25,22 @@
   touch-action: none;
 }
 
+/* A backdrop the game places, such as over letterbox bars past the content rect. */
+:where(.ui-modal-backdrop[data-ui-modal-placed]) {
+  inset: auto;
+  top: calc(var(--ui-modal-backdrop-y) * var(--ui-modal-length));
+  left: calc(var(--ui-modal-backdrop-x) * var(--ui-modal-length));
+  width: calc(var(--ui-modal-backdrop-width) * var(--ui-modal-length));
+  height: calc(var(--ui-modal-backdrop-height) * var(--ui-modal-length));
+}
+
 :where(.ui-modal-card) {
   position: absolute;
   box-sizing: border-box;
-  top: calc(var(--ui-modal-card-y) * var(--ui-unit, 1) * 1px);
-  left: calc(var(--ui-modal-card-x) * var(--ui-unit, 1) * 1px);
-  width: calc(var(--ui-modal-card-width) * var(--ui-unit, 1) * 1px);
-  height: calc(var(--ui-modal-card-height) * var(--ui-unit, 1) * 1px);
+  top: calc(var(--ui-modal-card-y) * var(--ui-modal-length));
+  left: calc(var(--ui-modal-card-x) * var(--ui-modal-length));
+  width: calc(var(--ui-modal-card-width) * var(--ui-modal-length));
+  height: calc(var(--ui-modal-card-height) * var(--ui-modal-length));
   margin: 0;
   padding: 0;
   pointer-events: auto;
@@ -48,34 +63,37 @@
 
 :where(.ui-modal-header) {
   position: absolute;
-  top: calc(var(--ui-modal-header-y) * var(--ui-unit, 1) * 1px);
-  left: calc(var(--ui-modal-header-x) * var(--ui-unit, 1) * 1px);
-  width: calc(var(--ui-modal-header-width) * var(--ui-unit, 1) * 1px);
-  height: calc(var(--ui-modal-header-height) * var(--ui-unit, 1) * 1px);
+  top: calc(var(--ui-modal-header-y) * var(--ui-modal-length));
+  left: calc(var(--ui-modal-header-x) * var(--ui-modal-length));
+  width: calc(var(--ui-modal-header-width) * var(--ui-modal-length));
+  height: calc(var(--ui-modal-header-height) * var(--ui-modal-length));
 }
 
-/* The title box at its room between the mirrored close clearances; its height is its text's. */
+/* The title box at its room between the mirrored close clearances; its height is its text's, or
+   the game's for a title whose content it places. */
 :where(.ui-modal-title) {
   position: absolute;
   box-sizing: border-box;
-  top: calc(var(--ui-modal-title-y) * var(--ui-unit, 1) * 1px);
-  left: calc(var(--ui-modal-title-x) * var(--ui-unit, 1) * 1px);
-  width: calc(var(--ui-modal-title-width) * var(--ui-unit, 1) * 1px);
+  top: calc(var(--ui-modal-title-y) * var(--ui-modal-length));
+  left: calc(var(--ui-modal-title-x) * var(--ui-modal-length));
+  width: calc(var(--ui-modal-title-width) * var(--ui-modal-length));
+  height: calc(var(--ui-modal-title-height) * var(--ui-modal-length));
   margin: 0;
   padding: 0;
   text-align: center;
   overflow-wrap: break-word;
 }
 
-/* The scroll body: the viewport scrolls its content box, which holds the side insets and, with
-   no footer, the bottom inset, so press outsets inside them are not clipped. */
+/* The scroll body: the viewport scrolls its content box, which holds the side insets (each its own
+   on a projected frame) and, with no footer, the bottom inset, so press outsets inside them are
+   not clipped. */
 :where(.ui-modal-body) {
   position: absolute;
   box-sizing: border-box;
-  top: calc(var(--ui-modal-body-y) * var(--ui-unit, 1) * 1px);
-  left: calc(var(--ui-modal-body-x) * var(--ui-unit, 1) * 1px);
-  width: calc(var(--ui-modal-body-width) * var(--ui-unit, 1) * 1px);
-  height: calc(var(--ui-modal-body-height) * var(--ui-unit, 1) * 1px);
+  top: calc(var(--ui-modal-body-y) * var(--ui-modal-length));
+  left: calc(var(--ui-modal-body-x) * var(--ui-modal-length));
+  width: calc(var(--ui-modal-body-width) * var(--ui-modal-length));
+  height: calc(var(--ui-modal-body-height) * var(--ui-modal-length));
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -84,8 +102,16 @@
 
 :where(.ui-modal-content) {
   box-sizing: border-box;
-  padding: 0 calc(var(--ui-modal-inset-side) * var(--ui-unit, 1) * 1px)
-    calc(var(--ui-modal-inset-bottom) * var(--ui-unit, 1) * 1px);
+  padding: 0 calc(var(--ui-modal-inset-right, var(--ui-modal-inset-side)) * var(--ui-modal-length))
+    calc(var(--ui-modal-inset-bottom) * var(--ui-modal-length))
+    calc(var(--ui-modal-inset-left, var(--ui-modal-inset-side)) * var(--ui-modal-length));
+}
+
+/* A body the game scrolls: no native scroll, clip or pan; the game moves and clips its content. */
+:where(.ui-modal-card[data-ui-modal-scroll="game"] > .ui-modal-body) {
+  overflow: visible;
+  overscroll-behavior: auto;
+  touch-action: none;
 }
 
 :where(.ui-modal-text) {
@@ -94,13 +120,14 @@
 
 :where(.ui-modal-footer) {
   position: absolute;
-  top: calc(var(--ui-modal-footer-y) * var(--ui-unit, 1) * 1px);
-  left: calc(var(--ui-modal-footer-x) * var(--ui-unit, 1) * 1px);
-  width: calc(var(--ui-modal-footer-width) * var(--ui-unit, 1) * 1px);
-  height: calc(var(--ui-modal-footer-height) * var(--ui-unit, 1) * 1px);
+  top: calc(var(--ui-modal-footer-y) * var(--ui-modal-length));
+  left: calc(var(--ui-modal-footer-x) * var(--ui-modal-length));
+  width: calc(var(--ui-modal-footer-width) * var(--ui-modal-length));
+  height: calc(var(--ui-modal-footer-height) * var(--ui-modal-length));
 }
 
-:where(.ui-modal-card:not([data-ui-modal-footer]) > .ui-modal-footer) {
+/* Without a footer the slot is hidden, except while the footer group measures its actions. */
+:where(.ui-modal-card:not([data-ui-modal-footer], [data-ui-modal-measuring]) > .ui-modal-footer) {
   display: none;
 }
 
@@ -109,10 +136,10 @@
 :where(.ui-modal-card > .ui-modal-close) {
   position: absolute;
   box-sizing: border-box;
-  top: calc(var(--ui-modal-close-y) * var(--ui-unit, 1) * 1px);
-  left: calc(var(--ui-modal-close-x) * var(--ui-unit, 1) * 1px);
-  width: calc(var(--ui-modal-close-width) * var(--ui-unit, 1) * 1px);
-  height: calc(var(--ui-modal-close-height) * var(--ui-unit, 1) * 1px);
+  top: calc(var(--ui-modal-close-y) * var(--ui-modal-length));
+  left: calc(var(--ui-modal-close-x) * var(--ui-modal-length));
+  width: calc(var(--ui-modal-close-width) * var(--ui-modal-length));
+  height: calc(var(--ui-modal-close-height) * var(--ui-modal-length));
   margin: 0;
   pointer-events: auto;
   touch-action: none;
@@ -121,10 +148,10 @@
 :where(.ui-modal-card > .ui-modal-close)::before {
   content: "";
   position: absolute;
-  top: calc(var(--ui-modal-close-outset-top) * var(--ui-unit, 1) * -1px);
-  right: calc(var(--ui-modal-close-outset-right) * var(--ui-unit, 1) * -1px);
-  bottom: calc(var(--ui-modal-close-outset-bottom) * var(--ui-unit, 1) * -1px);
-  left: calc(var(--ui-modal-close-outset-left) * var(--ui-unit, 1) * -1px);
+  top: calc(var(--ui-modal-close-outset-top) * var(--ui-modal-length) * -1);
+  right: calc(var(--ui-modal-close-outset-right) * var(--ui-modal-length) * -1);
+  bottom: calc(var(--ui-modal-close-outset-bottom) * var(--ui-modal-length) * -1);
+  left: calc(var(--ui-modal-close-outset-left) * var(--ui-modal-length) * -1);
 }
 
 /* A skin face inside the native close control fills it. */

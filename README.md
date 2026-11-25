@@ -461,6 +461,47 @@ frame.layout(
 const session = frame.open({ close: dismiss, focus: restart.element, input: gate, layer });
 ```
 
+### Pages, untitled frames and projection
+
+Each addition is opt-in; a frame that uses none of them is placed and opened as before.
+
+- **Page:** `variant: "page"` is placed as a full-screen frame and is not modal. After a `page` layout the DOM frame hides its backdrop and `open({ focus, input, restore })` takes no `layer`, `close` or `outsideTap`: it focuses `focus` or the card, sets no `aria-modal` and no `inert`, so covered chrome such as a top bar stays live, and closing returns the focus to the opener unless the player moved it to live chrome. A card or full-screen frame still needs `layer`.
+- **Insets:** `insets: { side, bottom }` (each default the padding) set the body content's and footer's side inset and the footer's (or, without a footer, the body content's) bottom inset; the title keeps the padding.
+- **Untitled:** omit `sizes.title` for a frame without a title. Its header is the padding, or the close clearance when that is taller, and `title` is an empty box. In the DOM, omit `title` and pass `label`: the dialog takes `aria-label`, the title element is hidden and `setTitle` throws.
+- **Backdrop:** `context.backdrop`, a whole-unit rect in the content rect's space, places the backdrop independently of the frame, such as over letterbox bars; round a fractional cover outward. Omitted, the backdrop fills the frame root as before.
+- **Projection in the DOM:** with `project`, the frame root takes `data-ui-modal-projected` and every placed length is whole CSS px on the game's grid (`--ui-modal-length: 1px`) instead of base px at `--ui-unit`, and the body's side and bottom insets are each projected. The game then supplies `parts.title.height`, `parts.body` and, for a footer, its own footer: the frame does not measure across the projection.
+- **Game-owned parts:** `parts.title.height` sets the title box's height for a title whose content the game places, such as ink-placed glyph runs inside `frame.title`. `parts.footer: { height }` reserves the footer room for the game's own footer, appended to `frame.footerSlot`. `layout()` also returns `units`, the layout before projection, so the game places its ink and controls from the same rects.
+- **Game scroll:** `parts.scroll: "game"` stops the body's native scroll, clip and pan; the game moves and clips its content, such as by a scene-driven transform in its own clip.
+- **Footer measure:** `frame.footer.measure()` shows the footer slot while it measures, so actions measure before the first layout.
+
+```ts
+// Archie's Pet shop page under its live top bar, on its device art-pixel grid.
+const page = createModalFrame(document, { id: "shop", title: "Pet shop" });
+const spans = titleLines.map((line) => createTextLine(document, line));
+page.title.replaceChildren(...spans);
+page.footerSlot.append(back);
+layer.append(page.element);
+const { units } = page.layout(
+  {
+    content: { height: 520, width: 360, x: 0, y: 40 },
+    insets: { bottom: 12, side: 8 },
+    project: { x: (edge) => gridX(scale, edge), y: (edge) => gridY(scale, edge) },
+    variant: "page",
+  },
+  { body: listHeight, footer: { height: 48 }, scroll: "game", title: { height: 15, inset: 24 } },
+);
+titleLines.forEach((line, i) => placeText(bitmap, scale, units.title, spans[i], line));
+placeBox(scale, units.footer, back, backRect);
+const session = page.open({ focus: back });
+
+// Chibi's untitled card, its backdrop over the letterbox bars.
+const card = createModalFrame(document, { id: "stages", label: "Stage select" });
+card.layout(
+  { backdrop: SCREEN_COVER, content: VIEW, families: CARD_WIDTH, family: "large" },
+  { footer: { actions } },
+);
+```
+
 ## Switch, form rows, pager and HUD disc
 
 Each component keeps pure state and geometry in `runtime/ui/<component>` and its DOM part in `runtime/web/ui/dom/<component>` with an opt-in `<component>.css`. Every rule has zero specificity, lengths are unitless base px at `--ui-unit` from the game's tokens, colours are the `uiTheme` slots with system colours in forced-colours mode, `controls.css` owns the one focus fill, and every label is player text. Invalid input throws `RangeError`.
@@ -760,7 +801,7 @@ The inventory uses implementation paths relative to `src/`, and tests sit beside
 | `ui/actionGroup`, `ui/uiTheme`                                                                                                                          | Pure                     | Action group fitting, press outsets and projection; theme colour slots and text roles                                                     |
 | `ui/buttonLayout`, `ui/controlPresentation`                                                                                                             | Pure                     | Caller-token button group sizing, contained placement and current-navigation filtering                                                    |
 | `ui/focusKeys`, `ui/hitAreas`, `ui/spacing`                                                                                                             | Pure                     | Focus keys and steps, press areas by nearest control, and the button gaps                                                                 |
-| `ui/modalFrame`                                                                                                                                         | Pure                     | Modal frame geometry: width families, header, title clearance, scroll body, footer and close                                              |
+| `ui/modalFrame`                                                                                                                                         | Pure                     | Modal frame and page geometry: width families, header, title clearance, scroll body, footer, close                                        |
 | `ui/formRow`, `ui/pager`, `ui/hudDisc`                                                                                                                  | Pure                     | Form row layout properties, pager arrangement and state, HUD disc icon placement                                                          |
 | `ui/slider`                                                                                                                                             | Pure                     | Slider steps, key steps, pointer steps and whole-unit track and thumb geometry                                                            |
 | `view/fitCheck`, `view/modalDim`, `view/pagePoint`, `view/renderScale`, `view/settleFit`                                                                | Pure                     | Fit decisions, dimming, coordinate mapping, device render scale and settling                                                              |
@@ -780,7 +821,7 @@ The inventory uses implementation paths relative to `src/`, and tests sit beside
 | `web/pwa/dom/*`                                                                                                                                         | Browser DOM              | Visibility, wake lock, audio, back, exit, install, launch, build store and installer, router worker                                       |
 | `web/save/dom/localSaveStorage`, `web/save/dom/pageSessionStore`                                                                                        | Browser DOM              | The page's `localStorage` and `sessionStorage`                                                                                            |
 | `web/ui/dom/*` and its `ui.css` and opt-in `controls.css`, `layoutTree.css`, `controlPresentation.css`, `actionGroup.css` and `uiTheme.css` stylesheets | Browser DOM, CSS         | HTML UI: units, layout values, modal layer, focus cues, presses, frames, button skins, action groups, theme, chrome, refusal, decoded art |
-| `web/ui/dom/modalFrame` and its opt-in `modalFrame.css` stylesheet                                                                                      | Browser DOM, CSS         | HTML modal frame on the modal layer: backdrop, dialog card, skin layer, scroll body, footer and close                                     |
+| `web/ui/dom/modalFrame` and its opt-in `modalFrame.css` stylesheet                                                                                      | Browser DOM, CSS         | HTML modal frame on the modal layer, or a non-modal page: backdrop, dialog card, skin, body, footer, close                                |
 | `web/ui/dom/formRow`, `web/ui/dom/pager`, `web/ui/dom/hudDisc` and their opt-in stylesheets                                                             | Browser DOM, CSS         | HTML switch and form rows, pager and HUD disc on standard buttons and action groups                                                       |
 | `web/ui/dom/slider` and `slider.css`                                                                                                                    | Browser DOM, CSS         | HTML slider form row with the game's track and thumb art                                                                                  |
 | `web/view/dom/watchFrameTurn`                                                                                                                           | Browser DOM              | Marks the frame turn on `<html>` and requests the orientation lock                                                                        |
