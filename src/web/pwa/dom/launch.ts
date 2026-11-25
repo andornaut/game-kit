@@ -13,7 +13,6 @@ import {
   BUILD_POINTER_URL,
   type BuildArchiveReference,
   type BuildGroupReference,
-  buildGroupTransferBytes,
   type BuildManifest,
   type BuildPointer,
   type BuildPolicy,
@@ -37,8 +36,7 @@ import {
   bootBytesOf,
   canPublishStaged,
   failureReason,
-  type FirstInstallFailure,
-  groupedManifestMismatch,
+  LaunchError,
   launchProgress,
   nextUpdateRetryMs,
   parseProgressCarry,
@@ -46,7 +44,6 @@ import {
   progressCarryText,
   type ProgressCounts,
   requiredUpdateCandidate,
-  sameDeployedGroups,
   sameUpdateState,
   updateCheckWait,
 } from "../launchRules.ts";
@@ -56,6 +53,13 @@ import { type BuildArchiveStore, createBuildArchiveStore } from "./buildArchiveS
 import { type BuildGroupStore, createBuildGroupStore } from "./buildGroupStore.ts";
 import { BACKGROUND_INSTALL, FOREGROUND_INSTALL, installBuild } from "./buildInstaller.ts";
 import { type BuildStore, createBuildStore, withBuildStateLock } from "./buildStore.ts";
+import {
+  type GroupedInstallContext,
+  type GroupedStagingContext,
+  installGrouped,
+  type LaunchGroupsContext,
+  stageGroups,
+} from "./launchGroups.ts";
 import { type VisibilitySource, watchVisibility } from "./visibility.ts";
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -160,16 +164,6 @@ const MAX_RESTARTS = 3;
 // reload that boots the new build.
 const LAUNCH_RELOAD_KEY = "game-kit:launch-reload";
 const LAUNCH_PROGRESS_KEY = "game-kit:launch-progress";
-
-class LaunchError extends Error {
-  readonly reason: FirstInstallFailure;
-
-  constructor(reason: FirstInstallFailure, message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "LaunchError";
-    this.reason = reason;
-  }
-}
 
 function readCarry(session: SessionLike | undefined): ProgressCarry | undefined {
   try {
@@ -530,7 +524,7 @@ export function createLaunch(
     bootVersion ??= pointer.version;
     installingVersion = pointer.version;
     if (pointer.groupedFirstInstall === true) {
-      const result = await installGrouped(pointer).catch((error: unknown) => {
+      const result = await installGrouped(groupedInstall, pointer).catch((error: unknown) => {
         const reason = failureReason(error);
         if (reason === "quota" || reason === "unsupported") {
           throw new LaunchError("verification", "Could not install the grouped build", {
@@ -881,158 +875,34 @@ export function createLaunch(
     return "complete";
   };
 
-  const requireGroupRouter = async () => {
-    if (!(await archiveRouterReady(BUILD_GROUP_ROUTER_PROBE))) {
-      throw new LaunchError("verification", "The controlling worker cannot serve grouped builds");
-    }
+  // Grouped builds (launchGroups).
+  const groups: LaunchGroupsContext = {
+    downloadGroup,
+    fetch: installContext.fetch,
+    groupRouterReady: () => archiveRouterReady(BUILD_GROUP_ROUTER_PROBE),
+    groupStore: context.groupStore,
+    policy,
+    readDeployedManifest,
+    readPointer,
+    signal: aborts.signal,
+    soundFormat: options.soundFormat,
+    store,
   };
-
-  const prepareGroups = async (
-    pointer: BuildPointer,
-    onBytes: (received: number, total: number) => void,
-    foreground = false,
-  ): Promise<"complete" | "changed"> => {
-    const { groupStore } = context;
-    const { groups, version } = pointer;
-    if (groupStore === undefined || groups === undefined) {
-      throw new LaunchError("verification", "Grouped build storage unavailable");
-    }
-    const stillDeployed = (deployed: BuildPointer) => sameDeployedGroups(pointer, deployed);
-    const alreadySealed = await groupStore.complete(version, pointer);
-    if (!alreadySealed) {
-      const missing: BuildGroupReference[] = [];
-      for (const group of groups) {
-        aborts.signal.throwIfAborted();
-        // Limit storage work and downloads to one bounded group at a time.
-        // eslint-disable-next-line no-await-in-loop
-        if (!(await groupStore.reuse(pointer, group))) {
-          missing.push(group);
-        }
-      }
-      // Progress counts transport bytes, which a compressed group sends fewer of.
-      const total = missing.reduce((bytes, group) => bytes + buildGroupTransferBytes(group), 0);
-      let received = 0;
-      if (total > 0 || foreground) {
-        onBytes(0, total);
-      }
-      for (const group of missing) {
-        let fetchFailed = false;
-        const foregroundFetch: FetchLike | undefined = foreground
-          ? async (url, init) => {
-              const response = await installContext.fetch(url, init).catch((error: unknown) => {
-                fetchFailed = true;
-                throw error;
-              });
-              fetchFailed = response.status !== 200;
-              return response;
-            }
-          : undefined;
-        try {
-          // eslint-disable-next-line no-await-in-loop
-          const body = await downloadGroup(
-            group,
-            (bytes) => onBytes(received + bytes, total),
-            foregroundFetch,
-          );
-          // eslint-disable-next-line no-await-in-loop
-          await groupStore.put(pointer, group, body, aborts.signal);
-        } catch (error) {
-          if (fetchFailed && !aborts.signal.aborted) {
-            // The old part may have disappeared during a current-only deployment.
-            // eslint-disable-next-line no-await-in-loop
-            const deployed = await readPointer().catch(() => undefined);
-            if (deployed !== undefined && !stillDeployed(deployed) && !aborts.signal.aborted) {
-              return "changed";
-            }
-          }
-          throw error;
-        }
-        received += buildGroupTransferBytes(group);
-      }
-    }
-    if ((!alreadySealed || foreground) && !stillDeployed(await readPointer())) {
-      return "changed";
-    }
-    if (!alreadySealed) {
-      await groupStore.seal(pointer, aborts.signal);
-    }
-    return "complete";
+  const groupedInstall: GroupedInstallContext = {
+    ...groups,
+    disposed: () => disposed,
+    onBootBytes: (bootBytes) => {
+      progress = { ...progress, bootBytes, received: 0, total: 0 };
+    },
+    onBytes: (received, total) => {
+      progress = { ...progress, received, total };
+      report("installing", 0);
+    },
+    onRecorded: (version) => recordProgress(version, true),
+    reload,
+    waitForRouter,
   };
-
-  // The stored groups hold the deployed manifest's files (launchRules' groupedManifestMismatch).
-  const verifyGroupedManifest = async (deployed: BuildManifest) => {
-    const grouped = await context.groupStore?.read(deployed.version);
-    if (grouped?.kind !== "ready") {
-      throw new LaunchError("verification", "Grouped build members do not match the manifest");
-    }
-    const mismatch = groupedManifestMismatch(options.soundFormat, deployed, grouped.files);
-    if (mismatch !== undefined) {
-      throw new LaunchError("verification", mismatch);
-    }
-  };
-
-  const installGrouped = async (pointer: BuildPointer): Promise<"reloading" | "changed"> => {
-    const { version } = pointer;
-    await waitForRouter();
-    aborts.signal.throwIfAborted();
-    await requireGroupRouter();
-    const manifest = await readDeployedManifest(pointer);
-    progress = {
-      ...progress,
-      bootBytes: bootBytesOf(installedManifest(options.soundFormat, manifest)),
-      received: 0,
-      total: 0,
-    };
-    const result = await prepareGroups(
-      pointer,
-      (received, total) => {
-        progress = { ...progress, received, total };
-        report("installing", 0);
-      },
-      true,
-    );
-    if (result === "changed") {
-      return result;
-    }
-    await verifyGroupedManifest(manifest);
-    const active = await withBuildStateLock(policy, async () => {
-      const state = await store.readState();
-      if (state.active !== undefined) {
-        return state.active;
-      }
-      if (
-        !(await context.groupStore?.complete(version, pointer)) ||
-        !(await archiveRouterReady(BUILD_GROUP_ROUTER_PROBE))
-      ) {
-        throw new LaunchError("verification", "Could not activate the sealed grouped build");
-      }
-      aborts.signal.throwIfAborted();
-      await store.setActive(version);
-      return version;
-    });
-    if (disposed) {
-      return "reloading";
-    }
-    if (active === version) {
-      recordProgress(version, true);
-    }
-    // Bootstrap has no pin yet. The new navigation obtains the active build and its pin together.
-    reload();
-    return "reloading";
-  };
-
-  const stageGroups = async (pointer: BuildPointer, state: BuildState) => {
-    await requireGroupRouter();
-    const manifest = await readDeployedManifest(pointer);
-    const result = await prepareGroups(pointer, (received, total) =>
-      reportUpdate({ phase: "staging", value: received / total, version: pointer.version }),
-    );
-    if (result === "complete") {
-      await verifyGroupedManifest(manifest);
-      await publishStaged(state, pointer.version, pointer);
-    }
-    return result;
-  };
+  const groupedStaging: GroupedStagingContext = { ...groups, publishStaged, reportUpdate };
 
   // Stages the build the pointer names; a redeploy mid-staging restarts on the new manifest.
   // Records in attempt the version it tries, so a failure can name it.
@@ -1057,7 +927,7 @@ export function createLaunch(
     if (pointer.archive !== undefined || pointer.groups !== undefined) {
       const result =
         pointer.groups !== undefined
-          ? await stageGroups(pointer, state)
+          ? await stageGroups(groupedStaging, state, pointer)
           : await stageArchive(pointer, state);
       if (result === "changed") {
         await stageDeployed(nextRestart(restarts, "staging"), attempt);

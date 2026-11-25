@@ -1,6 +1,6 @@
-// The pure decisions behind dom/launch: the first-install progress value and its carry across the
-// launch reload, update-check timing and backoff, and whether a deploy, a staged build or a
-// grouped build still matches what launch read.
+// The pure decisions behind dom/launch: the first-install failure an error carries, the
+// first-install progress value and its carry across the launch reload, update-check timing and
+// backoff, and whether a deploy, a staged build or a grouped build still matches what launch read.
 import type {
   BuildManifest,
   BuildPointer,
@@ -25,6 +25,17 @@ export const UPDATE_RETRY_MAX_MS = 15 * 60_000;
 const RECORD_SHARE = 0.01;
 
 export type FirstInstallFailure = LaunchFailure["reason"] | NetworkPlayNotice["reason"];
+
+// A launch failure with the first-install reason failureReason reads.
+export class LaunchError extends Error {
+  readonly reason: FirstInstallFailure;
+
+  constructor(reason: FirstInstallFailure, message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "LaunchError";
+    this.reason = reason;
+  }
+}
 
 /** The first-install failure an error carries, or "network" for any other error. */
 export function failureReason(error: unknown): FirstInstallFailure {
