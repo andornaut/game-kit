@@ -103,6 +103,10 @@ theme slots.
   stack's height and a slider's first line.
 - A switch row is a switch with its state word below the switch, centred or with its ink's right
   edge on the switch's. Focus and press are fills only and a row never dips.
+- A form row refuses as its button does: a refused value or switch row plays the shared refusal
+  cue or the game's refuse callback in its place, and pointer refusal calls only the game's
+  pointer refusal callback, never the kit cue. A game with its own cue thus shows that one cue on
+  every row, slider and pager refusal.
 - A pager is an action group of Previous, the count and Next, with one gap token on both sides
   of the count. Its buttons are standard buttons; an unavailable step is disabled or a pointer
   refusal, and the game's keys refuse a step through the pager the same way. A refusal plays the
@@ -136,7 +140,9 @@ in `src/web/ui/dom/slider.ts` with `slider.css`, in the form row list's grid.
   track is a whole number of units and the thumb's offset a whole unit, a half rounding right; a
   canvas takes the same geometry through the projection hook.
 - Focus and press fill the row only, focus with the one focus fill, with system fills in forced
-  colours. A refused slider keeps its focus and value and plays the shared refusal cue.
+  colours. A refused slider keeps its focus and value and plays the shared refusal cue, restarted
+  on each refusal, or the game's refuse callback in its place on every press, drag and step key,
+  whose replay and stopping the game owns.
 
 ## Work items
 

@@ -17,7 +17,19 @@ import {
   type FormRowState,
   SWITCH_CLASS,
 } from "./formRow.ts";
+import * as refusalCue from "./refusalCue.ts";
 import { REFUSAL_ATTRIBUTES } from "./refusalCue.ts";
+
+// The kit cue's functions, passed through as spies, so a test can prove a row never calls them.
+vi.mock("./refusalCue.ts", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./refusalCue.ts")>();
+  return {
+    ...original,
+    refuse: vi.fn(original.refuse),
+    refusing: vi.fn(original.refusing),
+    stopRefusal: vi.fn(original.stopRefusal),
+  };
+});
 
 const rule = { holdMs: 500, slopPx: 5 };
 const css = readFileSync(join(import.meta.dirname, "formRow.css"), "utf8").replace(
@@ -27,7 +39,15 @@ const css = readFileSync(join(import.meta.dirname, "formRow.css"), "utf8").repla
 
 afterEach(() => {
   document.body.replaceChildren();
+  vi.useRealTimers();
+  vi.clearAllMocks();
 });
+
+const CUE = { shake: 2, stepMs: 50, steps: 4 };
+
+// A click as a pointer (detail 1) or as Enter, Space or click() (detail 0) delivers it.
+const click = (element: HTMLElement, detail: 0 | 1) =>
+  element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail }));
 
 describe("createFormRows", () => {
   it("writes the layout on the list and clears lengths a later layout leaves out", () => {
@@ -140,6 +160,102 @@ describe("createFormRow", () => {
     row.element.click();
     expect(onUnavailable).toHaveBeenCalledWith("Not on this device");
     expect(row.state.hidden).toBe(true);
+  });
+
+  it.each([
+    ["value", false],
+    ["switch", true],
+  ])(
+    "plays the game's refuse on each key, pointer and hold refusal of a %s row",
+    (_kind, isSwitch) => {
+      let reduced = false;
+      let current = true;
+      const activate = vi.fn();
+      const refuse = vi.fn();
+      const row = createFormRow(document, {
+        getAction: () => (current ? { activate } : null),
+        getState: () => ({ availability: { kind: "refused" }, checked: false, value: "Off" }),
+        label: "Vibration",
+        refusal: { reducedMotion: () => reduced, refuse },
+        rule,
+        switch: isSwitch,
+      });
+      const { element } = row;
+      document.body.append(element);
+      expect(element.getAttribute("aria-disabled")).toBe("true");
+      expect(element.tabIndex).toBe(0);
+      expect(click(element, 0)).toBe(false);
+      expect(refuse.mock.calls).toEqual([[false, element]]);
+      reduced = true;
+      click(element, 1);
+      row.holdAction()!.hold!();
+      row.holdAction()!.activate();
+      expect(refuse.mock.calls).toEqual([
+        [false, element],
+        [true, element],
+        [true, element],
+        [true, element],
+      ]);
+      current = false;
+      click(element, 1);
+      expect(row.holdAction()).toBeNull();
+      expect(refuse).toHaveBeenCalledTimes(4);
+      expect(activate).not.toHaveBeenCalled();
+      row.dispose();
+      expect(element.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(false);
+      expect(refusalCue.refuse).not.toHaveBeenCalled();
+      expect(refusalCue.refusing).not.toHaveBeenCalled();
+      expect(refusalCue.stopRefusal).not.toHaveBeenCalled();
+    },
+  );
+
+  it("gives pointer refusal to the caller's onPointerRefusal only, never the kit cue", () => {
+    const onPointerRefusal = vi.fn();
+    const refuse = vi.fn();
+    const row = createFormRow(document, {
+      getAction: () => ({ activate: vi.fn() }),
+      getState: () => ({ availability: { kind: "pointer-refusal" }, checked: true, value: "On" }),
+      label: "Vibration",
+      onPointerRefusal,
+      refusal: { reducedMotion: () => false, refuse },
+      rule,
+      switch: true,
+    });
+    const { element } = row;
+    document.body.append(element);
+    expect(element.tabIndex).toBe(-1);
+    expect(element.getAttribute("aria-disabled")).toBe("true");
+    click(element, 1);
+    row.holdAction()!.activate();
+    expect(onPointerRefusal).toHaveBeenCalledTimes(2);
+    click(element, 0);
+    expect(onPointerRefusal).toHaveBeenCalledTimes(2);
+    expect(refuse).not.toHaveBeenCalled();
+    expect(refusalCue.refuse).not.toHaveBeenCalled();
+    expect(refusalCue.refusing).not.toHaveBeenCalled();
+    expect(refusalCue.stopRefusal).not.toHaveBeenCalled();
+  });
+
+  it("plays the kit cue by default, leaving a playing cue to finish, as 0.88.0 did", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const row = createFormRow(document, {
+      getAction: () => ({ activate: vi.fn() }),
+      getState: () => ({ availability: { kind: "refused" }, checked: false, value: "Off" }),
+      label: "Vibration",
+      refusal: { cue: CUE, reducedMotion: () => true },
+      rule,
+      switch: true,
+    });
+    const { element } = row;
+    document.body.append(element);
+    click(element, 0);
+    expect(element.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(true);
+    vi.advanceTimersByTime(150);
+    click(element, 1);
+    vi.advanceTimersByTime(50);
+    expect(element.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(false);
+    expect(vi.mocked(refusalCue.refuse).mock.calls).toEqual([[CUE, true, element]]);
+    row.dispose();
   });
 });
 

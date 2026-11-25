@@ -9,6 +9,7 @@ import {
   sliderStepAt,
   sliderStepForKey,
 } from "../../../ui/index.ts";
+import { type ButtonRefusal, refuseButton } from "./button.ts";
 import { focusTarget } from "./focusModality.ts";
 import {
   FORM_ROW_CLASS,
@@ -21,7 +22,7 @@ import {
 } from "./formRow.ts";
 import { writeLayoutProperties } from "./layoutProperties.ts";
 import { rowHooks, type RowPlacement } from "./placedRows.ts";
-import { REFUSAL_ATTRIBUTES, type RefusalCue, refuse } from "./refusalCue.ts";
+import { REFUSAL_ATTRIBUTES, refuse } from "./refusalCue.ts";
 import { readUnit } from "./viewUnits.ts";
 
 // The HTML slider row (slider.css with formRow.css): a form row in createFormRows' list, sharing
@@ -35,7 +36,7 @@ import { readUnit } from "./viewUnits.ts";
 // and End step it, and a press anywhere on the row drags the thumb's centre along the track. A
 // touch drags once it travels slop sideways, a tap sets the step where it lifts, and a vertical
 // travel is left to the browser's scrolling. A refused slider keeps its focus and value and plays
-// the game's refusal cue on a press or a step key.
+// its refusal on a press, a drag or a step key: the kit cue, or the game's refuse in its place.
 // In a placed list (createFormRows place) the lane, track, fill and thumb are whole CSS px from the
 // game's projected edges, the thumb and fill again at every step.
 
@@ -51,9 +52,14 @@ export interface SliderState {
   readonly step: number;
   // Player text: the value word, such as 50% or Muted, shown and read as the value.
   readonly value: string;
-  // A refused slider keeps its value; presses and step keys play the refusal cue.
+  // A refused slider keeps its value; presses, drags and step keys play its refusal.
   readonly refused?: boolean;
 }
+
+// How a refused slider refuses: with cue the kit cue, restarted on each refusal; with refuse the
+// game's refuse(reducedMotion, control) in its place, with reducedMotion() read at that refusal and
+// the slider row, the game owning its replay and stopping.
+export type SliderRefusal = ButtonRefusal<HTMLElement>;
 
 export interface SliderOptions {
   // Player text: the row's name, and its note, read as its description.
@@ -74,8 +80,8 @@ export interface SliderOptions {
   // A caller guard, such as readiness or a modal scope: false ignores presses and keys and ends a
   // drag.
   readonly active?: () => boolean;
-  // Plays the cue on a refused slider's press or step key.
-  readonly refusal?: { readonly cue: RefusalCue; readonly reducedMotion: () => boolean };
+  // Plays on a refused slider's press, drag or step key.
+  readonly refusal?: SliderRefusal;
   readonly className?: string;
 }
 
@@ -294,8 +300,15 @@ export function createSlider(document: Document, options: SliderOptions): Slider
     element.closest("[inert], [hidden]") === null &&
     options.active?.() !== false;
   const playRefusal = () => {
-    if (options.refusal !== undefined) {
-      refuse(options.refusal.cue, options.refusal.reducedMotion(), element);
+    const { refusal } = options;
+    if (refusal === undefined) {
+      return;
+    }
+    // The kit cue restarts on each refusal here, unlike refuseButton's.
+    if (refusal.refuse !== undefined) {
+      refuseButton(refusal, element);
+    } else {
+      refuse(refusal.cue, refusal.reducedMotion(), element);
     }
   };
   // Sets the step unless refused, and returns whether the slider took it.

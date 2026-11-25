@@ -17,23 +17,27 @@ import {
 import { createNativeButton } from "./nativeButton.ts";
 import { type RefusalCue, refuse, refusing } from "./refusalCue.ts";
 
-// How a refused button plays its refusal: the kit cue, which a further refusal leaves playing, or
+// How a refused control plays its refusal: the kit cue, which a further refusal leaves playing, or
 // the game's own refuse, in the kit refuse's argument order, which owns its replay and stopping.
-// reducedMotion() is read at each refusal.
-export type ButtonRefusal =
+// reducedMotion() is read at each refusal. Control is the refused control's element: a button's, or
+// a slider row's.
+export type ButtonRefusal<Control extends HTMLElement = HTMLButtonElement> =
   | {
       readonly cue: RefusalCue;
       readonly reducedMotion: () => boolean;
       readonly refuse?: never;
     }
   | {
-      readonly refuse: (reducedMotion: boolean, control: HTMLButtonElement) => void;
+      readonly refuse: (reducedMotion: boolean, control: Control) => void;
       readonly reducedMotion: () => boolean;
       readonly cue?: never;
     };
 
 // Plays refusal on control: the game's refuse, or the kit cue unless it already plays there.
-export function refuseButton(refusal: ButtonRefusal, control: HTMLButtonElement): void {
+export function refuseButton<Control extends HTMLElement>(
+  refusal: ButtonRefusal<Control>,
+  control: Control,
+): void {
   if (refusal.refuse !== undefined) {
     refusal.refuse(refusal.reducedMotion(), control);
   } else if (!refusing(control)) {

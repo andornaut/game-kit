@@ -13,6 +13,7 @@ import {
   FORM_ROW_TEXT_CLASS,
   FORM_ROW_VALUE_CLASS,
 } from "./formRow.ts";
+import * as refusalCue from "./refusalCue.ts";
 import { REFUSAL_ATTRIBUTES } from "./refusalCue.ts";
 import {
   createSlider,
@@ -21,6 +22,17 @@ import {
   type SliderOptions,
   type SliderState,
 } from "./slider.ts";
+
+// The kit cue's functions, passed through as spies, so a test can prove a slider never calls them.
+vi.mock("./refusalCue.ts", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./refusalCue.ts")>();
+  return {
+    ...original,
+    refuse: vi.fn(original.refuse),
+    refusing: vi.fn(original.refusing),
+    stopRefusal: vi.fn(original.stopRefusal),
+  };
+});
 
 const ART: SliderArt = {
   thumb: { height: 16, width: 10 },
@@ -32,6 +44,7 @@ const formCss = strip(readFileSync(join(import.meta.dirname, "formRow.css"), "ut
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.clearAllMocks();
   document.body.replaceChildren();
 });
 
@@ -242,6 +255,80 @@ describe("createSlider", () => {
     expect(commit).not.toHaveBeenCalled();
     set({ refused: false, value: "50%" });
     expect(element.hasAttribute("aria-disabled")).toBe(false);
+  });
+
+  it("restarts the kit cue on each refusal by default, as 0.88.0 did", () => {
+    vi.useFakeTimers();
+    const cue = { shake: 2, stepMs: 50, steps: 4 };
+    const { slider } = fixture({ refusal: { cue, reducedMotion: () => true } }, { refused: true });
+    const { element } = slider;
+    key(element, "ArrowLeft");
+    vi.advanceTimersByTime(150);
+    key(element, "End");
+    vi.advanceTimersByTime(100);
+    expect(element.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(true);
+    pointer("pointerdown", element, { x: at(3) });
+    pointer("pointerup", document, { x: at(3) });
+    vi.advanceTimersByTime(200);
+    expect(element.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(false);
+    expect(vi.mocked(refusalCue.refuse).mock.calls).toEqual([
+      [cue, true, element],
+      [cue, true, element],
+      [cue, true, element],
+    ]);
+    expect(refusalCue.refusing).not.toHaveBeenCalled();
+  });
+
+  it("plays the game's refuse in place of the kit cue on every press, drag and step key", () => {
+    let reduced = false;
+    let open = true;
+    const refuse = vi.fn();
+    const { change, commit, set, slider } = fixture(
+      { active: () => open, refusal: { reducedMotion: () => reduced, refuse } },
+      { refused: true },
+    );
+    const { element } = slider;
+    const touch = { pointerType: "touch" };
+    for (const name of ["ArrowLeft", "ArrowRight", "Home", "End"]) {
+      expect(key(element, name).defaultPrevented).toBe(true);
+    }
+    expect(refuse).toHaveBeenCalledTimes(4);
+    reduced = true;
+    // A mouse press, a touch drag and a touch tap: each refuses once.
+    pointer("pointerdown", element, { x: at(3) });
+    pointer("pointermove", document, { x: at(8) });
+    pointer("pointerup", document, { x: at(8) });
+    pointer("pointerdown", element, { ...touch, x: at(3) });
+    pointer("pointermove", document, { ...touch, x: at(9) });
+    pointer("pointerup", document, { ...touch, x: at(9) });
+    pointer("pointerdown", element, { ...touch, x: at(3) });
+    pointer("pointerup", document, { ...touch, x: at(3) });
+    expect(refuse).toHaveBeenCalledTimes(7);
+    // A drag refused part way: once, then the press is spent.
+    set({ refused: false });
+    pointer("pointerdown", element, { x: at(3) });
+    set({ refused: true });
+    pointer("pointermove", document, { x: at(6) });
+    pointer("pointermove", document, { x: at(9) });
+    pointer("pointerup", document, { x: at(9) });
+    expect(change.mock.calls).toEqual([[3]]);
+    expect(commit).not.toHaveBeenCalled();
+    expect(refuse.mock.calls).toEqual([
+      ...Array.from({ length: 4 }, () => [false, element]),
+      ...Array.from({ length: 4 }, () => [true, element]),
+    ]);
+    open = false;
+    key(element, "ArrowRight");
+    pointer("pointerdown", element, { x: at(3) });
+    open = true;
+    slider.dispose();
+    key(element, "ArrowRight");
+    expect(refuse).toHaveBeenCalledTimes(8);
+    expect(element.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(false);
+    expect(element.hasAttribute(REFUSAL_ATTRIBUTES.shake)).toBe(false);
+    expect(refusalCue.refuse).not.toHaveBeenCalled();
+    expect(refusalCue.refusing).not.toHaveBeenCalled();
+    expect(refusalCue.stopRefusal).not.toHaveBeenCalled();
   });
 
   it("ignores input while the caller's guard is closed and ends a drag when it closes", () => {
