@@ -227,16 +227,8 @@ export async function registerRouter(
   }
 }
 
-// The browser's page, store and installer for policy, or undefined where the browser has no
-// service workers or Cache Storage; the game then plays from the network.
-/** @deprecated Use prepareBrowserLaunch for production startup. */
-export function browserLaunchContext(policy: BuildPolicy): LaunchContext | undefined {
-  if (!("serviceWorker" in navigator) || typeof caches === "undefined") {
-    return undefined;
-  }
-  return contextForBrowser(navigator.serviceWorker, caches, policy);
-}
-
+// The browser's page, store and installer for policy, once prepareBrowserLaunch has found the
+// service worker container and Cache Storage.
 function contextForBrowser(
   container: ServiceWorkerContainer,
   caches: CacheStorage,

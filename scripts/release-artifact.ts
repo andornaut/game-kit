@@ -170,9 +170,10 @@ const groupReader = createGroupArchiveMemberReader({
 }, groupPointer);
 assert.equal(await (await groupReader.read('/data/level.json')).text(), memberBody);
 assert.equal(BUILD_POINTER_URL, '/.game-kit/build.json');
-import { browserLaunchContext, createLaunch } from '@andornaut/game-kit/runtime/web/pwa/dom/launch';
-assert.equal(browserLaunchContext(bodyPolicy), undefined);
-assert.equal(typeof createLaunch, 'function');
+import * as launchExports from '@andornaut/game-kit/runtime/web/pwa/dom/launch';
+assert.equal(typeof launchExports.createLaunch, 'function');
+assert.equal(typeof launchExports.prepareBrowserLaunch, 'function');
+assert.equal('browserLaunchContext' in launchExports, false);
 import { validateLayoutTree } from '@andornaut/game-kit/runtime/ui/layoutTree';
 import { mountLoadingFailure } from '@andornaut/game-kit/runtime/web/progress/dom/loadingFailure';
 validateLayoutTree({}, {kind:'columns',key:'columns',gap:0,padding:0,sizing:{mode:'equal'},children:[]});
@@ -319,14 +320,17 @@ import {
   type LoadingFailurePresentation, type LoadingFailurePresentationView,
 } from '@andornaut/game-kit/runtime/web/progress/dom/loadingFailure';
 import {
-  browserLaunchContext, createLaunch, type Launch, type LaunchOptions,
+  createLaunch, type Launch, type LaunchOptions, prepareBrowserLaunch,
 } from '@andornaut/game-kit/runtime/web/pwa/dom/launch';
 export function startLaunch(
+  parent: HTMLElement,
   onProgress: (progress: LaunchProgress) => void, onUpdateState: (state: UpdateState) => void,
   onUpdateReady: (offer: UpdateOffer) => void, onNetworkPlay: (notice: NetworkPlayNotice) => void,
 ): Launch | undefined {
-  const context = browserLaunchContext({cacheNamePrefix:'proof-',hashedAssetPrefix:'/assets/'});
-  return context === undefined ? undefined : createLaunch(context, {
+  const prepared = prepareBrowserLaunch(
+    {onUnsupported(){}, parent}, {cacheNamePrefix:'proof-',hashedAssetPrefix:'/assets/'},
+  );
+  return prepared.kind === 'unsupported' ? undefined : createLaunch(prepared.context, {
     onFailure(failure) { failure.retry(); }, onNetworkPlay, onProgress, onUpdateReady, onUpdateState,
     serviceWorkerUrl:'/sw.js', soundFormat:'ogg',
   });
