@@ -12,6 +12,8 @@ import {
 import {
   BUILD_POINTER_URL,
   type BuildArchiveReference,
+  type BuildGroupReference,
+  buildGroupTransferBytes,
   type BuildManifest,
   type BuildPointer,
   type BuildPolicy,
@@ -31,7 +33,7 @@ import {
   parseBuildManifest,
   parseBuildPointer,
 } from "../buildRecords.ts";
-import { downloadBuildArchive } from "./buildArchiveDownload.ts";
+import { downloadBuildArchive, downloadBuildGroup } from "./buildArchiveDownload.ts";
 import { BUILD_GROUP_ROUTER_PROBE, supportsBuildArchive } from "./buildArchiveRouter.ts";
 import { type BuildArchiveStore, createBuildArchiveStore } from "./buildArchiveStore.ts";
 import { type BuildGroupStore, createBuildGroupStore } from "./buildGroupStore.ts";
@@ -879,24 +881,29 @@ export function createLaunch(
     });
   };
 
+  const archiveDownload = (
+    onBytes: (received: number, total: number) => void,
+    foregroundFetch?: FetchLike,
+  ) => ({
+    ...(foregroundFetch === undefined ? { beforePart: waitForArchiveTransfer } : {}),
+    clearTimeout: installContext.clearTimeout,
+    fetch: foregroundFetch ?? installContext.fetch,
+    inactivityMs: FOREGROUND_INSTALL.inactivityMs,
+    now: installContext.now,
+    onBytes,
+    setTimeout: installContext.setTimeout,
+    signal: aborts.signal,
+  });
   const downloadArchive = (
     archive: BuildArchiveReference,
     onBytes: (received: number, total: number) => void,
+  ) => downloadBuildArchive(archiveDownload(onBytes), archive);
+  // Downloads a group's transport and returns its verified decoded archive.
+  const downloadGroup = (
+    group: BuildGroupReference,
+    onBytes: (received: number, total: number) => void,
     foregroundFetch?: FetchLike,
-  ) =>
-    downloadBuildArchive(
-      {
-        ...(foregroundFetch === undefined ? { beforePart: waitForArchiveTransfer } : {}),
-        clearTimeout: installContext.clearTimeout,
-        fetch: foregroundFetch ?? installContext.fetch,
-        inactivityMs: FOREGROUND_INSTALL.inactivityMs,
-        now: installContext.now,
-        onBytes,
-        setTimeout: installContext.setTimeout,
-        signal: aborts.signal,
-      },
-      archive,
-    );
+  ) => downloadBuildGroup(archiveDownload(onBytes, foregroundFetch), group);
 
   const stageArchive = async (
     pointer: BuildPointer,
@@ -951,7 +958,7 @@ export function createLaunch(
       );
     const alreadySealed = await groupStore.complete(version, pointer);
     if (!alreadySealed) {
-      const missing: BuildArchiveReference[] = [];
+      const missing: BuildGroupReference[] = [];
       for (const group of groups) {
         aborts.signal.throwIfAborted();
         // Limit storage work and downloads to one bounded group at a time.
@@ -960,7 +967,8 @@ export function createLaunch(
           missing.push(group);
         }
       }
-      const total = missing.reduce((bytes, group) => bytes + group.byteSize, 0);
+      // Progress counts transport bytes, which a compressed group sends fewer of.
+      const total = missing.reduce((bytes, group) => bytes + buildGroupTransferBytes(group), 0);
       let received = 0;
       if (total > 0 || foreground) {
         onBytes(0, total);
@@ -979,7 +987,7 @@ export function createLaunch(
           : undefined;
         try {
           // eslint-disable-next-line no-await-in-loop
-          const body = await downloadArchive(
+          const body = await downloadGroup(
             group,
             (bytes) => onBytes(received + bytes, total),
             foregroundFetch,
@@ -997,7 +1005,7 @@ export function createLaunch(
           }
           throw error;
         }
-        received += group.byteSize;
+        received += buildGroupTransferBytes(group);
       }
     }
     if ((!alreadySealed || foreground) && !stillDeployed(await readPointer())) {

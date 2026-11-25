@@ -17,6 +17,7 @@ import {
   BUILD_ARCHIVE_PART_BYTES,
   BUILD_POINTER_URL,
   buildArchivePartUrl,
+  buildGroupUrl,
   type BuildManifest,
   buildManifestUrl,
   type BuildPointer,
@@ -192,13 +193,10 @@ async function precache({
   );
   const json = (fileName: string): unknown =>
     JSON.parse(Buffer.from(output.get(fileName) ?? "null").toString());
-  const pointer = parseBuildPointer(json(BUILD_POINTER_URL.slice(1)));
-  validateBuildPointer({
-    buildId: pointer.buildId,
-    manifest: pointer.manifest,
-    schema: pointer.schema,
-    version: pointer.version,
-  });
+  // Every emitted pointer passes the strict validator and the runtime parser unchanged.
+  const emittedPointer = json(BUILD_POINTER_URL.slice(1));
+  expect(validateBuildPointer(emittedPointer)).toEqual(emittedPointer);
+  const pointer = parseBuildPointer(emittedPointer);
   const manifest = validateBuildManifest(json(pointer.manifest.slice(1)));
   return { manifest, output, pointer };
 }
@@ -414,13 +412,24 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
       recipeName,
     ]);
     const groupPartNames = new Set(
-      next.pointer.groups!.map((group) => buildArchivePartUrl(group, 0).slice(1)),
+      next.pointer.groups!.flatMap((group) => [
+        buildGroupUrl(group).slice(1),
+        buildArchivePartUrl(group, 0).slice(1),
+      ]),
     );
     expect([...next.output.keys()].filter((name) => !withRecipes.output.has(name)).sort()).toEqual(
       [...groupPartNames].sort(),
     );
-    expect(new Map([...withRecipes.output].filter(([name]) => name !== recipeName))).toEqual(
-      new Map([...next.output].filter(([name]) => !groupPartNames.has(name))),
+    // Only the pointer's group transports differ, checked below.
+    const pointerName = BUILD_POINTER_URL.slice(1);
+    expect(
+      new Map(
+        [...withRecipes.output].filter(([name]) => name !== recipeName && name !== pointerName),
+      ),
+    ).toEqual(
+      new Map(
+        [...next.output].filter(([name]) => !groupPartNames.has(name) && name !== pointerName),
+      ),
     );
 
     expect(initial.pointer.buildId).not.toBe(next.pointer.buildId);
@@ -438,7 +447,11 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     expect(bytesOf(next, art!)).toEqual(bytesOf(initial, art!));
     const identity = { buildId: GROUP_ARCHIVE_IDENTITY, version: GROUP_ARCHIVE_IDENTITY };
     const files = fileMap(next.manifest);
-    const recipes = next.pointer.groups!.map((group) => {
+    // Recipe groups keep the decoded archive as their transport.
+    expect(withRecipes.pointer.groups).toEqual(
+      next.pointer.groups!.map(({ byteSize, schema, sha256 }) => ({ byteSize, schema, sha256 })),
+    );
+    const recipes = withRecipes.pointer.groups!.map((group) => {
       const bytes = bytesOf(next, group);
       expect(group).toEqual({ byteSize: bytes.byteLength, schema: 1, sha256: sha256(bytes) });
       const index = parseBuildArchiveIndex(identity, bytes.byteLength, bytes);
@@ -510,6 +523,39 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     });
     expect(next.pointer.groups![2]).toEqual(groups[2]);
     expect(next.pointer.groups![1]).not.toEqual(groups[1]);
+  });
+
+  it("emits each group as deterministic gzip named by its decoded archive", async () => {
+    const options: Build = {
+      emitted: { "art/level.json": JSON.stringify({ tiles: "grass ".repeat(2000) }) },
+      hashedFiles: () => ({ sounds: {}, urls: ["/art/level.json"] }),
+      root: site("icon"),
+      updateGroup: (url) => (url.startsWith("/art/") ? "art" : "core"),
+    };
+    const first = await precache(options);
+    for (const group of first.pointer.groups!) {
+      const encoded = first.output.get(buildGroupUrl(group).slice(1))!;
+      const decoded = first.output.get(buildArchivePartUrl(group, 0).slice(1))!;
+      expect(group).toEqual({
+        byteSize: decoded.byteLength,
+        encodedByteSize: encoded.byteLength,
+        encoding: "gzip",
+        schema: 1,
+        sha256: sha256(decoded),
+      });
+      expect(gunzipSync(encoded).equals(Buffer.from(decoded))).toBe(true);
+    }
+    // An unchanged group keeps its digest, transport size and bytes in another build.
+    const again = await precache({ ...options, root: site("other icon") });
+    const art = first.pointer.groups![0]!;
+    expect(again.pointer.groups![0]).toEqual(art);
+    expect(again.output.get(buildGroupUrl(art).slice(1))).toEqual(
+      first.output.get(buildGroupUrl(art).slice(1)),
+    );
+    expect(art.encodedByteSize).toBeLessThan(art.byteSize / 10);
+    // The version follows the groups' decoded identities, not their transport.
+    const recipes = await precache({ ...options, emitUpdateGroupRecipes: true });
+    expect(recipes.manifest.version).toBe(first.manifest.version);
   });
 
   it("uses the same full groups for first install and omits selected loose outputs", async () => {

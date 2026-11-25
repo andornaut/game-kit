@@ -12,6 +12,8 @@ import {
   BUILD_POINTER_URL,
   buildArchivePartUrl,
   buildCacheName,
+  buildGroupUrl,
+  type BuildPointer,
   recordsCacheName,
   STAGED_RECORD_PATH,
 } from "../../src/web/pwa/buildContract.ts";
@@ -19,7 +21,7 @@ import { installedPointer } from "../../src/web/pwa/buildRecords.ts";
 import { buildDeployment, type Deployment } from "./build.ts";
 import type { E2eState } from "./fixture/play/main.ts";
 import { POLICY, SAVE_MS } from "./fixture/policy.ts";
-import { type FixtureServer, startServer } from "./server.ts";
+import { type FixtureServer, type RequestRecord, startServer } from "./server.ts";
 
 const BODY_PATH = "/.game-kit/records/archive-body";
 const ROUTER_PATH = "/sw.js";
@@ -82,6 +84,31 @@ const SOUND_FORMAT = "ogg";
 const devicePointer = (deployment: Deployment) =>
   installedPointer(SOUND_FORMAT, deployment.pointer);
 
+// The group marker records each group's decoded identity without its transport.
+const storedPointer = (pointer: BuildPointer) =>
+  pointer.groups === undefined
+    ? pointer
+    : {
+        ...pointer,
+        groups: pointer.groups.map(({ byteSize, schema, sha256, soundFormat }) => ({
+          byteSize,
+          schema,
+          sha256,
+          ...(soundFormat === undefined ? {} : { soundFormat }),
+        })),
+      };
+
+const isTransport = (path: string) =>
+  path.startsWith("/.game-kit/archive-") || path.startsWith("/.game-kit/group-");
+
+// Wire bytes against decoded archive bytes for the groups a device downloaded.
+function compressedTransfer(requests: readonly RequestRecord[], groups: BuildPointer["groups"]) {
+  const wire = requests.reduce((bytes, request) => bytes + request.bytes, 0);
+  const raw = (groups ?? []).reduce((bytes, group) => bytes + group.byteSize, 0);
+  assert(wire > 0 && wire < raw * 0.7, `Group wire bytes ${wire} are not well below ${raw}`);
+  return `${wire} wire of ${raw} archive bytes`;
+}
+
 async function verifyStoredTransport(page: Page, deployment: Deployment): Promise<void> {
   const pointer = devicePointer(deployment);
   const { archive, groups, version } = pointer;
@@ -137,7 +164,7 @@ async function verifyStoredTransport(page: Page, deployment: Deployment): Promis
     },
   );
   assert.deepEqual(stored.keys, bodies.map(({ path }) => path).sort());
-  assert.deepEqual(stored.marker, pointer);
+  assert.deepEqual(stored.marker, storedPointer(pointer));
   assert.deepEqual(stored.bodies, bodies);
 }
 
@@ -162,9 +189,7 @@ async function stage(
       ? Array.from({ length: Math.ceil(archive!.byteSize / BUILD_ARCHIVE_PART_BYTES) }, (_, i) =>
           buildArchivePartUrl(archive!, i),
         )
-      : groups
-          .filter(({ sha256 }) => !activeGroups.has(sha256))
-          .map((group) => buildArchivePartUrl(group, 0));
+      : groups.filter(({ sha256 }) => !activeGroups.has(sha256)).map(buildGroupUrl);
   if (groups !== undefined && active.pointer.groups !== undefined) {
     assert(reused.length > 0 && parts.length > 0, "Fixture must reuse and change groups");
   }
@@ -229,7 +254,7 @@ async function stage(
 
   const network = server.log.slice(logStart);
   assert(network.some(({ path, status }) => path === BUILD_POINTER_URL && status === 200));
-  const partRequests = network.filter(({ path }) => path.startsWith("/.game-kit/archive-"));
+  const partRequests = network.filter(({ path }) => isTransport(path));
   assert.deepEqual(
     partRequests.map(({ path }) => path),
     parts,
@@ -248,11 +273,22 @@ async function stage(
   const skipped = (candidate.pointer.groups ?? []).filter(
     ({ sha256 }) => !groups?.some((group) => group.sha256 === sha256),
   );
+  // Neither transport of a skipped or reused group is requested.
+  const transports = (group: NonNullable<BuildPointer["groups"]>[number]) => [
+    buildGroupUrl(group),
+    buildArchivePartUrl(group, 0),
+  ];
   for (const group of skipped) {
-    assert(!paths.includes(buildArchivePartUrl(group, 0)), "Other sound format group requested");
+    assert(!transports(group).some((url) => paths.includes(url)), "Other format group requested");
   }
   for (const group of reused) {
-    assert(!paths.includes(buildArchivePartUrl(group, 0)), "Unchanged group requested again");
+    assert(!transports(group).some((url) => paths.includes(url)), "Unchanged group requested");
+  }
+  if (groups !== undefined) {
+    assert(
+      partRequests.every(({ path }) => path.startsWith("/.game-kit/group-")),
+      "Grouped staging requested a decoded archive",
+    );
   }
   assert.deepEqual(
     paths.filter((path) => filePaths.has(path)),
@@ -269,9 +305,11 @@ async function stage(
     "Per-file copy while staging",
   );
   assert.equal(await pinnedVariant(page), active.variant);
+  const downloaded = groups?.filter(({ sha256 }) => !activeGroups.has(sha256));
+  const wire = downloaded === undefined ? "" : `, ${compressedTransfer(partRequests, downloaded)}`;
   console.log(
     `PASS ${active.variant} → ${candidate.variant} staged once via ${parts.length} archive part(s), ` +
-      `${reused.length} group(s) reused`,
+      `${reused.length} group(s) reused${wire}`,
   );
   return offered;
 }
@@ -369,6 +407,8 @@ export async function runWholeBuildAcceptance(mode: "grouped" | "whole-build"): 
   const transport =
     mode === "grouped"
       ? {
+          // Compressible assets show the group transport's compression.
+          compressible: true as const,
           groupedFirstInstall: { archiveOnly },
           updateGroup: (url: string) => (url.startsWith("/assets/s/") ? "audio" : "game"),
         }
@@ -438,7 +478,7 @@ export async function runWholeBuildAcceptance(mode: "grouped" | "whole-build"): 
         await verifyStoredTransport(page, baseline);
         const partRequests = server.log
           .slice(firstInstallStart)
-          .filter(({ path }) => path.startsWith("/.game-kit/archive-"));
+          .filter(({ path }) => isTransport(path));
         const deviceGroups = devicePointer(baseline).groups!;
         assert(
           deviceGroups.length < baseline.pointer.groups!.length,
@@ -446,9 +486,12 @@ export async function runWholeBuildAcceptance(mode: "grouped" | "whole-build"): 
         );
         assert.deepEqual(
           partRequests.map(({ path }) => path),
-          deviceGroups.map((group) => buildArchivePartUrl(group, 0)),
+          deviceGroups.map(buildGroupUrl),
         );
         assert(partRequests.every(({ status }) => status === 200));
+        console.log(
+          `PASS first install sends compressed groups: ${compressedTransfer(partRequests, deviceGroups)}`,
+        );
         assert(!server.log.some(({ path }) => archiveOnly(path)));
         assert(!legacyKeys.some(archiveOnly));
       } else {

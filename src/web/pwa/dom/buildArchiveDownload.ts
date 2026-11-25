@@ -2,15 +2,25 @@ import {
   BUILD_ARCHIVE_PART_BYTES,
   buildArchivePartUrl,
   type BuildArchiveReference,
+  type BuildGroupReference,
+  buildGroupUrl,
 } from "../buildContract.ts";
 import type { BuildInstallContext } from "./buildInstaller.ts";
+import { checkArchiveDigest, inflateGzip, readExactArchiveBytes } from "./verifiedArchiveBytes.ts";
 
 interface ArchiveDownloadContext extends Pick<BuildInstallContext, "fetch" | "now" | "setTimeout"> {
   readonly beforePart?: (signal: AbortSignal) => Promise<void>;
   readonly clearTimeout: (handle: unknown) => void;
   readonly inactivityMs: number;
   readonly signal: AbortSignal;
+  // Transport bytes received so far and the transport's total.
   readonly onBytes?: (received: number, total: number) => void;
+}
+
+// The bytes one transport sends, as parts of at most BUILD_ARCHIVE_PART_BYTES.
+interface Transfer {
+  readonly byteSize: number;
+  readonly url: (index: number) => string;
 }
 
 /** Reads one complete archive. Transport parts are independent of file boundaries. */
@@ -18,6 +28,42 @@ export async function downloadBuildArchive(
   context: ArchiveDownloadContext,
   archive: BuildArchiveReference,
 ): Promise<Blob> {
+  const body = await transfer(context, {
+    byteSize: archive.byteSize,
+    url: (index) => buildArchivePartUrl(archive, index),
+  });
+  const bytes = new Uint8Array(await body.arrayBuffer());
+  context.signal.throwIfAborted();
+  await checkArchiveDigest(bytes, archive.sha256, "Build archive");
+  return body;
+}
+
+/** Reads one group's transport and returns its verified decoded archive. */
+export async function downloadBuildGroup(
+  context: ArchiveDownloadContext,
+  group: BuildGroupReference,
+): Promise<Blob> {
+  if (group.encoding === undefined) {
+    return downloadBuildArchive(context, group);
+  }
+  if (typeof DecompressionStream !== "function") {
+    throw new TypeError("This browser cannot decode compressed build groups");
+  }
+  const url = buildGroupUrl(group);
+  const encoded = await transfer(context, { byteSize: group.encodedByteSize!, url: () => url });
+  // Decoding stops as soon as the output exceeds the archive size, so it cannot grow unbounded.
+  const bytes = new Uint8Array(group.byteSize);
+  await readExactArchiveBytes(
+    inflateGzip(new Uint8Array(await encoded.arrayBuffer())),
+    bytes,
+    `Decoded build group ${url}`,
+  );
+  context.signal.throwIfAborted();
+  await checkArchiveDigest(bytes, group.sha256, `Build group ${url}`);
+  return new Blob([bytes]);
+}
+
+async function transfer(context: ArchiveDownloadContext, target: Transfer): Promise<Blob> {
   const { beforePart, clearTimeout, fetch, inactivityMs, now, onBytes, setTimeout, signal } =
     context;
   signal.throwIfAborted();
@@ -42,9 +88,8 @@ export async function downloadBuildArchive(
       }
     }, ms);
   };
-  let body: Blob;
   try {
-    body = await readArchive(
+    return await readParts(
       {
         beginPart: async () => {
           clearTimeout(timer);
@@ -63,43 +108,35 @@ export async function downloadBuildArchive(
           last = now();
         },
       },
-      archive,
+      target,
     );
   } finally {
     clearTimeout(timer);
     signal.removeEventListener("abort", abort);
   }
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", await body.arrayBuffer()));
-  signal.throwIfAborted();
-  if (
-    Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("") !== archive.sha256
-  ) {
-    throw new TypeError("Build archive checksum mismatch");
-  }
-  return body;
 }
 
-async function readArchive(
+async function readParts(
   context: Pick<ArchiveDownloadContext, "fetch" | "signal"> & {
     readonly beginPart: () => Promise<void>;
     readonly onBytes: ArchiveDownloadContext["onBytes"];
     readonly stopped: Promise<never>;
     readonly touch: () => void;
   },
-  archive: BuildArchiveReference,
+  target: Transfer,
 ): Promise<Blob> {
   const { beginPart, fetch, onBytes, signal, stopped, touch } = context;
   const chunks: BlobPart[] = [];
   let received = 0;
-  for (let index = 0; received < archive.byteSize; index += 1) {
+  for (let index = 0; received < target.byteSize; index += 1) {
     // A background download waits for visibility between parts.
     // eslint-disable-next-line no-await-in-loop
     await beginPart();
-    const target = Math.min(received + BUILD_ARCHIVE_PART_BYTES, archive.byteSize);
+    const end = Math.min(received + BUILD_ARCHIVE_PART_BYTES, target.byteSize);
     // Parts must be concatenated in their published order.
     // eslint-disable-next-line no-await-in-loop
     const response = await Promise.race([
-      fetch(buildArchivePartUrl(archive, index), { cache: "no-store", redirect: "error", signal }),
+      fetch(target.url(index), { cache: "no-store", redirect: "error", signal }),
       stopped,
     ]);
     touch();
@@ -117,11 +154,11 @@ async function readArchive(
         }
         touch();
         received += value.byteLength;
-        if (received > target) {
+        if (received > end) {
           throw new RangeError("Build archive part exceeds its expected size");
         }
         chunks.push(value);
-        onBytes?.(received, archive.byteSize);
+        onBytes?.(received, target.byteSize);
       }
     } catch (error) {
       void reader.cancel(error).catch(() => undefined);
@@ -129,7 +166,7 @@ async function readArchive(
     } finally {
       reader.releaseLock();
     }
-    if (received !== target) {
+    if (received !== end) {
       throw new RangeError("Incomplete build archive part");
     }
   }

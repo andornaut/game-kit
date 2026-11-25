@@ -4,10 +4,14 @@
 // a wrong value.
 import { UNKNOWN_COMMIT } from "../build/buildVersion.ts";
 import {
+  BUILD_ARCHIVE_PART_BYTES,
+  type BuildArchiveReference,
   type BuildFile,
+  type BuildGroupReference,
   type BuildManifest,
   buildManifestUrl,
   type BuildPointer,
+  MAX_UPDATE_UNITS,
 } from "./buildContract.ts";
 import { isBuildId } from "./buildIdentity.ts";
 import { validateBuildPacks } from "./buildRecords.ts";
@@ -22,6 +26,9 @@ const SHA256 = /^[0-9a-f]{64}$/;
 const RESERVED_PREFIX = "/.game-kit/";
 
 const POINTER_KEYS = ["buildId", "manifest", "schema", "version"];
+const OPTIONAL_POINTER_KEYS = ["archive", "groupedFirstInstall", "groups"];
+const ARCHIVE_KEYS = ["byteSize", "schema", "sha256"];
+const OPTIONAL_GROUP_KEYS = ["encodedByteSize", "encoding", "soundFormat"];
 const MANIFEST_KEYS = ["boot", "buildId", "files", "schema", "sounds", "version"];
 const OPTIONAL_MANIFEST_KEYS = ["packs", "verifiedJsonBodies"];
 const FILE_KEYS = ["byteSize", "sha256", "url"];
@@ -120,19 +127,106 @@ function file(value: unknown): BuildFile {
   return Object.freeze({ byteSize, sha256, url });
 }
 
+function byteSize(value: unknown, max: number, what: string): number {
+  if (typeof value !== "number") {
+    throw new TypeError(`${what} must be a number`);
+  }
+  if (!Number.isSafeInteger(value) || value < 1 || value > max) {
+    throw new RangeError(`${what} must be a positive safe integer up to ${max}`);
+  }
+  return value;
+}
+
+function archiveReference(
+  input: Record<string, unknown>,
+  max: number,
+  what: string,
+): BuildArchiveReference {
+  const sha256 = string(input.sha256, `${what} SHA-256`);
+  if (!SHA256.test(sha256)) {
+    throw new RangeError(`${what} SHA-256 must be 64 lowercase hex characters`);
+  }
+  return {
+    byteSize: byteSize(input.byteSize, max, `${what} byte size`),
+    schema: schema(input, what),
+    sha256,
+  };
+}
+
+function group(value: unknown): BuildGroupReference {
+  const input = record(value, "Build group");
+  exactKeys(input, ARCHIVE_KEYS, OPTIONAL_GROUP_KEYS, "Build group");
+  const reference = archiveReference(input, BUILD_ARCHIVE_PART_BYTES, "Build group");
+  const { encodedByteSize, encoding, soundFormat } = input;
+  if (soundFormat !== undefined && string(soundFormat, "Build group sound format") === "") {
+    throw new RangeError("Build group sound format must not be empty");
+  }
+  if (encoding === undefined) {
+    if (encodedByteSize !== undefined) {
+      throw new TypeError("Build group encoded byte size requires an encoding");
+    }
+  } else if (encoding !== "gzip") {
+    throw new RangeError("Build group encoding must be gzip");
+  }
+  return Object.freeze({
+    ...reference,
+    ...(encoding === undefined
+      ? {}
+      : {
+          encodedByteSize: byteSize(
+            encodedByteSize,
+            BUILD_ARCHIVE_PART_BYTES,
+            "Build group encoded byte size",
+          ),
+          encoding,
+        }),
+    ...(soundFormat === undefined ? {} : { soundFormat: soundFormat as string }),
+  });
+}
+
+// Accepts every pointer the kit emits: plain, whole-build archive, and groups with their sound
+// formats, transport encodings and grouped first install.
 export function validateBuildPointer(value: unknown): BuildPointer {
   const input = record(value, "Build pointer");
-  exactKeys(input, POINTER_KEYS, [], "Build pointer");
-  const pointer = Object.freeze({
+  exactKeys(input, POINTER_KEYS, OPTIONAL_POINTER_KEYS, "Build pointer");
+  const pointer = {
     buildId: buildId(input.buildId),
     manifest: string(input.manifest, "Build pointer manifest"),
     schema: schema(input, "Build pointer"),
     version: version(input.version),
-  });
+  };
   if (pointer.manifest !== buildManifestUrl(pointer.version)) {
     throw new RangeError("Build pointer manifest must be the manifest URL of its version");
   }
-  return pointer;
+  const { archive, groupedFirstInstall, groups } = input;
+  if (archive !== undefined && groups !== undefined) {
+    throw new TypeError("Build pointer cannot have both an archive and groups");
+  }
+  if (groupedFirstInstall !== undefined && (groupedFirstInstall !== true || groups === undefined)) {
+    throw new TypeError("Grouped first install must be true and requires build groups");
+  }
+  let references: readonly BuildGroupReference[] | undefined;
+  if (groups !== undefined) {
+    references = array(groups, "Build groups").map(group);
+    if (references.length < 1 || references.length > MAX_UPDATE_UNITS) {
+      throw new RangeError(`Build pointer must have 1 to ${MAX_UPDATE_UNITS} groups`);
+    }
+    if (new Set(references.map(({ sha256 }) => sha256)).size !== references.length) {
+      throw new RangeError("Build group SHA-256 digests must be unique");
+    }
+  }
+  let reference: BuildArchiveReference | undefined;
+  if (archive !== undefined) {
+    const entry = record(archive, "Build archive");
+    exactKeys(entry, ARCHIVE_KEYS, [], "Build archive");
+    reference = Object.freeze(archiveReference(entry, Number.MAX_SAFE_INTEGER, "Build archive"));
+  }
+  return Object.freeze({
+    ...pointer,
+    ...(reference === undefined ? {} : { archive: reference }),
+    ...(groupedFirstInstall === undefined ? {} : { groupedFirstInstall: true as const }),
+    ...(references === undefined ? {} : { groups: Object.freeze(references) }),
+  });
 }
 
 export function validateBuildManifest(value: unknown): BuildManifest {

@@ -1,3 +1,21 @@
+// Bound the input supplied to each gzip transform, including for highly compressible bodies.
+const INFLATE_CHUNK_BYTES = 4 * 1024;
+
+export function inflateGzip(body: Uint8Array<ArrayBuffer>): ReadableStream<Uint8Array> {
+  let offset = 0;
+  const compressed = new ReadableStream<Uint8Array<ArrayBuffer>>({
+    pull(controller) {
+      const end = Math.min(offset + INFLATE_CHUNK_BYTES, body.byteLength);
+      controller.enqueue(body.subarray(offset, end));
+      offset = end;
+      if (offset === body.byteLength) {
+        controller.close();
+      }
+    },
+  });
+  return compressed.pipeThrough(new DecompressionStream("gzip"));
+}
+
 export async function readExactArchiveBytes(
   source: ReadableStream<Uint8Array>,
   bytes: Uint8Array<ArrayBuffer>,

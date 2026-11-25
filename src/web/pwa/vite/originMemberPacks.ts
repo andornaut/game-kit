@@ -1,6 +1,3 @@
-import { createHash } from "node:crypto";
-import { gzipSync } from "node:zlib";
-
 import {
   MAX_ORIGIN_MEMBER_ARCHIVE_BYTES,
   MAX_ORIGIN_MEMBER_ARCHIVES,
@@ -11,6 +8,7 @@ import {
   type OriginMemberIndex,
   parseOriginMemberIndex,
 } from "../originMemberIndex.ts";
+import { deterministicGzip, sha256Hex } from "./buildArchiveFiles.ts";
 
 export interface OriginMemberPackOptions {
   readonly groups: Readonly<Record<string, readonly string[]>>;
@@ -28,8 +26,6 @@ export interface OriginMemberPacks {
   readonly index: OriginMemberIndex;
   readonly archives: readonly { readonly path: string; readonly bytes: Uint8Array }[];
 }
-
-const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
 // Package selected members without modifying the inputs or writing build output.
 export function buildOriginMemberPacks(
@@ -99,16 +95,14 @@ export function buildOriginMemberPacks(
         `Decoded origin member group ${id} exceeds ${MAX_ORIGIN_MEMBER_ARCHIVE_BYTES} bytes. Split the group`,
       );
     }
-    const bytes = gzipSync(Buffer.concat(bodies, decodedByteSize), { level: 9 });
-    // Use a portable gzip header, including the OS byte.
-    bytes[9] = 255;
+    const bytes = deterministicGzip(Buffer.concat(bodies, decodedByteSize));
     const byteSize = bytes.byteLength;
     if (byteSize > MAX_ORIGIN_MEMBER_ARCHIVE_BYTES) {
       throw new RangeError(
         `Encoded origin member group ${id} exceeds ${MAX_ORIGIN_MEMBER_ARCHIVE_BYTES} bytes. Split the group`,
       );
     }
-    const archiveSha256 = sha256(bytes);
+    const archiveSha256 = sha256Hex(bytes);
     packed.set(archiveSha256, {
       bytes,
       reference: { byteSize, decodedByteSize, sha256: archiveSha256 },
@@ -121,7 +115,7 @@ export function buildOriginMemberPacks(
         contentType: file.contentType,
         offset,
         path: file.path,
-        sha256: sha256(file.bytes),
+        sha256: sha256Hex(file.bytes),
       });
       offset += file.bytes.byteLength;
     }

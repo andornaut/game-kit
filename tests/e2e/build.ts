@@ -93,10 +93,20 @@ function noise(seed: string, size: number): Buffer {
   return out;
 }
 
+// Deterministic text that compresses about as well as typical game data, half the size of noise.
+function compressible(seed: string, size: number): Buffer {
+  return Buffer.from(
+    noise(seed, Math.ceil(size / 2))
+      .toString("hex")
+      .slice(0, size),
+  );
+}
+
 function fixtureFiles(
   variant: Variant,
   size: FixtureSize,
   emitted: { readonly sounds: Record<string, string[]>; readonly urls: string[] },
+  assetBytes: (seed: string, size: number) => Buffer,
 ): Plugin {
   const { sounds, urls } = emitted;
   return {
@@ -107,7 +117,7 @@ function fixtureFiles(
       };
       for (let index = 0; index < size.files; index += 1) {
         const key = assetKey(variant, size.files, index);
-        const bytes = noise(`${index}:${key}`, size.fileBytes + (index % 7) * 97);
+        const bytes = assetBytes(`${index}:${key}`, size.fileBytes + (index % 7) * 97);
         const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 8);
         emit(`/assets/f/${String(index).padStart(5, "0")}-${hash}.bin`, bytes);
       }
@@ -138,20 +148,17 @@ function fixtureFiles(
 
 export function readDeployment(variant: Variant, directory: string): Deployment {
   const json = (url: string): unknown => JSON.parse(readFileSync(join(directory, url), "utf8"));
-  const { archive, groupedFirstInstall, groups, ...legacyPointer } = parseBuildPointer(
-    json(BUILD_POINTER_URL),
-  );
-  const pointer = {
-    ...validateBuildPointer(legacyPointer),
-    ...(archive === undefined ? {} : { archive }),
-    ...(groupedFirstInstall === undefined ? {} : { groupedFirstInstall }),
-    ...(groups === undefined ? {} : { groups }),
-  };
+  const emitted = json(BUILD_POINTER_URL);
+  // The strict build-time validator and the runtime parser accept every emitted pointer.
+  parseBuildPointer(emitted);
+  const pointer = validateBuildPointer(emitted);
   return { directory, manifest: validateBuildManifest(json(pointer.manifest)), pointer, variant };
 }
 
 export async function buildDeployment(
   context: {
+    // Asset files of compressible text instead of incompressible bytes.
+    readonly compressible?: true;
     readonly groupedFirstInstall?: PrecachePluginOptions["groupedFirstInstall"];
     readonly outRoot: string;
     readonly size: FixtureSize;
@@ -175,7 +182,12 @@ export async function buildDeployment(
     envDir: false,
     logLevel: "warn",
     plugins: [
-      fixtureFiles(variant, context.size, { sounds, urls }),
+      fixtureFiles(
+        variant,
+        context.size,
+        { sounds, urls },
+        context.compressible === true ? compressible : noise,
+      ),
       precachePlugin({
         boot: () => [
           INDEX_URL,

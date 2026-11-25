@@ -53,6 +53,31 @@ Move image processing from `art/rgbaImage` to `build/rgbaImage`, which also expo
 
 Apply the mapping to JavaScript and TypeScript imports, test mocks and configuration, and stylesheet imports. Change the old build-info reference to `/// <reference types="@andornaut/game-kit/build/buildInfo" />`. This declaration-only export still provides `__APP_VERSION__`, `__BUILD_ID__` and `__COMMIT__`. Historical migration notes use the subpaths current at the time. The source inventory uses implementation paths relative to `src/`.
 
+## Compressed group archives in 0.73.0
+
+`updateGroup` builds without `emitUpdateGroupRecipes` emit each group as one
+deterministic gzip member at `/.game-kit/group-<sha256>.bin` (`buildGroupUrl`
+from `runtime/web/pwa/buildContract`). Each pointer group gains
+`encoding: "gzip"` and `encodedByteSize`. Its `byteSize` and `sha256` still
+describe the decoded archive, so unchanged groups keep their digests, the
+build version does not depend on the transport, and devices reuse the groups
+an earlier kit stored. Deploy the
+new files with the rest of the output and serve them as
+`application/octet-stream` without HTTP coding. An origin that reads archives
+for `createGroupArchiveMemberReader` must store the `group-` files, whose
+paths the reader now requests.
+
+The build still emits each decoded archive at its
+`/.game-kit/archive-<sha256>-0.bin` path, because pages on GameKit 0.72.0 or
+earlier stage grouped updates only from those files. A device on such a build
+downloads the decoded archives once, then uses the compressed transport from
+its next update. A later release stops emitting these copies.
+
+`validateBuildPointer` from `build/buildManifest` now accepts every pointer
+the build emits: whole-build archives, groups with sound formats and
+transports, and grouped first installs. Earlier releases rejected any pointer
+with `archive`, `groups` or `groupedFirstInstall`.
+
 ## Codec-aware groups in 0.72.0
 
 `updateGroup` builds now split each group's sound alternatives into one group
@@ -132,6 +157,14 @@ one group. `updateGroup(url)` returns a stable group name for the canonical
 request URL. Keep frequently changed files separate from stable assets. Each
 group has its own SHA-256 and is capped at 24 MiB, including its index.
 
+Each group is served as deterministic gzip at `buildGroupUrl(group)`, so wire
+bytes stay near the gzip size of its members without host compression. Serve
+these files as emitted, like install packs. The page checks the exact
+transport length, decodes it within the archive size and verifies the
+archive's SHA-256 before storing the decoded archive. Progress counts
+transport bytes. Browsers without `DecompressionStream` cannot install
+compressed groups.
+
 An unchanged version skips staging. For a changed version, the page reuses
 verified groups from earlier builds and downloads missing groups one at a time.
 The router serves the pinned version's files from the groups. A complete build
@@ -182,13 +215,32 @@ URLs. For a visitor without an installed build, an origin can serve
 Pass the deployed `build.json` and an archive body storage callback to
 `createGroupArchiveMemberReader({ readArchive }, pointer)` from
 `runtime/web/pwa/dom/groupArchiveMemberReader`. The callback receives each
-group's emitted path, `buildArchivePartUrl(group, 0)`. Resolve the request
+group's emitted path, `buildGroupUrl(group)`, and returns the stored body,
+which for a compressed group is its gzip transport. Resolve the request
 pathname with `reader.read(path)`. The reader locates members from the
-archive indexes, then serves a member only after checking the whole archive's
-size and SHA-256 from the pointer. It retains one verified archive per
+decoded archive indexes, then serves a member only after checking the
+transport size and the whole archive's size and SHA-256 from the pointer. It retains one verified archive per
 instance. An unknown path returns `undefined` so the host can try ordinary
 assets. A known path with a missing or invalid archive rejects. The host owns
 HTTP method and cache policy.
+
+To test such a reader against real archives, build groups with
+`encodeGroupArchive({ soundFormat }, members)` from `build/groupArchive`. It
+takes `{ url, bytes }` members and returns the pointer entry `group`, the
+transport `path` and `encoded` bytes, the decoded `archive` and its index
+`files`, byte-identical to the `precachePlugin` output for the same members.
+Omit `soundFormat` for a group without one.
+
+```ts
+const { encoded, group, path } = encodeGroupArchive({}, [
+  { bytes: new TextEncoder().encode("{}"), url: "/data/level.json" },
+]);
+const pointer = { ...deployedPointer, groups: [group] };
+const reader = createGroupArchiveMemberReader(
+  { readArchive: async (p) => (p === path ? new Blob([encoded]).stream() : undefined) },
+  pointer,
+);
+```
 
 ## Packed origin files
 
@@ -216,7 +268,9 @@ Set `emitUpdateGroupRecipes: true` alongside `updateGroup` in
 `build/precachePlugin`. Starting in 0.69.0, this emits one JSON recipe at
 `updateGroupRecipesPath(version)` from `runtime/web/pwa/buildContract` and
 omits the raw archive files. The pointer, manifest and requested archive
-URLs stay the same. Omit the flag to serve the emitted archives directly.
+URLs stay the same, and recipe groups keep the decoded archive as their
+transport because the origin assembles it. Omit the flag to serve the emitted
+archives directly.
 
 For a version whose backing files are selected, pass its recipe to
 `createUpdateGroupArchiveReader({ readMember }, recipe)` from
@@ -539,7 +593,7 @@ The inventory uses implementation paths relative to `src/`, and tests sit beside
 | `web/build/vite/buildInfo`, `web/build/vite/gameConfig`                                                           | Vite, Node build time    | Build constant declarations and a game's whole Vite and Vitest config                                               |
 | `web/build/vite/contentHash`, `web/build/vite/gitHead`                                                            | Vite, Node build time    | Vite-compatible content hashes and the repository HEAD                                                              |
 | `web/build/vite/phaserBuildPlugin`, `web/build/vite/phaserSource`, `web/build/vite/phaserUses`                    | Vite, Node build time    | Reduced Phaser bundles from source, and a static check of a game's Phaser use                                       |
-| `web/pwa/vite/hashedIconsPlugin`, `web/pwa/vite/precachePlugin`                                                   | Vite, Node build time    | Content-hashed icon names, and the router worker, build manifest and pointer                                        |
+| `web/pwa/vite/hashedIconsPlugin`, `web/pwa/vite/precachePlugin`, `web/pwa/vite/groupArchive`                      | Vite, Node build time    | Content-hashed icon names, the router worker, build manifest and pointer, and the group archive encoder             |
 
 A module's directory names its environment, and its `tsconfig.<environment>.json` lists it explicitly:
 

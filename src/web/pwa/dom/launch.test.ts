@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { getEventListeners } from "node:events";
+import { gzipSync } from "node:zlib";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -7,6 +8,7 @@ import {
   BUILD_POINTER_URL,
   buildArchivePartUrl,
   type BuildFile,
+  buildGroupUrl,
   type BuildManifest,
   buildManifestUrl,
   type BuildPointer,
@@ -462,6 +464,51 @@ describe("grouped updates", () => {
       totalBytes: unchanged.byteSize + changed.byteSize + 6,
     });
     expect(f.progress.at(-1)!.value).toBeLessThan(1);
+    f.launch.dispose();
+  });
+
+  it("installs compressed groups from their transport, counting wire bytes", async () => {
+    const decoded = "compressible ".repeat(200);
+    const encoded = new Uint8Array(gzipSync(decoded, { level: 9 }));
+    const gzip = {
+      byteSize: decoded.length,
+      encodedByteSize: encoded.byteLength,
+      encoding: "gzip",
+      schema: 1,
+      sha256: sha(decoded),
+    } as const;
+    const pointer = { ...cold.pointer, groups: [unchanged, gzip] };
+    let sealed = false;
+    const put = vi.fn();
+    const f = fixture({
+      groupStore: {
+        complete: async () => sealed,
+        put,
+        read: readCold,
+        reuse: async () => false,
+        seal: async () => {
+          sealed = true;
+        },
+      },
+    });
+    f.deploy({ ...cold, pointer });
+    f.routes.set(buildArchivePartUrl(unchanged, 0), () => new Response("a"));
+    f.routes.set(buildGroupUrl(gzip), () => new Response(encoded));
+    f.container.claim((message, [port]) => port?.postMessage(message));
+    await expect(f.launch.run()).resolves.toBe("reloading");
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([
+      BUILD_POINTER_URL,
+      pointer.manifest,
+      buildArchivePartUrl(unchanged, 0),
+      `/.game-kit/group-${gzip.sha256}.bin`,
+      BUILD_POINTER_URL,
+    ]);
+    // The store receives the verified decoded archive under the group's decoded identity.
+    expect(put.mock.calls.map(([, group]) => group)).toEqual([unchanged, gzip]);
+    expect(await (put.mock.calls[1]![2] as Blob).text()).toBe(decoded);
+    const wire = unchanged.byteSize + encoded.byteLength;
+    expect(f.progress.at(-1)).toMatchObject({ receivedBytes: wire, totalBytes: wire + 6 });
+    expect(f.store.state).toEqual({ active: pointer.version });
     f.launch.dispose();
   });
 

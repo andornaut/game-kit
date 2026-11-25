@@ -67,6 +67,7 @@
     "./build/contentHash": "./src/web/build/vite/contentHash.ts",
     "./build/gameConfig": "./src/web/build/vite/gameConfig.ts",
     "./build/gitHead": "./src/web/build/vite/gitHead.ts",
+    "./build/groupArchive": "./src/web/pwa/vite/groupArchive.ts",
     "./build/hashedIcons": "./src/web/pwa/hashedIcons.ts",
     "./build/hashedIconsPlugin": "./src/web/pwa/vite/hashedIconsPlugin.ts",
     "./build/originMemberPacks": "./src/web/pwa/vite/originMemberPacks.ts",

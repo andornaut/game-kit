@@ -8,15 +8,16 @@ import {
   readBuildArchivePrefixSize,
 } from "../buildArchive.ts";
 import {
-  buildArchivePartUrl,
-  type BuildArchiveReference,
+  type BuildGroupReference,
+  buildGroupUrl,
   GROUP_ARCHIVE_IDENTITY,
 } from "../buildContract.ts";
 import { parseBuildPointer } from "../buildRecords.ts";
-import { checkArchiveDigest, readExactArchiveBytes } from "./verifiedArchiveBytes.ts";
+import { checkArchiveDigest, inflateGzip, readExactArchiveBytes } from "./verifiedArchiveBytes.ts";
 
 interface GroupArchiveMemberReaderContext {
-  // The body stored at an archive path, buildArchivePartUrl(group, 0), or undefined if absent.
+  // The body stored at a group's emitted path, buildGroupUrl(group), or undefined if absent. For a
+  // gzip group this is the encoded transport, which the reader decodes.
   readonly readArchive: (path: string) => Promise<ReadableStream<Uint8Array> | undefined>;
 }
 
@@ -34,9 +35,9 @@ interface VerifiedArchive {
 
 async function openArchive(
   { readArchive }: GroupArchiveMemberReaderContext,
-  group: BuildArchiveReference,
+  group: BuildGroupReference,
 ): Promise<ReadableStream<Uint8Array>> {
-  const path = buildArchivePartUrl(group, 0);
+  const path = buildGroupUrl(group);
   const source = await readArchive(path);
   if (source === undefined) {
     throw new TypeError(`Missing build group archive ${path}`);
@@ -44,12 +45,38 @@ async function openArchive(
   return source;
 }
 
+// The decoded archive, after checking the transport and archive sizes and the archive digest.
+async function readVerifiedArchive(
+  context: GroupArchiveMemberReaderContext,
+  group: BuildGroupReference,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const label = `Build group archive ${buildGroupUrl(group)}`;
+  const source = await openArchive(context, group);
+  const bytes = new Uint8Array(group.byteSize);
+  if (group.encoding === "gzip") {
+    const encoded = new Uint8Array(group.encodedByteSize!);
+    await readExactArchiveBytes(source, encoded, label);
+    await readExactArchiveBytes(inflateGzip(encoded), bytes, `Decoded ${label}`);
+  } else {
+    await readExactArchiveBytes(source, bytes, label);
+  }
+  await checkArchiveDigest(bytes, group.sha256, label);
+  return bytes;
+}
+
 // The member paths of one group, from its index prefix alone. Serving rechecks the verified index.
 async function memberPaths(
   context: GroupArchiveMemberReaderContext,
-  group: BuildArchiveReference,
+  group: BuildGroupReference,
 ): Promise<readonly string[]> {
-  const reader = (await openArchive(context, group)).getReader();
+  const source = await openArchive(context, group);
+  const reader = (
+    group.encoding === "gzip"
+      ? (source as ReadableStream<Uint8Array<ArrayBuffer>>).pipeThrough(
+          new DecompressionStream("gzip"),
+        )
+      : source
+  ).getReader();
   const chunks: Uint8Array[] = [];
   let received = 0;
   let wanted = BUILD_ARCHIVE_HEADER_BYTES;
@@ -95,10 +122,10 @@ export function createGroupArchiveMemberReader(
     throw new TypeError("Build pointer has no groups");
   }
   // Built once per instance from the index prefixes, one archive at a time. A failure is retried.
-  let located: Promise<ReadonlyMap<string, BuildArchiveReference>> | undefined;
+  let located: Promise<ReadonlyMap<string, BuildGroupReference>> | undefined;
   const locate = () => {
     located ??= (async () => {
-      const byPath = new Map<string, BuildArchiveReference>();
+      const byPath = new Map<string, BuildGroupReference>();
       for (const group of groups) {
         // eslint-disable-next-line no-await-in-loop
         for (const path of await memberPaths(context, group)) {
@@ -119,15 +146,12 @@ export function createGroupArchiveMemberReader(
   // Serialize verification and retain at most one verified archive for this instance.
   let queue = Promise.resolve();
   let cached: VerifiedArchive | undefined;
-  const verifiedArchive = async (group: BuildArchiveReference): Promise<VerifiedArchive> => {
+  const verifiedArchive = async (group: BuildGroupReference): Promise<VerifiedArchive> => {
     if (cached?.sha256 === group.sha256) {
       return cached;
     }
     cached = undefined;
-    const label = `Build group archive ${buildArchivePartUrl(group, 0)}`;
-    const bytes = new Uint8Array(group.byteSize);
-    await readExactArchiveBytes(await openArchive(context, group), bytes, label);
-    await checkArchiveDigest(bytes, group.sha256, label);
+    const bytes = await readVerifiedArchive(context, group);
     const { files } = parseBuildArchiveIndex(GROUP_ID, bytes.byteLength, bytes);
     const entries = new Map(files.map((entry) => [entry.url, entry]));
     const archive = { bytes, entries, sha256: group.sha256 };

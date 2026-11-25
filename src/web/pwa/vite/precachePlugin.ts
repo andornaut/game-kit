@@ -1,31 +1,30 @@
-import { createHash } from "node:crypto";
-import { gzipSync } from "node:zlib";
-
 import type { Plugin, ResolvedConfig } from "vite";
 
 import { isBuildId } from "../../build/buildVersion.ts";
 import { contentHash } from "../../build/vite/contentHash.ts";
 import { gitBuildMetadata } from "../../build/vite/gitHead.ts";
-import {
-  type BuildArchiveFile,
-  type BuildArchiveIdentity,
-  encodeBuildArchiveIndex,
-} from "../buildArchive.ts";
+import type { BuildArchiveFile } from "../buildArchive.ts";
 import {
   BUILD_ARCHIVE_PART_BYTES,
   BUILD_POINTER_URL,
   buildArchivePartUrl,
-  type BuildArchiveReference,
   type BuildGroupReference,
+  buildGroupUrl,
   type BuildManifest,
   buildManifestUrl,
   type BuildPack,
+  type BuildPointer,
   GROUP_ARCHIVE_IDENTITY,
   MAX_UPDATE_UNITS,
   updateGroupRecipesPath,
 } from "../buildContract.ts";
 import { parseUpdateGroupRecipes, type UpdateGroupRecipes } from "../buildGroupRecipes.ts";
-import { createBuildManifest, createBuildPointer, UNKNOWN_BUILD_ID } from "../buildManifest.ts";
+import {
+  createBuildManifest,
+  createBuildPointer,
+  UNKNOWN_BUILD_ID,
+  validateBuildPointer,
+} from "../buildManifest.ts";
 import { packContentType, soundFormatOf } from "../buildRecords.ts";
 import { cacheKeyFor, type CachePolicy, isHashedAssetUrl } from "../cachePolicy.ts";
 import {
@@ -36,7 +35,9 @@ import {
   webManifestIconUrls,
 } from "../precacheList.ts";
 import { validateVerifiedJsonBodies } from "../verifiedJsonBody.ts";
+import { archiveFiles, deterministicGzip, sha256Hex } from "./buildArchiveFiles.ts";
 import { classicWorker } from "./classicWorker.ts";
+import { encodeGroupArchive } from "./groupArchive.ts";
 
 // Hashed files the page loads at runtime rather than links, such as a game's art: the URLs to
 // precache, and each sound's logical URL mapped to its format alternatives' URLs. Each
@@ -89,92 +90,19 @@ export interface PrecachePluginOptions {
   serviceWorkerFileName?: string;
 }
 
-function sha256Hex(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
-}
-
-const ARCHIVE_CONTENT_TYPES = new Map([
-  ["bin", "application/octet-stream"],
-  ["css", "text/css; charset=utf-8"],
-  ["fnt", "text/xml; charset=utf-8"],
-  ["gif", "image/gif"],
-  ["htm", "text/html; charset=utf-8"],
-  ["html", "text/html; charset=utf-8"],
-  ["ico", "image/vnd.microsoft.icon"],
-  ["js", "text/javascript; charset=utf-8"],
-  ["mjs", "text/javascript; charset=utf-8"],
-  ["otf", "font/otf"],
-  ["ttf", "font/ttf"],
-  ["txt", "text/plain; charset=utf-8"],
-  ["wasm", "application/wasm"],
-  ["webmanifest", "application/manifest+json"],
-  ["woff", "font/woff"],
-  ["woff2", "font/woff2"],
-]);
-
-function archiveContentType(url: string): string {
-  // Cache keys ending in / are the canonical URLs for index.html files.
-  const path = url.toLowerCase();
-  const extension = path.endsWith("/") ? "html" : soundFormatOf(path);
-  const contentType = ARCHIVE_CONTENT_TYPES.get(extension ?? "") ?? packContentType(path);
-  if (contentType === undefined) {
-    throw new TypeError(`Unknown build archive content type for ${url}`);
-  }
-  return contentType;
-}
-
-function archiveFiles(
-  identity: BuildArchiveIdentity,
-  listed: ReadonlyMap<string, Uint8Array>,
-  urls: readonly string[],
-  maxBytes?: number,
-): { archive: BuildArchiveReference; files: readonly BuildArchiveFile[]; parts: Uint8Array[] } {
-  const files = urls.map((url): BuildArchiveFile => [
-    url,
-    listed.get(url)!.byteLength,
-    archiveContentType(url),
-  ]);
-  const prefix = encodeBuildArchiveIndex({
-    ...identity,
-    files,
-  });
-  const bodies = urls.map((url) => listed.get(url)!);
-  const byteSize = bodies.reduce((size, bytes) => size + bytes.byteLength, prefix.byteLength);
-  if (maxBytes !== undefined && byteSize > maxBytes) {
-    throw new RangeError(`archive exceeds ${maxBytes} bytes including its index. Split the group`);
-  }
-  const hash = createHash("sha256");
-  const parts: Uint8Array[] = [];
-  let offset = 0;
-  for (const bytes of [prefix, ...bodies]) {
-    hash.update(bytes);
-    for (let start = 0; start < bytes.byteLength;) {
-      const index = Math.floor(offset / BUILD_ARCHIVE_PART_BYTES);
-      const partOffset = offset % BUILD_ARCHIVE_PART_BYTES;
-      let part = parts[index];
-      if (part === undefined) {
-        part = new Uint8Array(Math.min(BUILD_ARCHIVE_PART_BYTES, byteSize - offset));
-        parts.push(part);
-      }
-      const length = Math.min(bytes.byteLength - start, part.byteLength - partOffset);
-      part.set(bytes.subarray(start, start + length), partOffset);
-      start += length;
-      offset += length;
-    }
-  }
-  return { archive: { byteSize, schema: 1, sha256: hash.digest("hex") }, files, parts };
-}
-
 // Sound alternatives split from their named group by format, so a device downloads only its own
-// format's sound bytes (buildRecords' installedPointer).
+// format's sound bytes (buildRecords' installedPointer). Static groups carry a gzip transport;
+// recipe groups keep the decoded archive as their transport, which the origin assembles.
 function groupedArchives(
   updateGroup: NonNullable<PrecachePluginOptions["updateGroup"]>,
   alternatives: ReadonlySet<string>,
   listed: ReadonlyMap<string, Uint8Array>,
+  compressed: boolean,
 ): {
   archive: BuildGroupReference;
+  decoded: Uint8Array;
+  encoded?: Uint8Array;
   files: readonly BuildArchiveFile[];
-  source: Uint8Array;
 }[] {
   // Keyed by the name, then a space and the sound format. Names contain no space.
   const groups = new Map<string, { soundFormat?: string; urls: string[] }>();
@@ -205,6 +133,13 @@ function groupedArchives(
   return [...groups.keys()].sort().map((key) => {
     const { soundFormat, urls } = groups.get(key)!;
     try {
+      if (compressed) {
+        const { archive, encoded, files, group } = encodeGroupArchive(
+          soundFormat === undefined ? {} : { soundFormat },
+          urls.map((url) => ({ bytes: listed.get(url)!, url })),
+        );
+        return { archive: group, decoded: archive, encoded, files };
+      }
       const { archive, files, parts } = archiveFiles(
         identity,
         listed,
@@ -213,8 +148,8 @@ function groupedArchives(
       );
       return {
         archive: { ...archive, ...(soundFormat === undefined ? {} : { soundFormat }) },
+        decoded: parts[0]!,
         files,
-        source: parts[0]!,
       };
     } catch (error) {
       throw new TypeError(`update group ${JSON.stringify(key)}: ${(error as Error).message}`, {
@@ -248,12 +183,10 @@ function packFiles(
   const add = (members: string[]) => {
     if (members.length > 1) {
       const decoded = Buffer.concat(members.map((url) => contents.get(url)!));
-      const source = gzipSync(decoded, { level: 9 });
+      const source = deterministicGzip(decoded);
       if (source.byteLength >= decoded.byteLength) {
         return;
       }
-      // The gzip header does not need the producer's operating-system identifier.
-      source[9] = 255;
       const identity = JSON.stringify([
         sha256Hex(source),
         members.map((url) => [url, digests.get(url)]),
@@ -481,12 +414,24 @@ export function precachePlugin({
         let grouped: ReturnType<typeof groupedArchives> | undefined;
         if (updateGroup !== undefined) {
           try {
-            grouped = groupedArchives(updateGroup, new Set(Object.values(sounds).flat()), listed);
+            grouped = groupedArchives(
+              updateGroup,
+              new Set(Object.values(sounds).flat()),
+              listed,
+              emitUpdateGroupRecipes !== true,
+            );
           } catch (error) {
             this.error(`precache: ${(error as Error).message}`);
           }
         }
         const groups = grouped?.map(({ archive }) => archive);
+        // A group's decoded archive names it, so the version stays independent of its transport.
+        const groupIdentities = groups?.map(({ byteSize, schema, sha256, soundFormat }) => ({
+          byteSize,
+          schema,
+          sha256,
+          ...(soundFormat === undefined ? {} : { soundFormat }),
+        }));
         const archiveOnlyUrls: string[] = [];
         if (groupedFirstInstall !== undefined) {
           const directUrls = new Set(
@@ -617,7 +562,7 @@ export function precachePlugin({
           boot: bootUrls,
           buildId: recordedBuildId,
           ...(groupedFirstInstall === undefined ? {} : { groupedFirstInstall: true }),
-          ...(groups === undefined ? {} : { groups }),
+          ...(groupIdentities === undefined ? {} : { groups: groupIdentities }),
           ...(packIndex.length === 0 ? {} : { packs: packIndex }),
           sounds,
           ...(wholeBuild === true ? { wholeBuild } : {}),
@@ -682,13 +627,19 @@ export function precachePlugin({
             type: "asset",
           });
         } else if (grouped !== undefined) {
-          updateAssets.push(
-            ...grouped.map(({ archive, source }) => ({
-              fileName: buildArchivePartUrl(archive, 0).slice(1),
-              source,
-              type: "asset" as const,
-            })),
-          );
+          for (const { archive, decoded, encoded } of grouped) {
+            updateAssets.push(
+              { fileName: buildGroupUrl(archive).slice(1), source: encoded!, type: "asset" },
+              // CLEANUP (added 2026-11-25): pages on GameKit 0.72.0 and earlier stage groups only
+              // from the decoded archive at this path. Remove once installed devices of every
+              // grouped game have staged a build from GameKit 0.73.0 or later.
+              {
+                fileName: buildArchivePartUrl(archive, 0).slice(1),
+                source: decoded,
+                type: "asset",
+              },
+            );
+          }
         }
         const manifestFileName = buildManifestUrl(manifest.version).slice(1);
         const pointerFileName = BUILD_POINTER_URL.slice(1);
@@ -720,14 +671,20 @@ export function precachePlugin({
           source: JSON.stringify(manifest),
           type: "asset",
         });
-        this.emitFile({
-          fileName: pointerFileName,
-          source: JSON.stringify({
+        let pointer: BuildPointer | undefined;
+        try {
+          pointer = validateBuildPointer({
             ...createBuildPointer(manifest),
             ...(archive === undefined ? {} : { archive: archive.archive }),
             ...(groupedFirstInstall === undefined ? {} : { groupedFirstInstall: true }),
             ...(groups === undefined ? {} : { groups }),
-          }),
+          });
+        } catch (error) {
+          this.error(`precache: ${(error as Error).message}`);
+        }
+        this.emitFile({
+          fileName: pointerFileName,
+          source: JSON.stringify(pointer),
           type: "asset",
         });
       },

@@ -92,11 +92,18 @@ export function parseBuildPointer(value: unknown): BuildPointer {
     const seen = new Set<string>();
     for (const value of pointer.groups) {
       const group = parseBuildArchiveReference(value);
-      const { soundFormat } = value as { readonly soundFormat?: unknown };
+      const { encodedByteSize, encoding, soundFormat } = value as {
+        readonly encodedByteSize?: unknown;
+        readonly encoding?: unknown;
+        readonly soundFormat?: unknown;
+      };
       if (
         group.byteSize > BUILD_ARCHIVE_PART_BYTES ||
         seen.has(group.sha256) ||
-        (soundFormat !== undefined && (typeof soundFormat !== "string" || soundFormat === ""))
+        (soundFormat !== undefined && (typeof soundFormat !== "string" || soundFormat === "")) ||
+        !(encoding === undefined
+          ? encodedByteSize === undefined
+          : encoding === "gzip" && isTransferSize(encodedByteSize))
       ) {
         throw new TypeError("Invalid or duplicate build group");
       }
@@ -104,6 +111,16 @@ export function parseBuildPointer(value: unknown): BuildPointer {
     }
   }
   return pointer as BuildPointer;
+}
+
+// A static transport body's byte length: positive and within one hosted part.
+function isTransferSize(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 1 &&
+    value <= BUILD_ARCHIVE_PART_BYTES
+  );
 }
 
 export function parseBuildArchiveReference(value: unknown): BuildArchiveReference {

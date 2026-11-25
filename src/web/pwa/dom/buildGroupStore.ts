@@ -54,6 +54,8 @@ export interface BuildGroupStore {
 
 const GROUP_ID = { buildId: GROUP_ARCHIVE_IDENTITY, version: GROUP_ARCHIVE_IDENTITY };
 
+// The stored form keeps each group's decoded identity and drops its transport, so a build staged
+// from either transport, such as by an earlier kit from decoded archives, matches its pointer.
 function groupedPointer(value: unknown): GroupedPointer {
   const { buildId, groupedFirstInstall, groups, manifest, schema, version } =
     parseBuildPointer(value);

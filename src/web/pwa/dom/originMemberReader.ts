@@ -1,5 +1,5 @@
 import { originMemberArchivePath, parseOriginMemberIndex } from "../originMemberIndex.ts";
-import { checkArchiveDigest, readExactArchiveBytes } from "./verifiedArchiveBytes.ts";
+import { checkArchiveDigest, inflateGzip, readExactArchiveBytes } from "./verifiedArchiveBytes.ts";
 
 interface OriginMemberReaderContext {
   readonly readArchive: (path: string) => Promise<ReadableStream<Uint8Array> | undefined>;
@@ -7,24 +7,6 @@ interface OriginMemberReaderContext {
 
 export interface OriginMemberReader {
   read(path: string): Promise<Response | undefined>;
-}
-
-// Bound the input supplied to each gzip transform, including for highly compressible bodies.
-const INFLATE_CHUNK_BYTES = 4 * 1024;
-
-function inflate(body: Uint8Array<ArrayBuffer>): ReadableStream<Uint8Array> {
-  let offset = 0;
-  const compressed = new ReadableStream<Uint8Array<ArrayBuffer>>({
-    pull(controller) {
-      const end = Math.min(offset + INFLATE_CHUNK_BYTES, body.byteLength);
-      controller.enqueue(body.subarray(offset, end));
-      offset = end;
-      if (offset === body.byteLength) {
-        controller.close();
-      }
-    },
-  });
-  return compressed.pipeThrough(new DecompressionStream("gzip"));
 }
 
 /** Reads immutable members from their owning origin's storage. Only absent members fall through. */
@@ -54,7 +36,7 @@ export function createOriginMemberReader(
     await readExactArchiveBytes(source, encoded, `Origin archive ${path}`);
     await checkArchiveDigest(encoded, sha256, `Origin archive ${path}`);
     const bytes = new Uint8Array(archive.decodedByteSize);
-    await readExactArchiveBytes(inflate(encoded), bytes, `Decoded origin archive ${path}`);
+    await readExactArchiveBytes(inflateGzip(encoded), bytes, `Decoded origin archive ${path}`);
     // Only the current job in the serialized read queue can update the cache.
     // eslint-disable-next-line require-atomic-updates
     cached = { bytes, sha256 };

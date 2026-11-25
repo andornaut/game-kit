@@ -139,7 +139,9 @@ for (const unexported of ['runtime/web/pwa/verifiedJsonBody', 'web/pwa/verifiedJ
     code: 'ERR_PACKAGE_PATH_NOT_EXPORTED'
   });
 }
-import { createBuildManifest, createBuildPointer } from '@andornaut/game-kit/build/buildManifest';
+import {
+  createBuildManifest, createBuildPointer, validateBuildPointer,
+} from '@andornaut/game-kit/build/buildManifest';
 import { BUILD_POINTER_URL, buildManifestUrl } from '@andornaut/game-kit/runtime/web/pwa/buildContract';
 const builtManifest = createBuildManifest({
   boot: ['/play/'], buildId: UNKNOWN_COMMIT,
@@ -150,6 +152,23 @@ assert.deepEqual(createBuildPointer(builtManifest), {
   buildId: UNKNOWN_COMMIT, manifest: buildManifestUrl('0123456789abcdef'), schema: 1,
   version: '0123456789abcdef',
 });
+import { encodeGroupArchive } from '@andornaut/game-kit/build/groupArchive';
+import {
+  createGroupArchiveMemberReader,
+} from '@andornaut/game-kit/runtime/web/pwa/dom/groupArchiveMemberReader';
+const memberBody = 'tile '.repeat(100);
+const encodedGroup = encodeGroupArchive({}, [
+  { bytes: new TextEncoder().encode(memberBody), url: '/data/level.json' },
+]);
+assert(encodedGroup.encoded.byteLength < encodedGroup.archive.byteLength);
+const groupPointer = validateBuildPointer({
+  ...createBuildPointer(builtManifest), groupedFirstInstall: true, groups: [encodedGroup.group],
+});
+const groupReader = createGroupArchiveMemberReader({
+  readArchive: async (path) =>
+    path === encodedGroup.path ? new Blob([encodedGroup.encoded]).stream() : undefined,
+}, groupPointer);
+assert.equal(await (await groupReader.read('/data/level.json')).text(), memberBody);
 assert.equal(BUILD_POINTER_URL, '/.game-kit/build.json');
 import { browserLaunchContext, createLaunch } from '@andornaut/game-kit/runtime/web/pwa/dom/launch';
 assert.equal(browserLaunchContext(bodyPolicy), undefined);

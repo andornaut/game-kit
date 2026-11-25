@@ -44,10 +44,27 @@ export function buildArchivePartUrl(archive: BuildArchiveReference, index: numbe
   return `/.game-kit/archive-${archive.sha256}-${index}.bin`;
 }
 
-// One update group. A group with soundFormat holds only sound alternatives in that format, so a
-// device that plays another format skips it (buildRecords' installedPointer).
+// One update group. byteSize and sha256 describe the decoded archive, which names the group and is
+// what devices store and reuse. A group with soundFormat holds only sound alternatives in that
+// format, so a device that plays another format skips it (buildRecords' installedPointer). With
+// encoding, the transport at buildGroupUrl is the archive in one deterministic gzip member of
+// exactly encodedByteSize bytes. Without it, the transport is the decoded archive itself.
 export interface BuildGroupReference extends BuildArchiveReference {
   readonly soundFormat?: string;
+  readonly encoding?: "gzip";
+  readonly encodedByteSize?: number;
+}
+
+// The URL a group's transport is served at.
+export function buildGroupUrl(group: BuildGroupReference): string {
+  return group.encoding === "gzip"
+    ? `/.game-kit/group-${group.sha256}.bin`
+    : buildArchivePartUrl(group, 0);
+}
+
+// The bytes a group's transport sends, which progress counts.
+export function buildGroupTransferBytes(group: BuildGroupReference): number {
+  return group.encoding === "gzip" ? group.encodedByteSize! : group.byteSize;
 }
 
 export interface BuildPointer {

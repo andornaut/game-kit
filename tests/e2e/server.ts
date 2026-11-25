@@ -22,6 +22,8 @@ export interface RequestRecord {
   readonly at: number;
   readonly path: string;
   readonly status: number;
+  // Response body bytes sent, which equal wire bytes since the server applies no HTTP coding.
+  readonly bytes: number;
 }
 
 export interface FixtureServer {
@@ -65,7 +67,8 @@ export async function startServer(): Promise<FixtureServer> {
   const server: Server = createServer((request, response) => {
     const path = new URL(request.url ?? "/", "http://fixture.invalid").pathname;
     const answer = (status: number, body: Buffer | string, type: string) => {
-      log.push({ at: Date.now(), path, status });
+      const bytes = request.method === "HEAD" ? 0 : Buffer.byteLength(body);
+      log.push({ at: Date.now(), bytes, path, status });
       response.writeHead(status, {
         ...CLOUDFLARE_H3_HEADERS,
         "cache-control": status === 200 ? cacheControl(path) : "no-store",
@@ -76,7 +79,7 @@ export async function startServer(): Promise<FixtureServer> {
       response.end(request.method === "HEAD" ? undefined : body);
     };
     if (refusing) {
-      log.push({ at: Date.now(), path, status: 0 });
+      log.push({ at: Date.now(), bytes: 0, path, status: 0 });
       request.socket.destroy();
       return;
     }

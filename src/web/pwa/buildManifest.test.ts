@@ -68,6 +68,42 @@ describe("validateBuildPointer", () => {
   ])("rejects %s", (_, value, error) => {
     expect(() => validateBuildPointer(value)).toThrow(error);
   });
+
+  const GROUP = { byteSize: 40, schema: 1, sha256: "c".repeat(64) };
+  const GZIP = { ...GROUP, encodedByteSize: 30, encoding: "gzip", sha256: "d".repeat(64) };
+  const TAGGED = { ...GROUP, sha256: "e".repeat(64), soundFormat: "ogg" };
+
+  it.each<[string, Record<string, unknown>]>([
+    ["a whole-build archive", { archive: { byteSize: 9, schema: 1, sha256: "f".repeat(64) } }],
+    ["plain groups", { groups: [GROUP] }],
+    ["sound-format groups", { groups: [GROUP, TAGGED] }],
+    ["compressed groups", { groups: [GZIP, { ...TAGGED, encodedByteSize: 41, encoding: "gzip" }] }],
+    ["a grouped first install", { groupedFirstInstall: true, groups: [GROUP, GZIP, TAGGED] }],
+  ])("accepts %s, as the producer emits it", (_, fields) => {
+    const input = { ...pointer(), ...fields, buildId: UNKNOWN_BUILD_ID };
+    const result = validateBuildPointer(input);
+    expect(result).toEqual(input);
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it.each<[string, Record<string, unknown>, ErrorConstructor]>([
+    ["both an archive and groups", { archive: GROUP, groups: [GZIP] }, TypeError],
+    ["a grouped first install without groups", { groupedFirstInstall: true }, TypeError],
+    ["a false grouped first install", { groupedFirstInstall: false, groups: [GROUP] }, TypeError],
+    ["no groups", { groups: [] }, RangeError],
+    ["101 groups", { groups: Array.from({ length: 101 }, () => GROUP) }, RangeError],
+    ["a repeated group", { groups: [GROUP, { ...GROUP }] }, RangeError],
+    ["an extra group key", { groups: [{ ...GROUP, url: "/x" }] }, TypeError],
+    ["an oversized group", { groups: [{ ...GROUP, byteSize: 24 * 1024 * 1024 + 1 }] }, RangeError],
+    ["an empty sound format", { groups: [{ ...GROUP, soundFormat: "" }] }, RangeError],
+    ["another encoding", { groups: [{ ...GZIP, encoding: "br" }] }, RangeError],
+    ["an encoding without its size", { groups: [{ ...GROUP, encoding: "gzip" }] }, TypeError],
+    ["a size without its encoding", { groups: [{ ...GROUP, encodedByteSize: 3 }] }, TypeError],
+    ["an empty transport", { groups: [{ ...GZIP, encodedByteSize: 0 }] }, RangeError],
+    ["an uppercase digest", { groups: [{ ...GROUP, sha256: "C".repeat(64) }] }, RangeError],
+  ])("rejects %s", (_, fields, error) => {
+    expect(() => validateBuildPointer({ ...pointer(), ...fields })).toThrow(error);
+  });
 });
 
 describe("validateBuildManifest", () => {

@@ -371,6 +371,34 @@ describe("group storage and routing", () => {
     expect(await store.reuse(target, group.reference)).toBe(true);
   });
 
+  it("keeps decoded identities, so groups staged from either transport match and are reused", async () => {
+    const worker = startWorker(new FakeServer({}));
+    const store = createBuildGroupStore({
+      caches: worker.storage as unknown as CacheStorage,
+      origin: ORIGIN,
+      policy: POLICY,
+    });
+    const group = groupOf("/app.js", "text/javascript", "kept");
+    const gzip = { ...group.reference, encodedByteSize: 20, encoding: "gzip" as const };
+    const compressed = (pointer: BuildPointer): BuildPointer => ({ ...pointer, groups: [gzip] });
+    // An earlier kit staged v1 from the decoded archive and wrote its marker without a transport.
+    const earlier = groupedBuild("v1", group);
+    await store.put(earlier, group.reference, group.blob);
+    await store.seal(earlier);
+    expect(await store.complete("v1", compressed(earlier))).toBe(true);
+    const next = compressed(groupedBuild("v2", group));
+    expect(await store.reuse(next, gzip)).toBe(true);
+    await store.seal(next);
+    expect(await store.complete("v2", next)).toBe(true);
+    expect(await store.complete("v2", groupedBuild("v2", group))).toBe(true);
+    const marker = await (await worker.records()).match(groupRecord("v2"));
+    expect(await marker?.json()).toEqual(groupedBuild("v2", group));
+    const third = compressed(groupedBuild("v3", group));
+    await store.put(third, gzip, group.blob);
+    await store.seal(third);
+    expect((await store.read("v3")).kind).toBe("ready");
+  });
+
   it("refuses a group with the wrong identity and never seals missing or overlapping bodies", async () => {
     const worker = startWorker(new FakeServer({}));
     const store = createBuildGroupStore({

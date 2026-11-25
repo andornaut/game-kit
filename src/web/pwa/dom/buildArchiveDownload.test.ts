@@ -1,13 +1,16 @@
 import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
 
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   BUILD_ARCHIVE_PART_BYTES,
   buildArchivePartUrl,
   type BuildArchiveReference,
+  type BuildGroupReference,
+  buildGroupUrl,
 } from "../buildContract.ts";
-import { downloadBuildArchive } from "./buildArchiveDownload.ts";
+import { downloadBuildArchive, downloadBuildGroup } from "./buildArchiveDownload.ts";
 
 const archive: BuildArchiveReference = {
   byteSize: 3,
@@ -99,4 +102,73 @@ it("fails a stalled transport without waiting for a response body", async () => 
   elapsed = timing.inactivityMs;
   timeout?.();
   await expect(result).rejects.toThrow("stopped progressing");
+});
+
+describe("downloadBuildGroup", () => {
+  const decoded = new TextEncoder().encode("member ".repeat(500));
+  const encoded = new Uint8Array(gzipSync(decoded, { level: 9 }));
+  const group: BuildGroupReference = {
+    byteSize: decoded.byteLength,
+    encodedByteSize: encoded.byteLength,
+    encoding: "gzip",
+    schema: 1,
+    sha256: createHash("sha256").update(decoded).digest("hex"),
+  };
+  const signal = new AbortController().signal;
+
+  it("decodes the gzip transport, verifies the archive and reports wire bytes", async () => {
+    const fetch = vi.fn(async () => new Response(encoded));
+    const onBytes = vi.fn();
+    const result = await downloadBuildGroup({ ...timing, fetch, onBytes, signal }, group);
+    expect(new Uint8Array(await result.arrayBuffer())).toEqual(decoded);
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(buildGroupUrl(group), {
+      cache: "no-store",
+      redirect: "error",
+      signal: expect.any(AbortSignal),
+    });
+    expect(buildGroupUrl(group)).toBe(`/.game-kit/group-${group.sha256}.bin`);
+    expect(onBytes).toHaveBeenLastCalledWith(encoded.byteLength, encoded.byteLength);
+    expect(encoded.byteLength).toBeLessThan(decoded.byteLength / 10);
+  });
+
+  it("reads a group without an encoding from its decoded archive", async () => {
+    const plain = { byteSize: 3, schema: 1, sha256: archive.sha256 } as const;
+    const fetch = vi.fn<(url: string) => Promise<Response>>(async () => new Response("abc"));
+    expect(await (await downloadBuildGroup({ ...timing, fetch, signal }, plain)).text()).toBe(
+      "abc",
+    );
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([buildArchivePartUrl(plain, 0)]);
+  });
+
+  it("rejects transports and decoded archives that do not match the pointer", async () => {
+    const other = gzipSync(new TextEncoder().encode("MEMBER ".repeat(500)), { level: 9 });
+    for (const [reference, body, message] of [
+      [group, encoded.subarray(1), "Incomplete"],
+      [group, new Uint8Array([...encoded, 0]), "exceeds"],
+      [{ ...group, byteSize: group.byteSize - 1 }, encoded, "exceeds its declared size"],
+      [{ ...group, byteSize: group.byteSize + 1 }, encoded, "does not match its declared size"],
+      [{ ...group, encodedByteSize: other.byteLength }, other, "checksum mismatch"],
+    ] as const) {
+      // eslint-disable-next-line no-await-in-loop
+      await expect(
+        downloadBuildGroup(
+          { ...timing, fetch: async () => new Response(new Uint8Array(body)), signal },
+          reference,
+        ),
+      ).rejects.toThrow(message);
+    }
+  });
+
+  it("refuses a compressed group before fetching without a gzip decoder", async () => {
+    vi.stubGlobal("DecompressionStream", undefined);
+    try {
+      const fetch = vi.fn();
+      await expect(downloadBuildGroup({ ...timing, fetch, signal }, group)).rejects.toThrow(
+        "cannot decode compressed build groups",
+      );
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

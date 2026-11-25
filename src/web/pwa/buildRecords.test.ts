@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   BUILD_ARCHIVE_PART_BYTES,
   buildArchivePartUrl,
+  buildGroupTransferBytes,
+  buildGroupUrl,
   type BuildManifest,
   buildManifestUrl,
 } from "./buildContract.ts";
@@ -122,6 +124,37 @@ describe("parseBuildPointer", () => {
       { groups: [{ ...groups[0], soundFormat: 1 }] },
     ]) {
       expect(() => parseBuildPointer({ ...pointer, ...invalid })).toThrow(TypeError);
+    }
+  });
+
+  it("accepts compressed groups beside decoded ones and checks their transport size", () => {
+    const pointer = { buildId: "id", manifest: buildManifestUrl("v1"), schema: 1, version: "v1" };
+    const decoded = { byteSize: 10, schema: 1, sha256: sha("a") };
+    const gzip = {
+      byteSize: 90,
+      encodedByteSize: 20,
+      encoding: "gzip",
+      schema: 1,
+      sha256: sha("b"),
+    };
+    const groups = [decoded, gzip, { ...gzip, sha256: sha("c"), soundFormat: "ogg" }];
+    const parsed = parseBuildPointer({ ...pointer, groupedFirstInstall: true, groups });
+    expect(parsed.groups).toEqual(groups);
+    expect(parsed.groups!.map(buildGroupUrl)).toEqual([
+      `/.game-kit/archive-${sha("a")}-0.bin`,
+      `/.game-kit/group-${sha("b")}.bin`,
+      `/.game-kit/group-${sha("c")}.bin`,
+    ]);
+    expect(parsed.groups!.map(buildGroupTransferBytes)).toEqual([10, 20, 20]);
+    for (const invalid of [
+      { ...gzip, encoding: "br" },
+      { ...gzip, encodedByteSize: undefined },
+      { ...decoded, encodedByteSize: 5 },
+      { ...gzip, encodedByteSize: 0 },
+      { ...gzip, encodedByteSize: 2.5 },
+      { ...gzip, encodedByteSize: BUILD_ARCHIVE_PART_BYTES + 1 },
+    ]) {
+      expect(() => parseBuildPointer({ ...pointer, groups: [invalid] })).toThrow(TypeError);
     }
   });
 });
