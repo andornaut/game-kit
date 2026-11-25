@@ -37,3 +37,4 @@ Reference: [Standalone verification](../../README.md#standalone-verification), [
 | gk-0038 | Migrate consumers and retire obsolete GameKit interfaces                     | [gk-0038.md](../work/gk-0038.md) |
 | gk-0052 | Refactor for structure, encapsulation and simplicity                         | [gk-0052.md](../work/gk-0052.md) |
 | gk-0057 | Retire browserLaunchContext, add kit Makefile targets and split createLaunch | [gk-0057.md](../work/gk-0057.md) |
+| gk-0060 | Guard source bands with ESLint and retire the import check                   | [gk-0060.md](../work/gk-0060.md) |
