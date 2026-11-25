@@ -1,0 +1,139 @@
+/* Opt-in modal frames (modalFrame). The DOM part writes every length as unitless base px from the
+   pure layout; they resolve at --ui-unit. Every part is placed from the card's outer edge, so a
+   skin's borders never move content. Rules match through :where(), with zero specificity, so a
+   game's skin and type classes always win. The only colour is --ui-modal-backdrop, the dim the
+   game sets over covered chrome; unset, the backdrop paints nothing, for a game that dims on its
+   canvas. */
+
+:where(.ui-modal-frame) {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+:where(.ui-modal-backdrop) {
+  position: absolute;
+  inset: 0;
+  background-color: var(--ui-modal-backdrop);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+:where(.ui-modal-card) {
+  position: absolute;
+  box-sizing: border-box;
+  top: calc(var(--ui-modal-card-y) * var(--ui-unit, 1) * 1px);
+  left: calc(var(--ui-modal-card-x) * var(--ui-unit, 1) * 1px);
+  width: calc(var(--ui-modal-card-width) * var(--ui-unit, 1) * 1px);
+  height: calc(var(--ui-modal-card-height) * var(--ui-unit, 1) * 1px);
+  margin: 0;
+  padding: 0;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+/* The card takes the focus only as the fallback target of the modal layer. */
+:where(.ui-modal-card:focus) {
+  outline: none;
+}
+
+/* The skin layer: the game's CSS face or nine-slice frame (.ui-frame) fills the card under its
+   parts and takes no presses. */
+:where(.ui-modal-skin) {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+:where(.ui-modal-header) {
+  position: absolute;
+  top: calc(var(--ui-modal-header-y) * var(--ui-unit, 1) * 1px);
+  left: calc(var(--ui-modal-header-x) * var(--ui-unit, 1) * 1px);
+  width: calc(var(--ui-modal-header-width) * var(--ui-unit, 1) * 1px);
+  height: calc(var(--ui-modal-header-height) * var(--ui-unit, 1) * 1px);
+}
+
+/* The title box at its room between the mirrored close clearances; its height is its text's. */
+:where(.ui-modal-title) {
+  position: absolute;
+  box-sizing: border-box;
+  top: calc(var(--ui-modal-title-y) * var(--ui-unit, 1) * 1px);
+  left: calc(var(--ui-modal-title-x) * var(--ui-unit, 1) * 1px);
+  width: calc(var(--ui-modal-title-width) * var(--ui-unit, 1) * 1px);
+  margin: 0;
+  padding: 0;
+  text-align: center;
+  overflow-wrap: break-word;
+}
+
+/* The scroll body: the viewport scrolls its content box, which holds the side insets and, with
+   no footer, the bottom inset, so press outsets inside them are not clipped. */
+:where(.ui-modal-body) {
+  position: absolute;
+  box-sizing: border-box;
+  top: calc(var(--ui-modal-body-y) * var(--ui-unit, 1) * 1px);
+  left: calc(var(--ui-modal-body-x) * var(--ui-unit, 1) * 1px);
+  width: calc(var(--ui-modal-body-width) * var(--ui-unit, 1) * 1px);
+  height: calc(var(--ui-modal-body-height) * var(--ui-unit, 1) * 1px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+
+:where(.ui-modal-content) {
+  box-sizing: border-box;
+  padding: 0 calc(var(--ui-modal-inset-side) * var(--ui-unit, 1) * 1px)
+    calc(var(--ui-modal-inset-bottom) * var(--ui-unit, 1) * 1px);
+}
+
+:where(.ui-modal-text) {
+  margin: 0;
+}
+
+:where(.ui-modal-footer) {
+  position: absolute;
+  top: calc(var(--ui-modal-footer-y) * var(--ui-unit, 1) * 1px);
+  left: calc(var(--ui-modal-footer-x) * var(--ui-unit, 1) * 1px);
+  width: calc(var(--ui-modal-footer-width) * var(--ui-unit, 1) * 1px);
+  height: calc(var(--ui-modal-footer-height) * var(--ui-unit, 1) * 1px);
+}
+
+:where(.ui-modal-card:not([data-ui-modal-footer]) > .ui-modal-footer) {
+  display: none;
+}
+
+/* The close control's box is its face; its press target is its ::before, outset exactly as the
+   game's geometry gives it, never clamped to the card, which does not clip it. */
+:where(.ui-modal-card > .ui-modal-close) {
+  position: absolute;
+  box-sizing: border-box;
+  top: calc(var(--ui-modal-close-y) * var(--ui-unit, 1) * 1px);
+  left: calc(var(--ui-modal-close-x) * var(--ui-unit, 1) * 1px);
+  width: calc(var(--ui-modal-close-width) * var(--ui-unit, 1) * 1px);
+  height: calc(var(--ui-modal-close-height) * var(--ui-unit, 1) * 1px);
+  margin: 0;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+:where(.ui-modal-card > .ui-modal-close)::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--ui-modal-close-outset-top) * var(--ui-unit, 1) * -1px);
+  right: calc(var(--ui-modal-close-outset-right) * var(--ui-unit, 1) * -1px);
+  bottom: calc(var(--ui-modal-close-outset-bottom) * var(--ui-unit, 1) * -1px);
+  left: calc(var(--ui-modal-close-outset-left) * var(--ui-unit, 1) * -1px);
+}
+
+/* A skin face inside the native close control fills it. */
+:where(.ui-modal-card > .ui-modal-close > .ui-button-face) {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+}
+
+:where(.ui-modal-card > .ui-modal-close[hidden]) {
+  display: none;
+}

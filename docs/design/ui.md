@@ -26,6 +26,27 @@ geometry only.
 - `.ui-control-row` and `.ui-control-copy` remain for one control beside its copy in flow, with no
   press outsets.
 
+## Modal frame
+
+The modal frame builds on the layout base: pure geometry in `src/ui/modalFrame.ts`, the DOM part
+in `src/web/ui/dom/modalFrame.ts` with `modalFrame.css`, and isolation through the existing modal
+layer and modal input gate.
+
+- Every length is a whole unit measured from the card's outer edge. The skin is a separate layer
+  under the parts, so a CSS face or nine-slice frame never moves content and no part adds padding
+  a game cancels.
+- Width families are the game's data, clamped inside a 16 unit margin of the game's content rect.
+  The card's height follows its content up to the room, past which the body scrolls. A
+  full-screen frame is the content rect itself.
+- The close face and press target are game data placed from the corner exactly as given, never
+  clamped or shifted. The title reserves the whole target plus the gap on both sides, and the
+  header reaches the gap below the target. The game sets the title's ink offset.
+- The footer is an action group footer variant, pinned the padding in from the card's sides and
+  bottom. The close control is the last focus stop.
+- The open frame takes the modal layer's dialog isolation, with the backdrop as the only outside
+  target and its dim the one colour property; the focus returns to the opener. The game keeps its
+  one dismissal action, which the close control, Escape, back and backdrop taps share.
+
 ## Work items
 
 | ID      | Title                                                     | Link                             |

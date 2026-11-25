@@ -412,6 +412,44 @@ group.arrange({ width: CARD_CONTENT_WIDTH }, [
 
 `runtime/ui/uiTheme` and `runtime/web/ui/dom/uiTheme` with `uiTheme.css` supply the theme. `setUiColours(colours, root)` writes role-named colour slots (`cardFace`, `frame`, `textPrimary`, `textSecondary`, `accent` and the button face and text states) from `0xRRGGBB` numbers or `#rrggbb`/`#rrggbbaa` strings as `--ui-colour-<role>` and marks `root` with `data-ui-theme`. Inside it, standard button faces take the idle, primary, selected, pressed and disabled slots, and the focus slots feed the focus fill in `controls.css`, which stays the one focus treatment. State changes only fill and text colour; `--ui-button-press-dip` (base px, default 0) moves a pressed face and a disabled face never dips. Forced colours use `ButtonFace`, `Highlight` and `GrayText` fills. `setTextRoles(roles, root)` writes `{ size, lineHeight, weight }` in base px for the `ui-text-body`, `ui-text-heading`, `ui-text-label` and `ui-text-supporting` classes. `ui-button-reset` removes user-agent button styling. Every rule in `uiTheme.css` has zero specificity, so a game's component classes always win, and the stylesheet holds no colour literals.
 
+## Modal frame
+
+`runtime/ui/modalFrame` places a modal frame in whole game units, every length measured from the card's outer edge, so a skin never moves content. `modalFrameRooms(context)` gives the widths the game lays its parts out in (`card`, `title`, `body`, `footer`); `placeModalFrame(context, sizes)` places the `card`, `header`, `title`, scroll `body` with its `bodyInset`, optional `footer` room and `close` face, press target and outsets, and reports whether the body `scrolls`. Invalid input throws `RangeError`.
+
+- **Card:** `families` (the game's width families as data, such as `{ large: 688, medium: 500, small: 400 }`) and `family` set the width, clamped inside `margin` (16) of the game's `content` rect. Height follows content up to the content rect less the margin above and below, past which the body scrolls. The card is centred both ways; the odd unit goes right and below.
+- **Full screen:** `variant: "fullScreen"` makes the frame the content rect, its close control anchored to the view's corner and its body the height the header and footer leave.
+- **Close:** `close.face` and `close.press` are corner rects, `x` in from the right edge and `y` down from the top. The press target must contain the face and defaults to `HIT_RULE` centred on it; it is never clamped or shifted and may reach past the card.
+- **Header:** the title box is the card width less a reserve on each side: the whole close target from the right edge plus the gap, mirrored left, or the padding without a close. The header is the title's height plus its `inset` (default the padding) above and below, and at least the close target's bottom plus the gap and `bodyOutset`. The title is centred in it, then moved by the game's whole-unit `inkOffset`.
+- **Body and footer:** the body runs from the header to the gap above the footer, with the padding at its sides; without a footer the bottom padding is inside the body. The footer is the padding in from the card's sides and bottom, its height the footer action group's.
+- **Projection:** `project` maps every edge as in `arrangeActions`.
+
+`runtime/web/ui/dom/modalFrame` with the opt-in `modalFrame.css` builds the frame: a full-area `element` holding the `backdrop` and the `card` (`role="dialog"` or `"alertdialog"`, `id`, `aria-labelledby` its `<id>-title` and, with `description`, `aria-describedby` its `<id>-text`). The card holds a `skin` layer for the game's CSS face or nine-slice `.ui-frame` (`skinClassName`), the header and `title` (`ui-text-heading`), the scroll `body` with its `content` box the game appends to, the footer `createActionGroup` (`footer`) and the game's close control, kept last in focus order. `layout(context, parts)` measures the title at its room, the content and the footer actions (sizes from `footer.measure`), arranges the footer with `variant: "footer"`, and places every part at `--ui-unit`; lay out again after content, fonts or the content rect change. The close control's box is its face and its `::before` the press target. Every rule has zero specificity; the only colour is `--ui-modal-backdrop`, the dim over covered chrome, unset by default.
+
+`open({ layer, close, focus, input, outsideTap, restore })` opens the card on the game's `modalLayer` in dialog isolation with the backdrop as its only outside target: covered chrome is inert under the backdrop, and the focus returns to the opener on close. `close` is the game's one-layer dismissal, the same action as the close control; Escape, P and back call it, and with `outsideTap: { tapMaxDistance, tapGuard? }` a backdrop tap does too. `input` takes a `modalInput` scope for the session. The returned session's `close()` ends it.
+
+```ts
+import { createModalFrame } from "@andornaut/game-kit/runtime/web/ui/dom/modalFrame";
+
+const frame = createModalFrame(document, { id: "restart", skinClassName: "ui-frame", title });
+frame.content.append(message);
+frame.footer.element.append(cancel.element, restart.element);
+modalRoot.append(frame.element);
+const [cancelSize, restartSize] = frame.footer.measure([cancel.element, restart.element]);
+frame.layout(
+  { close: CLOSE, content: SAFE_AREA, families: MODAL_WIDTHS, family: "small" },
+  {
+    close: closeButton.element,
+    footer: {
+      actions: [
+        { element: cancel.element, role: "secondary", size: cancelSize! },
+        { element: restart.element, role: "primary", size: restartSize! },
+      ],
+    },
+  },
+);
+const session = frame.open({ close: dismiss, focus: restart.element, input: gate, layer });
+```
+
 ## Caller action order
 
 Layout primitives retain the caller's keyed order and action roles. Callers place the existing primary action last in vertical groups and rightmost in horizontal groups, retaining secondary order and hidden-control identities. The crash screen keeps Reload after its optional developer details and centres the sole Copy action in its own row. Its action callbacks and focus remain unchanged.
@@ -619,6 +657,7 @@ The inventory uses implementation paths relative to `src/`, and tests sit beside
 | `ui/actionGroup`, `ui/uiTheme`                                                                                                                          | Pure                     | Action group fitting, press outsets and projection; theme colour slots and text roles                                                     |
 | `ui/buttonLayout`, `ui/controlPresentation`                                                                                                             | Pure                     | Caller-token button group sizing, contained placement and current-navigation filtering                                                    |
 | `ui/focusKeys`, `ui/hitAreas`, `ui/spacing`                                                                                                             | Pure                     | Focus keys and steps, press areas by nearest control, and the button gaps                                                                 |
+| `ui/modalFrame`                                                                                                                                         | Pure                     | Modal frame geometry: width families, header, title clearance, scroll body, footer and close                                              |
 | `view/fitCheck`, `view/modalDim`, `view/pagePoint`, `view/renderScale`, `view/settleFit`                                                                | Pure                     | Fit decisions, dimming, coordinate mapping, device render scale and settling                                                              |
 | `web/build/buildLabel`, `web/build/buildVersion`, `web/build/phaserBuild`                                                                               | Pure                     | Build labels, commit selection, reduced Phaser entries and feature flags                                                                  |
 | `web/crash/crashModel`                                                                                                                                  | Pure                     | Crash classification and presentation data                                                                                                |
@@ -636,6 +675,7 @@ The inventory uses implementation paths relative to `src/`, and tests sit beside
 | `web/pwa/dom/*`                                                                                                                                         | Browser DOM              | Visibility, wake lock, audio, back, exit, install, launch, build store and installer, router worker                                       |
 | `web/save/dom/localSaveStorage`, `web/save/dom/pageSessionStore`                                                                                        | Browser DOM              | The page's `localStorage` and `sessionStorage`                                                                                            |
 | `web/ui/dom/*` and its `ui.css` and opt-in `controls.css`, `layoutTree.css`, `controlPresentation.css`, `actionGroup.css` and `uiTheme.css` stylesheets | Browser DOM, CSS         | HTML UI: units, layout values, modal layer, focus cues, presses, frames, button skins, action groups, theme, chrome, refusal, decoded art |
+| `web/ui/dom/modalFrame` and its opt-in `modalFrame.css` stylesheet                                                                                      | Browser DOM, CSS         | HTML modal frame on the modal layer: backdrop, dialog card, skin layer, scroll body, footer and close                                     |
 | `web/view/dom/watchFrameTurn`                                                                                                                           | Browser DOM              | Marks the frame turn on `<html>` and requests the orientation lock                                                                        |
 | `web/headers/vite/securityHeadersPlugin`                                                                                                                | Vite, Node build time    | Writes `_headers` with per-page inline hashes                                                                                             |
 | `web/build/vite/buildInfo`, `web/build/vite/gameConfig`                                                                                                 | Vite, Node build time    | Build constant declarations and a game's whole Vite and Vitest config                                                                     |
