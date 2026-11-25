@@ -105,3 +105,4 @@ in `src/web/ui/dom/slider.ts` with `slider.css`, in the form row list's grid.
 | gk-0058 | Provide the shared slider                                               | [gk-0058.md](../work/gk-0058.md) |
 | gk-0059 | Use shared text roles and colour slots on kit crash and startup screens | [gk-0059.md](../work/gk-0059.md) |
 | gk-0061 | Add a non-modal page variant to the modal frame                         | [gk-0061.md](../work/gk-0061.md) |
+| gk-0062 | Close Chibi's shared component gaps                                     | [gk-0062.md](../work/gk-0062.md) |
