@@ -129,24 +129,25 @@ in `src/web/ui/dom/slider.ts` with `slider.css`, in the form row list's grid.
 
 ## Work items
 
-| ID      | Title                                                                   | Link                             |
-| ------- | ----------------------------------------------------------------------- | -------------------------------- |
-| gk-0010 | Publish the shared button and control presentation                      | [gk-0010.md](../work/gk-0010.md) |
-| gk-0011 | Publish the typed layout tree and its exports                           | [gk-0011.md](../work/gk-0011.md) |
-| gk-0023 | Recover focus in strict dialogs after a backdrop press                  | [gk-0023.md](../work/gk-0023.md) |
-| gk-0025 | Style keyboard focus in shared game controls                            | [gk-0025.md](../work/gk-0025.md) |
-| gk-0026 | Render standard game buttons through one shared primitive               | [gk-0026.md](../work/gk-0026.md) |
-| gk-0029 | Preserve pointer refusal on unavailable standard buttons                | [gk-0029.md](../work/gk-0029.md) |
-| gk-0031 | Use ring-free button state cues                                         | [gk-0031.md](../work/gk-0031.md) |
-| gk-0037 | Respect pointer action admission and paint Retry presses                | [gk-0037.md](../work/gk-0037.md) |
-| gk-0054 | Provide the shared layout base for game UI                              | [gk-0054.md](../work/gk-0054.md) |
-| gk-0055 | Provide the shared modal frame                                          | [gk-0055.md](../work/gk-0055.md) |
-| gk-0056 | Provide the shared switch, form row, pager and HUD disc                 | [gk-0056.md](../work/gk-0056.md) |
-| gk-0058 | Provide the shared slider                                               | [gk-0058.md](../work/gk-0058.md) |
-| gk-0059 | Use shared text roles and colour slots on kit crash and startup screens | [gk-0059.md](../work/gk-0059.md) |
-| gk-0061 | Add a non-modal page variant to the modal frame                         | [gk-0061.md](../work/gk-0061.md) |
-| gk-0062 | Close Chibi's shared component gaps                                     | [gk-0062.md](../work/gk-0062.md) |
-| gk-0063 | Add a panel highlight token and fill crash details focus                | [gk-0063.md](../work/gk-0063.md) |
-| gk-0064 | Place DOM action groups, form rows and sliders on the game grid         | [gk-0064.md](../work/gk-0064.md) |
-| gk-0065 | Fix themed crash details contrast and inset the HUD disc ring           | [gk-0065.md](../work/gk-0065.md) |
-| gk-0066 | Let the pager play the game's refusal cue                               | [gk-0066.md](../work/gk-0066.md) |
+| ID      | Title                                                                        | Link                             |
+| ------- | ---------------------------------------------------------------------------- | -------------------------------- |
+| gk-0010 | Publish the shared button and control presentation                           | [gk-0010.md](../work/gk-0010.md) |
+| gk-0011 | Publish the typed layout tree and its exports                                | [gk-0011.md](../work/gk-0011.md) |
+| gk-0023 | Recover focus in strict dialogs after a backdrop press                       | [gk-0023.md](../work/gk-0023.md) |
+| gk-0025 | Style keyboard focus in shared game controls                                 | [gk-0025.md](../work/gk-0025.md) |
+| gk-0026 | Render standard game buttons through one shared primitive                    | [gk-0026.md](../work/gk-0026.md) |
+| gk-0029 | Preserve pointer refusal on unavailable standard buttons                     | [gk-0029.md](../work/gk-0029.md) |
+| gk-0031 | Use ring-free button state cues                                              | [gk-0031.md](../work/gk-0031.md) |
+| gk-0037 | Respect pointer action admission and paint Retry presses                     | [gk-0037.md](../work/gk-0037.md) |
+| gk-0054 | Provide the shared layout base for game UI                                   | [gk-0054.md](../work/gk-0054.md) |
+| gk-0055 | Provide the shared modal frame                                               | [gk-0055.md](../work/gk-0055.md) |
+| gk-0056 | Provide the shared switch, form row, pager and HUD disc                      | [gk-0056.md](../work/gk-0056.md) |
+| gk-0058 | Provide the shared slider                                                    | [gk-0058.md](../work/gk-0058.md) |
+| gk-0059 | Use shared text roles and colour slots on kit crash and startup screens      | [gk-0059.md](../work/gk-0059.md) |
+| gk-0061 | Add a non-modal page variant to the modal frame                              | [gk-0061.md](../work/gk-0061.md) |
+| gk-0062 | Close Chibi's shared component gaps                                          | [gk-0062.md](../work/gk-0062.md) |
+| gk-0063 | Add a panel highlight token and fill crash details focus                     | [gk-0063.md](../work/gk-0063.md) |
+| gk-0064 | Place DOM action groups, form rows and sliders on the game grid              | [gk-0064.md](../work/gk-0064.md) |
+| gk-0065 | Fix themed crash details contrast and inset the HUD disc ring                | [gk-0065.md](../work/gk-0065.md) |
+| gk-0066 | Let the pager play the game's refusal cue                                    | [gk-0066.md](../work/gk-0066.md) |
+| gk-0067 | Recover grouped installs on a format change and measure press areas unshaken | [gk-0067.md](../work/gk-0067.md) |
