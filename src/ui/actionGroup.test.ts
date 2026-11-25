@@ -8,6 +8,7 @@ import {
   type ActionItem,
   arrangeActions,
   type PlacedAction,
+  pressedAction,
 } from "./actionGroup.ts";
 import type { ButtonRole } from "./buttonLayout.ts";
 import { BUTTON_GAP, SMALL_BUTTON_GAP, STACK_BUTTON_GAP } from "./spacing.ts";
@@ -317,5 +318,117 @@ describe("arrangeActions", () => {
       }
     }
     expect(checked).toBeGreaterThan(200);
+  });
+
+  describe("nearest press overlap", () => {
+    // Archie's top bar: 20 unit faces the small gap apart, each grown to the 48 unit minimum.
+    const discs = (keys: readonly string[], width = 20) =>
+      keys.map((key) => action(key, "secondary", width, 20));
+
+    it("keeps each full minimum press, overlapping its neighbours", () => {
+      const result = arrangeActions({ gap: "small", pressOverlap: "nearest", width: 108 }, [
+        ...discs(["a", "b", "c"]),
+      ]);
+      expect(result.pressOverlap).toBe("nearest");
+      const [a, b, c] = ["a", "b", "c"].map((key) => placed(result, key));
+      expect([a!.face.x, b!.face.x, c!.face.x]).toEqual([0, 44, 88]);
+      for (const entry of [a!, b!, c!]) {
+        expect(entry.press.width).toBe(48);
+        expect(entry.press.height).toBe(48);
+      }
+      expect(a!.press).toEqual({ height: 48, width: 48, x: -14, y: -14 });
+      expect(rectsOverlap(a!.press, b!.press)).toBe(true);
+      // The drawn outsets cut at the centres' midpoint, so DOM hit testing routes as pressedAction.
+      expect(a!.outset).toEqual({ bottom: 14, left: 14, right: 12, top: 14 });
+      expect(b!.outset).toEqual({ bottom: 14, left: 12, right: 12, top: 14 });
+      expect(c!.outset).toEqual({ bottom: 14, left: 12, right: 14, top: 14 });
+    });
+
+    it("clamps by default, and refuses an unknown overlap", () => {
+      const result = arrangeActions({ gap: "small", width: 108 }, discs(["a", "b"]));
+      expect(result.pressOverlap).toBe("clamp");
+      expect(placed(result, "a").press.width).toBe(46);
+      expect(rectsOverlap(placed(result, "a").press, placed(result, "b").press)).toBe(false);
+      expect(() =>
+        arrangeActions(
+          { pressOverlap: "share" as unknown as "nearest", width: 108 },
+          discs(["a", "b"]),
+        ),
+      ).toThrow(RangeError);
+    });
+
+    it("routes a press to the nearest face centre, the earlier action on a tie", () => {
+      // Faces at 0..20 and 45..65: centres 10 and 55, midpoint 32.5.
+      const result = arrangeActions(
+        { gap: { name: "odd", row: 25, stack: 25 }, pressOverlap: "nearest", width: 65 },
+        discs(["a", "b"]),
+      );
+      expect(pressedAction(result, { x: 32, y: 10 })).toBe("a");
+      expect(pressedAction(result, { x: 32.5, y: 10 })).toBe("a");
+      expect(pressedAction(result, { x: 32.6, y: 10 })).toBe("b");
+      expect(pressedAction(result, { x: -14, y: 10 })).toBe("a");
+      expect(pressedAction(result, { x: -15, y: 10 })).toBeUndefined();
+      // The unit cell 32 (its centre on the tie) is the earlier action's, cell 33 the later's.
+      expect(placed(result, "a").outset.right).toBe(13);
+      expect(placed(result, "b").outset.left).toBe(12);
+      expect(pressedAction(result, { x: 33.5, y: 10 })).toBe("b");
+    });
+
+    it("routes unequal faces by their centres, not the gap's midpoint", () => {
+      // Faces at 0..28 and 52..62: centres 14 and 57, so the cut is at 36, not the gap's 40.
+      const result = arrangeActions({ gap: "small", pressOverlap: "nearest", width: 62 }, [
+        action("wide", "secondary", 28, 20),
+        action("dot", "secondary", 10, 20),
+      ]);
+      const wide = placed(result, "wide");
+      const dot = placed(result, "dot");
+      expect(wide.outset.right).toBe(8);
+      expect(dot.outset.left).toBe(16);
+      expect(wide.press).toEqual({ height: 48, width: 48, x: -10, y: -14 });
+      expect(dot.press).toEqual({ height: 48, width: 48, x: 33, y: -14 });
+      expect(pressedAction(result, { x: 35.4, y: 10 })).toBe("wide");
+      expect(pressedAction(result, { x: 35.5, y: 10 })).toBe("wide");
+      expect(pressedAction(result, { x: 35.6, y: 10 })).toBe("dot");
+    });
+
+    it("routes along a stack, and clamps toward a footer's middle slot", () => {
+      const stack = arrangeActions(
+        { axis: "stack", gap: "small", pressOverlap: "nearest", width: 20 },
+        discs(["a", "b"]),
+      );
+      expect(placed(stack, "a").outset.bottom).toBe(12);
+      expect(placed(stack, "b").press.height).toBe(48);
+      expect(pressedAction(stack, { x: 10, y: 31.5 })).toBe("a");
+      expect(pressedAction(stack, { x: 10, y: 32.5 })).toBe("b");
+      const footer = arrangeActions(
+        {
+          middle: { height: 20, width: 20 },
+          pressOverlap: "nearest",
+          variant: "footer",
+          width: 100,
+        },
+        [action("back", "secondary", 20, 20), action("ok", "primary", 20, 20)],
+      );
+      expect(footer.middle).toEqual({ height: 20, width: 20, x: 40, y: 0 });
+      expect(placed(footer, "back").outset.right).toBe(10);
+      expect(placed(footer, "back").press.width).toBe(48);
+      expect(placed(footer, "ok").outset.left).toBe(10);
+    });
+
+    it("skips hidden actions and projects the full press", () => {
+      const result = arrangeActions(
+        {
+          gap: "small",
+          pressOverlap: "nearest",
+          project: { x: (edge) => edge * 2, y: (edge) => edge * 2 },
+          width: 64,
+        },
+        [...discs(["a"]), action("gone", "secondary", 20, 20, { hidden: true }), ...discs(["b"])],
+      );
+      expect(placed(result, "a").press).toEqual({ height: 96, width: 96, x: -28, y: -28 });
+      expect(placed(result, "a").outset.right).toBe(24);
+      expect(pressedAction(result, { x: 63, y: 20 })).toBe("a");
+      expect(pressedAction(result, { x: 65, y: 20 })).toBe("b");
+    });
   });
 });

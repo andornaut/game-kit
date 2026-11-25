@@ -1,0 +1,60 @@
+/* Opt-in pager (pager), with actionGroup.css placing its parts. Every rule matches through
+   :where(), with zero specificity, so a game's component class always wins. The count takes no
+   presses, so its box never takes a press meant for a button. Dots are decorative: a game sets
+   --ui-pager-dot-size and --ui-pager-dot-gap (base px); the current page's dot takes the accent
+   slot and the others the frame slot. */
+
+:where(.ui-pager-count) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* With dots the count's text is read but not shown: it covers the count, clipped away, and adds
+   nothing to the count's measured size. */
+:where(.ui-pager-count[data-ui-pager-dots]) {
+  position: relative;
+}
+
+:where(.ui-pager-count[data-ui-pager-dots] > .ui-pager-count-text) {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+:where(.ui-pager-dots) {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--ui-pager-dot-gap) * var(--ui-unit, 1) * 1px);
+}
+
+:where(.ui-pager-dot) {
+  display: block;
+  flex: none;
+  width: calc(var(--ui-pager-dot-size) * var(--ui-unit, 1) * 1px);
+  height: calc(var(--ui-pager-dot-size) * var(--ui-unit, 1) * 1px);
+  border-radius: 50%;
+  background-color: var(--ui-colour-frame, currentColor);
+}
+
+:where(.ui-pager-dot[data-ui-current]) {
+  background-color: var(--ui-colour-accent, currentColor);
+}
+
+@media (forced-colors: active) {
+  :where(.ui-pager-dot) {
+    forced-color-adjust: none;
+    background-color: GrayText;
+  }
+
+  :where(.ui-pager-dot[data-ui-current]) {
+    background-color: Highlight;
+  }
+}

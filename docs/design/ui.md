@@ -47,6 +47,27 @@ layer and modal input gate.
   target and its dim the one colour property; the focus returns to the opener. The game keeps its
   one dismissal action, which the close control, Escape, back and backdrop taps share.
 
+## Switch, form rows, pager and HUD disc
+
+These build on the layout base: standard buttons, action group tokens and placement, and the
+theme slots.
+
+- A form row is one button and the whole press target. Its icon is one state-free frame; its
+  label names it and its note describes it. The list's grid columns are shared by every row, so
+  the value column is sized by CSS, never by script. The game sets the row height, padding,
+  icon slot, switch size and state word placement; rows are the stacked action gap apart.
+- A switch row is a switch with its state word below the switch, centred or with its ink's right
+  edge on the switch's. Focus and press are fills only and a row never dips.
+- A pager is an action group of Previous, the count and Next, with one gap token on both sides
+  of the count. Its buttons are standard buttons; an unavailable step is disabled or a pointer
+  refusal with the shared refusal cue. Dots are decorative. The pager fits a footer's middle slot.
+- A HUD disc is a round standard button whose box is its face, placed and given its press area by
+  an action group. State changes only fill, face image or icon colour, never geometry; an edge
+  stays the same in every state. The icon's ink, less its side bearings, centres on the face with
+  the odd unit right and below.
+- An action group may keep each full press area and route overlaps to the nearest face centre,
+  the earlier action on a tie; the DOM draws each area cut where its face stops being nearest.
+
 ## Work items
 
 | ID      | Title                                                     | Link                             |

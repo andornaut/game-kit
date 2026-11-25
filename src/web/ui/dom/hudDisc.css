@@ -1,0 +1,100 @@
+/* Opt-in HUD discs (hudDisc). Every rule matches through :where(), with zero specificity, so a
+   game's component class always wins. Lengths are unitless base px at --ui-unit from the disc's
+   size token; colours come from the theme's button slots (uiTheme.css) and focus from
+   controls.css. A state changes only the face's fill or image and the icon's colour: the disc's
+   box, face and icon box keep their geometry, and the press area is the action group's. A game
+   sets --ui-hud-disc-edge (base px, default 0) for an edge drawn in every state, in the frame
+   slot, and --ui-hud-disc-image and its focus, pressed and disabled variants for art faces, such
+   as a button skin's cut frames. */
+
+:where(.ui-hud-disc) {
+  appearance: none;
+  position: relative;
+  display: block;
+  flex: none;
+  box-sizing: border-box;
+  width: calc(var(--ui-hud-disc-face) * var(--ui-unit, 1) * 1px);
+  height: calc(var(--ui-hud-disc-face) * var(--ui-unit, 1) * 1px);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+:where(.ui-hud-disc[hidden]) {
+  display: none;
+}
+
+/* The round face fills the disc's box. Its edge is the same in every state. */
+:where(.ui-hud-disc > .ui-hud-disc-face) {
+  position: absolute;
+  inset: 0;
+  display: block;
+  box-sizing: border-box;
+  border: calc(var(--ui-hud-disc-edge, 0) * var(--ui-unit, 1) * 1px) solid
+    var(--ui-colour-frame, transparent);
+  border-radius: 50%;
+  background-image: var(--ui-hud-disc-image, none);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  image-rendering: pixelated;
+}
+
+:where(button.ui-hud-disc:focus-visible > .ui-hud-disc-face) {
+  background-image: var(--ui-hud-disc-focus-image, var(--ui-hud-disc-image, none));
+}
+
+:where(button.ui-hud-disc[data-ui-pressed] > .ui-hud-disc-face) {
+  background-image: var(--ui-hud-disc-pressed-image, var(--ui-hud-disc-image, none));
+}
+
+:where(button.ui-hud-disc:is(:disabled, [aria-disabled="true"]) > .ui-hud-disc-face) {
+  background-image: var(--ui-hud-disc-disabled-image, var(--ui-hud-disc-image, none));
+}
+
+/* The game's face art fills the face under the icon. */
+:where(.ui-hud-disc-face > .ui-hud-disc-art) {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* The icon box at its whole-unit offset from the face's corner, its ink centred on the face. */
+:where(.ui-hud-disc-face > .ui-hud-disc-icon) {
+  position: absolute;
+  top: calc((var(--ui-hud-disc-icon-y) - var(--ui-hud-disc-edge, 0)) * var(--ui-unit, 1) * 1px);
+  left: calc((var(--ui-hud-disc-icon-x) - var(--ui-hud-disc-edge, 0)) * var(--ui-unit, 1) * 1px);
+  display: block;
+  width: calc(var(--ui-hud-disc-icon) * var(--ui-unit, 1) * 1px);
+  height: calc(var(--ui-hud-disc-icon) * var(--ui-unit, 1) * 1px);
+  pointer-events: none;
+}
+
+:where(.ui-hud-disc-icon > *) {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+/* System fills show the state; the game's face art steps aside. */
+@media (forced-colors: active) {
+  :where(.ui-hud-disc > .ui-hud-disc-face) {
+    background-image: none;
+  }
+
+  :where(.ui-hud-disc-face > .ui-hud-disc-art) {
+    display: none;
+  }
+}

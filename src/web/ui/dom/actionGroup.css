@@ -27,8 +27,8 @@
 }
 
 /* The press area: an overflow area of the action itself, so the browser's hit test takes it as
-   the action. Outsets are clamped to half the space toward each neighbour, so areas never meet a
-   neighbour's face or overlap its area. */
+   the action. Outsets stop at each neighbour's share of the space (half of it, or with nearest
+   overlap where the nearer face centre changes), so areas never overlap. */
 .ui-action-group > .ui-action::before {
   content: "";
   position: absolute;

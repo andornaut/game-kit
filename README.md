@@ -390,7 +390,7 @@ The loading-failure presenter keeps its asset-independent inline fallback and ad
 `runtime/ui/actionGroup` lays out a group of action faces and owns the spacing between them. `arrangeActions(context, items)` takes each face's size in whole game units: its outer ink bounds with the lip included, from data (`BUTTON_SIZE`) or measured labels plus padding. Fitting uses full font sizes only: a row that does not fit `width` stacks, and a stack wider than `width` throws `RangeError`. Hidden items keep their identity, take no space and do not count. Secondary actions keep the caller's order and at most one visible primary goes last, rightmost in a row and at the bottom of a stack. A sole visible action is centred. Results stay in the caller's order with each visible action's `face`, `press`, `outset` and visual `order`.
 
 - **Gaps:** `gap` is `"standard"` (`BUTTON_GAP` across, `STACK_BUTTON_GAP` stacked), `"small"` (`SMALL_BUTTON_GAP` both ways) or a named override `{ name, row, stack }` for an exempt layout. Action gaps are separate from layout tree `gap` and `padding`.
-- **Press areas:** `press` is the hit rule (default `HIT_RULE`, its margin rounded up and grown to `minTarget`) or `{ margin }`. Toward a neighbour an outset is clamped to its share of the space between the faces, so press areas meet without overlap and never change layout. A clamped press area can be smaller than `minTarget`.
+- **Press areas:** `press` is the hit rule (default `HIT_RULE`, its margin rounded up and grown to `minTarget`) or `{ margin }`. Toward a neighbour an outset is clamped to its share of the space between the faces, so press areas meet without overlap and never change layout. A clamped press area can be smaller than `minTarget`. With `pressOverlap: "nearest"` each `press` keeps its full size and may overlap a neighbour's; `pressedAction(arrangement, point)` routes a press to the action whose face centre is nearest, the earlier in the caller's order on a tie (`hitAreas` `pressedArea`). Each `outset` is then the part of the press area where its face is nearest along the axis, cut at a whole unit, so the DOM group's hit testing routes the same way. Toward a footer's middle slot outsets clamp in both modes.
 - **Whole units:** every input and output is a whole unit. Where a length splits unevenly, the odd unit goes right or below: centring puts it after the content and the later of two neighbours takes it of the space between them. `project: { x(edge), y(edge) }` maps edges to the caller's space, such as integer device pixels, and must be nondecreasing with whole results; neighbours share projected edges. `origin` offsets the group.
 - **Stacks:** faces stretch to the widest face (`stackWidth: "content"`, the default) or the whole room (`"fill"`). `locked: true` keeps an art-locked face at its size, centred in the column.
 - **Footer:** `variant: "footer"` pins secondary actions from the left edge and the primary at the right edge, with an optional `middle` slot (such as a pager) centred in the room, each at least the row gap apart. A sole action without a middle slot is centred. A footer that does not fit stacks with the middle slot first.
@@ -448,6 +448,71 @@ frame.layout(
   },
 );
 const session = frame.open({ close: dismiss, focus: restart.element, input: gate, layer });
+```
+
+## Switch, form rows, pager and HUD disc
+
+Each component keeps pure state and geometry in `runtime/ui/<component>` and its DOM part in `runtime/web/ui/dom/<component>` with an opt-in `<component>.css`. Every rule has zero specificity, lengths are unitless base px at `--ui-unit` from the game's tokens, colours are the `uiTheme` slots with system colours in forced-colours mode, `controls.css` owns the one focus fill, and every label is player text. Invalid input throws `RangeError`.
+
+**Form rows.** `createFormRows(document, layout)` makes the list; `createFormRow(document, options)` makes a row, one standard button (`createButton`), so the whole row is the press target with the kit's hold, availability and refusal paths. A row holds an optional `icon` (one state-free frame of the game's art), its `label` and optional `note` (its description), and a trailing value stack. With `switch: true` the row is `role="switch"` with `aria-checked` from `getState().checked`, and the stack shows the game's `ui-switch` art (`--ui-switch-on-image`, `--ui-switch-off-image`, such as a button skin's cut frames) over the state word `getState().value` (On, Off, Shown or Hidden); without it `value` is a described value. The list is a grid whose icon, label and value columns every row shares as a subgrid, so the value column is the widest value stack (or `value.track`, a fixed width) with no script measurement. `runtime/ui/formRow` `formRowPresentation(layout)` turns the game's `FormRowLayout` into the list's properties: `height`, `columnGap`, `padding`, `align` (`"center"` or `"start"` with icon and value `offset`s), the `icon` slot and size, the art-locked `switch` size, and the state word's `value.state` (`"center"` under the switch, or `"end"` with its ink's right edge on the switch's by `value.bearing`) and `value.gap`. Rows are `ACTION_GAPS.standard.stack` apart. In the theme rows have a clear idle face and no press dip; state changes only the fill. A centred switch keeps whole-unit placement with the odd unit right when its column's right edge is whole; a `track` keeps it independent of the words' widths.
+
+```ts
+import { createFormRow, createFormRows } from "@andornaut/game-kit/runtime/web/ui/dom/formRow";
+
+const rows = createFormRows(document, {
+  columnGap: 8,
+  height: 48,
+  icon: { size: 16, slot: 24 },
+  switch: { height: 16, width: 32 },
+  value: { gap: 4 },
+});
+const fps = createFormRow(document, {
+  getAction: () => ({ activate: toggleFps }),
+  getState: () => ({ checked: settings.fps, value: settings.fps ? words.on : words.off }),
+  icon: fpsIcon,
+  label: words.fpsCounter,
+  rule: HOLD_RULE,
+  switch: true,
+});
+rows.element.append(fps.element);
+```
+
+**Pager.** `runtime/ui/pager` `arrangePager(context, sizes)` is the action group arrangement of Previous, the count and Next in one row, `PAGER_GAP` (8, a button and its copy) or another gap token on both sides of the count; the buttons' press areas clamp to half the gap toward the count, which takes no presses. `pagerState(page, pages)` says which steps are available, and `pagerSize(sizes)` sizes the pager as a footer's `middle` slot. `createPager(document, options)` builds it on `createActionGroup`: two standard buttons in the game's `appearance` with the count between them in focus order, announced politely, as `countText(state)` or with `dots: true` as decorative dots (`--ui-pager-dot-size`, `--ui-pager-dot-gap`; accent for the current page, frame for the others) that take no focus. An unavailable step is disabled, or with `refusal: { cue, reducedMotion }` a pointer refusal that leaves the Tab order and plays `refusalCue` `refuse` on a press. `active()` is the caller's guard. `arrange({ width })` measures and places the parts; pass `pager.element` and `pagerSize` as a footer group's `middle`.
+
+```ts
+import { createPager } from "@andornaut/game-kit/runtime/web/ui/dom/pager";
+
+const pager = createPager(document, {
+  appearance: TEXT_BUTTON,
+  countText: ({ page, pages }) => words.page(page + 1, pages),
+  labels: { next: words.next, previous: words.previous },
+  rule: HOLD_RULE,
+  state: () => pagerState(page, pages),
+  step: (direction) => showPage(page + direction),
+});
+card.append(pager.element);
+pager.arrange({ width: CARD_CONTENT_WIDTH });
+```
+
+**HUD disc.** `createHudDisc(document, options)` is one round standard button whose box is the face, at the size token `size` names in `sizes` (`{ face, icon }`, such as two sizes per game). Lay it out and give it its press area as an action group's action, alone or with neighbours (`gap: "small"`, and `pressOverlap: "nearest"` where presses must keep the full minimum target). The face takes the theme's button slots and the focus fill, `--ui-hud-disc-edge` for an edge drawn in every state, the game's face `art`, and `--ui-hud-disc-image` with its focus, pressed and disabled variants for art faces; a pressed face takes the game's `--ui-button-press-dip`. State changes only the face fill or image and the icon colour, never the disc or press geometry; in forced colours the art steps aside for system fills. The `icon` (the game's SVG in `currentColor`, or art) fills its icon box, and `runtime/ui/hudDisc` `hudDiscIconOffset(size, bearings)` centres its ink, the box less its side `bearings`, on the face with the odd unit right and below; `hudDiscGeometry` projects both for a canvas.
+
+```ts
+import { createHudDisc } from "@andornaut/game-kit/runtime/web/ui/dom/hudDisc";
+
+const pause = createHudDisc(document, {
+  bearings: PAUSE_ICON_BEARINGS,
+  getAction: () => ({ activate: openPause }),
+  icon: pauseGlyph,
+  name: words.pause,
+  rule: HOLD_RULE,
+  size: "large",
+  sizes: HUD_DISC_SIZES,
+});
+hud.element.append(pause.element);
+const { face } = pause.size();
+hud.arrange({ gap: "small", width: face }, [
+  { element: pause.element, role: "navigation", size: { height: face, width: face } },
+]);
 ```
 
 ## Caller action order
@@ -658,6 +723,7 @@ The inventory uses implementation paths relative to `src/`, and tests sit beside
 | `ui/buttonLayout`, `ui/controlPresentation`                                                                                                             | Pure                     | Caller-token button group sizing, contained placement and current-navigation filtering                                                    |
 | `ui/focusKeys`, `ui/hitAreas`, `ui/spacing`                                                                                                             | Pure                     | Focus keys and steps, press areas by nearest control, and the button gaps                                                                 |
 | `ui/modalFrame`                                                                                                                                         | Pure                     | Modal frame geometry: width families, header, title clearance, scroll body, footer and close                                              |
+| `ui/formRow`, `ui/pager`, `ui/hudDisc`                                                                                                                  | Pure                     | Form row layout properties, pager arrangement and state, HUD disc icon placement                                                          |
 | `view/fitCheck`, `view/modalDim`, `view/pagePoint`, `view/renderScale`, `view/settleFit`                                                                | Pure                     | Fit decisions, dimming, coordinate mapping, device render scale and settling                                                              |
 | `web/build/buildLabel`, `web/build/buildVersion`, `web/build/phaserBuild`                                                                               | Pure                     | Build labels, commit selection, reduced Phaser entries and feature flags                                                                  |
 | `web/crash/crashModel`                                                                                                                                  | Pure                     | Crash classification and presentation data                                                                                                |
@@ -676,6 +742,7 @@ The inventory uses implementation paths relative to `src/`, and tests sit beside
 | `web/save/dom/localSaveStorage`, `web/save/dom/pageSessionStore`                                                                                        | Browser DOM              | The page's `localStorage` and `sessionStorage`                                                                                            |
 | `web/ui/dom/*` and its `ui.css` and opt-in `controls.css`, `layoutTree.css`, `controlPresentation.css`, `actionGroup.css` and `uiTheme.css` stylesheets | Browser DOM, CSS         | HTML UI: units, layout values, modal layer, focus cues, presses, frames, button skins, action groups, theme, chrome, refusal, decoded art |
 | `web/ui/dom/modalFrame` and its opt-in `modalFrame.css` stylesheet                                                                                      | Browser DOM, CSS         | HTML modal frame on the modal layer: backdrop, dialog card, skin layer, scroll body, footer and close                                     |
+| `web/ui/dom/formRow`, `web/ui/dom/pager`, `web/ui/dom/hudDisc` and their opt-in stylesheets                                                             | Browser DOM, CSS         | HTML switch and form rows, pager and HUD disc on standard buttons and action groups                                                       |
 | `web/view/dom/watchFrameTurn`                                                                                                                           | Browser DOM              | Marks the frame turn on `<html>` and requests the orientation lock                                                                        |
 | `web/headers/vite/securityHeadersPlugin`                                                                                                                | Vite, Node build time    | Writes `_headers` with per-page inline hashes                                                                                             |
 | `web/build/vite/buildInfo`, `web/build/vite/gameConfig`                                                                                                 | Vite, Node build time    | Build constant declarations and a game's whole Vite and Vitest config                                                                     |

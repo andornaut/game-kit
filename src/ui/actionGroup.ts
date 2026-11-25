@@ -1,13 +1,14 @@
 import type { Point, Rect } from "../rect.ts";
 import type { ButtonRole, ButtonSize } from "./buttonLayout.ts";
-import { HIT_RULE, hitMargin, type HitRule } from "./hitAreas.ts";
+import { HIT_RULE, hitMargin, type HitRule, pressedArea } from "./hitAreas.ts";
 import { BUTTON_GAP, SMALL_BUTTON_GAP, STACK_BUTTON_GAP } from "./spacing.ts";
 
 // Action groups: a row or a stack of action faces that owns the spacing between them and each
 // face's press area. Every input and output is a whole game unit. Layout boxes equal the drawn
 // faces (outer ink bounds, lip included); gaps are measured between them. Each press area reaches
 // past its face by the press margin, clamped toward a neighbour to its share of the space between
-// them, so press areas never overlap and never change layout. Where a length splits unevenly the
+// them, so press areas never overlap and never change layout; with nearest overlap they keep their
+// full size and a press goes to the nearest face centre. Where a length splits unevenly the
 // odd unit goes to the right or bottom side: centring leaves it after the content, and the later
 // of two neighbours takes it of the space between them.
 
@@ -36,6 +37,12 @@ export type ActionGapSelection = keyof typeof ACTION_GAPS | ActionGap;
 // How far a press area reaches past its face before clamping: the shared hit rule (rounded up to a
 // whole unit and grown to its minimum target) or a fixed margin.
 export type ActionPress = HitRule | { readonly margin: number };
+
+// How press areas meet between neighbouring actions. clamp: each outset is clamped to its share of
+// the space between the faces, so press areas never overlap. nearest: each press area keeps its
+// full size and may overlap a neighbour's; a press goes to the action whose face centre is nearest
+// (pressedAction). Toward a footer's middle slot both clamp.
+export type ActionPressOverlap = "clamp" | "nearest";
 
 // Maps a whole-unit edge to the caller's output space, such as integer device pixels. Each axis
 // must be nondecreasing and return whole numbers. Neighbours share projected edges, so projection
@@ -72,6 +79,7 @@ export interface ActionGroupContext<K = unknown, T = never> {
   readonly middle?: ButtonSize;
   readonly origin?: Point;
   readonly press?: ActionPress;
+  readonly pressOverlap?: ActionPressOverlap;
   readonly project?: ActionProjection;
   // Stacked faces share the widest face's width (content) or the whole room (fill).
   readonly stackWidth?: "content" | "fill";
@@ -86,7 +94,10 @@ export interface PlacedAction<K, T = never> {
   readonly key: K;
   // The place in visual order among visible actions: secondary actions first, primary last.
   readonly order: number;
+  // How far the action takes presses past its face: the press area, or with nearest overlap the
+  // part of it where this face's centre is nearest along the group's axis (what the DOM draws).
   readonly outset: ActionOutset;
+  // The press area. With nearest overlap it may overlap a neighbour's.
   readonly press: Rect;
   readonly role: ButtonRole;
   readonly text?: T;
@@ -106,6 +117,7 @@ export interface ActionArrangement<K, T = never> {
   // The group box: the whole room across and the content's height.
   readonly group: Rect;
   readonly middle?: Rect;
+  readonly pressOverlap: ActionPressOverlap;
   readonly variant: ActionVariant;
 }
 
@@ -284,6 +296,35 @@ function clampNeighbours(axis: ActionAxis, entries: readonly Entry[]): void {
   }
 }
 
+// Cuts each pair of neighbouring actions' outsets toward each other at the whole-unit edge where
+// the nearer face centre changes, a tie going to the earlier action; toward a middle slot it
+// clamps as clampNeighbours does.
+function routeNeighbours(axis: ActionAxis, entries: readonly Entry[]): void {
+  const along = axis === "row" ? "x" : "y";
+  const length = axis === "row" ? "width" : "height";
+  for (let index = 1; index < entries.length; index += 1) {
+    const previous = entries[index - 1]!;
+    const next = entries[index]!;
+    const end = previous.face[along] + previous.face[length];
+    const start = next.face[along];
+    const space = start - end;
+    let edge = end + Math.floor(space / 2);
+    if (previous.item !== undefined && next.item !== undefined) {
+      // A unit cell [k, k + 1) is the earlier action's while its centre k + 1/2 is no nearer the
+      // later face's centre, so the cut falls at floor(midpoint + 1/2).
+      const centres =
+        previous.face[along] + previous.face[length] / 2 + start + next.face[length] / 2;
+      edge = Math.min(start, Math.max(end, Math.floor(centres / 2 + 1 / 2)));
+    }
+    if (previous.outset !== undefined) {
+      previous.outset[along].after = Math.min(previous.outset[along].after, edge - end);
+    }
+    if (next.outset !== undefined) {
+      next.outset[along].before = Math.min(next.outset[along].before, start - edge);
+    }
+  }
+}
+
 function project(projection: ActionProjection, rect: Rect): Rect {
   const left = projection.x(rect.x);
   const right = projection.x(rect.x + rect.width);
@@ -314,6 +355,7 @@ export function arrangeActions<K, T = never>(
     middle,
     origin = { x: 0, y: 0 },
     press = HIT_RULE,
+    pressOverlap = "clamp",
     project: projection = IDENTITY,
     stackWidth = "content",
     variant = "group",
@@ -330,6 +372,9 @@ export function arrangeActions<K, T = never>(
   }
   if (stackWidth !== "content" && stackWidth !== "fill") {
     throw new RangeError("Unknown stack width");
+  }
+  if (pressOverlap !== "clamp" && pressOverlap !== "nearest") {
+    throw new RangeError("Unknown press overlap");
   }
   if (middle !== undefined) {
     if (variant !== "footer") {
@@ -381,7 +426,15 @@ export function arrangeActions<K, T = never>(
   const withOutsets = entries.map((entry) =>
     entry.item === undefined ? entry : { ...entry, outset: desiredOutset(press, entry.item.size) },
   );
-  clampNeighbours(placedAxis, withOutsets);
+  // The full press areas, kept with nearest overlap.
+  const full = withOutsets.map(({ outset }) =>
+    outset === undefined ? undefined : { x: { ...outset.x }, y: { ...outset.y } },
+  );
+  if (pressOverlap === "nearest") {
+    routeNeighbours(placedAxis, withOutsets);
+  } else {
+    clampNeighbours(placedAxis, withOutsets);
+  }
   const height =
     placedAxis === "row"
       ? Math.max(0, ...withOutsets.map(({ face }) => face.height))
@@ -390,22 +443,24 @@ export function arrangeActions<K, T = never>(
   const shift = (rect: Rect): Rect => ({ ...rect, x: rect.x + origin.x, y: rect.y + origin.y });
   const placed = new Map<K, PlacedAction<K, T>>();
   let middleRect: Rect | undefined;
-  for (const entry of withOutsets) {
+  const around = (entry: Entry, outset: { x: Span; y: Span }) =>
+    project(
+      projection,
+      shift({
+        height: entry.face.height + outset.y.before + outset.y.after,
+        width: entry.face.width + outset.x.before + outset.x.after,
+        x: entry.face.x - outset.x.before,
+        y: entry.face.y - outset.y.before,
+      }),
+    );
+  for (const [index, entry] of withOutsets.entries()) {
     const face = project(projection, shift(entry.face));
     if (entry.item === undefined) {
       middleRect = face;
       continue;
     }
-    const { x, y } = entry.outset!;
-    const pressRect = project(
-      projection,
-      shift({
-        height: entry.face.height + y.before + y.after,
-        width: entry.face.width + x.before + x.after,
-        x: entry.face.x - x.before,
-        y: entry.face.y - y.before,
-      }),
-    );
+    const taken = around(entry, entry.outset!);
+    const pressRect = pressOverlap === "nearest" ? around(entry, full[index]!) : taken;
     const item = entry.item as ActionItem<K>;
     placed.set(item.key, {
       face,
@@ -413,10 +468,10 @@ export function arrangeActions<K, T = never>(
       key: item.key,
       order: placed.size,
       outset: {
-        bottom: pressRect.y + pressRect.height - (face.y + face.height),
-        left: face.x - pressRect.x,
-        right: pressRect.x + pressRect.width - (face.x + face.width),
-        top: face.y - pressRect.y,
+        bottom: taken.y + taken.height - (face.y + face.height),
+        left: face.x - taken.x,
+        right: taken.x + taken.width - (face.x + face.width),
+        top: face.y - taken.y,
       },
       press: pressRect,
       role: item.role,
@@ -431,6 +486,22 @@ export function arrangeActions<K, T = never>(
     gap,
     group: project(projection, shift({ height, width, x: 0, y: 0 })),
     ...(middleRect === undefined ? {} : { middle: middleRect }),
+    pressOverlap,
     variant,
   };
+}
+
+// The action a press at point lands on: of the visible actions whose press area takes it in,
+// the one whose face centre is nearest, the earlier in the caller's order on a tie (hitAreas
+// pressedArea). Point is in the arrangement's projected space.
+export function pressedAction<K, T>(
+  arrangement: ActionArrangement<K, T>,
+  point: Point,
+): K | undefined {
+  return pressedArea(
+    arrangement.actions.flatMap((action) =>
+      action.hidden ? [] : [{ art: action.face, hit: action.press, key: action.key }],
+    ),
+    point,
+  );
 }
