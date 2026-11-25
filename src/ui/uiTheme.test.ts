@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   colourProperties,
   colourProperty,
+  gameTextRoleProperties,
+  gameTextRoleReferences,
   TEXT_ROLES,
   textRoleClass,
   textRoleProperties,
@@ -66,5 +68,37 @@ describe("text roles", () => {
     { lineHeight: 16, size: 12, weight: 450.5 },
   ])("refuses %o", (style) => {
     expect(() => textRoleProperties({ body: style })).toThrow(RangeError);
+  });
+});
+
+describe("game text roles", () => {
+  it("writes each role's lengths under its kebab-case name", () => {
+    expect(
+      gameTextRoleProperties({ dialogueName: { lineHeight: 18, size: 14, weight: 700 } }),
+    ).toEqual({
+      "--ui-text-dialogue-name-line-height": 18,
+      "--ui-text-dialogue-name-size": 14,
+      "--ui-text-dialogue-name-weight": 700,
+    });
+  });
+
+  it("refers an element to its role's lengths", () => {
+    expect(gameTextRoleReferences("stageNumber")).toEqual({
+      "--ui-text-line-height": "var(--ui-text-stage-number-line-height)",
+      "--ui-text-size": "var(--ui-text-stage-number-size)",
+      "--ui-text-weight": "var(--ui-text-stage-number-weight)",
+    });
+  });
+
+  it.each(["heading", "Dialogue", "dialogue-name", "", "2up"])("refuses the name %j", (name) => {
+    const style = { lineHeight: 16, size: 12, weight: 400 };
+    expect(() => gameTextRoleProperties({ [name]: style })).toThrow(RangeError);
+    expect(() => gameTextRoleReferences(name)).toThrow(RangeError);
+  });
+
+  it("refuses a style as a kit role does", () => {
+    expect(() =>
+      gameTextRoleProperties({ zone: { lineHeight: 0, size: 12, weight: 400 } }),
+    ).toThrow(RangeError);
   });
 });

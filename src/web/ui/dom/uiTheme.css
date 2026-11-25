@@ -19,7 +19,7 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-:where(.ui-text-body, .ui-text-heading, .ui-text-label, .ui-text-supporting) {
+:where(.ui-text-body, .ui-text-heading, .ui-text-label, .ui-text-supporting, .ui-text-role) {
   margin: 0;
 }
 
@@ -49,6 +49,14 @@
   line-height: calc(var(--ui-text-supporting-line-height) * var(--ui-unit, 1) * 1px);
   font-weight: var(--ui-text-supporting-weight);
   color: var(--ui-colour-text-secondary, currentColor);
+}
+
+/* A game's own text role (setTextRole): the element holds references to the role's lengths,
+   which the theme root holds, and inherits its colour. */
+:where(.ui-text-role) {
+  font-size: calc(var(--ui-text-size) * var(--ui-unit, 1) * 1px);
+  line-height: calc(var(--ui-text-line-height) * var(--ui-unit, 1) * 1px);
+  font-weight: var(--ui-text-weight);
 }
 
 /* The theme root feeds its focus slots to controls.css's focus fill, the one focus treatment of

@@ -7,11 +7,18 @@ import { describe, expect, it } from "vitest";
 import {
   BUTTON_RESET_CLASS,
   colourProperty,
+  GAME_TEXT_ROLE_CLASS,
   TEXT_ROLES,
   textRoleClass,
   UI_COLOUR_ROLES,
 } from "../../../ui/uiTheme.ts";
-import { setTextRoles, setUiColours, UI_THEME_ATTRIBUTE } from "./uiTheme.ts";
+import {
+  setGameTextRoles,
+  setTextRole,
+  setTextRoles,
+  setUiColours,
+  UI_THEME_ATTRIBUTE,
+} from "./uiTheme.ts";
 
 const css = readFileSync(join(import.meta.dirname, "uiTheme.css"), "utf8").replace(
   /\/\*[\s\S]*?\*\//g,
@@ -46,6 +53,32 @@ describe("setTextRoles", () => {
   });
 });
 
+describe("game text roles", () => {
+  it("writes a game role's lengths beside the kit's and refuses a kit role's name", () => {
+    const root = document.createElement("div");
+    const style = { lineHeight: 18, size: 14, weight: 700 };
+    expect(setGameTextRoles({ dialogueName: style }, root)).toBe(true);
+    expect(root.style.getPropertyValue("--ui-text-dialogue-name-size")).toBe("14");
+    expect(setGameTextRoles({ dialogueName: style }, root)).toBe(false);
+    expect(() => setGameTextRoles({ body: style }, root)).toThrow(RangeError);
+  });
+
+  it("gives an element one role, a kit class or a game role's references", () => {
+    const element = document.createElement("p");
+    element.className = "dialogue-line";
+    setTextRole("dialogueLine", element);
+    expect(element.className).toBe(`dialogue-line ${GAME_TEXT_ROLE_CLASS}`);
+    expect(element.style.getPropertyValue("--ui-text-size")).toBe(
+      "var(--ui-text-dialogue-line-size)",
+    );
+    setTextRole("heading", element);
+    expect(element.className).toBe("dialogue-line ui-text-heading");
+    expect(element.style.getPropertyValue("--ui-text-size")).toBe("");
+    expect(() => setTextRole("Heading", element)).toThrow(RangeError);
+    expect(element.className).toBe("dialogue-line ui-text-heading");
+  });
+});
+
 describe("uiTheme.css", () => {
   it("reads every text and button colour slot and text role", () => {
     // Surface slots are read by the components that draw surfaces.
@@ -60,6 +93,10 @@ describe("uiTheme.css", () => {
       }
     }
     expect(css).toContain(`.${BUTTON_RESET_CLASS}`);
+    expect(css).toContain(`.${GAME_TEXT_ROLE_CLASS}`);
+    for (const field of ["size", "line-height", "weight"]) {
+      expect(css).toContain(`var(--ui-text-${field})`);
+    }
   });
 
   it("matches only through zero-specificity selectors", () => {

@@ -1,5 +1,12 @@
 import {
   colourProperties,
+  GAME_TEXT_ROLE_CLASS,
+  gameTextRoleProperties,
+  gameTextRoleReferences,
+  type GameTextRoles,
+  TEXT_ROLES,
+  type TextRole,
+  textRoleClass,
   textRoleProperties,
   type TextRoles,
   type UiColours,
@@ -24,4 +31,29 @@ export function setUiColours(colours: UiColours, root: HTMLElement): boolean {
 // writing any, on an invalid role.
 export function setTextRoles(roles: TextRoles, root: ElementCSSInlineStyle): boolean {
   return writeLayoutProperties(textRoleProperties(roles), root);
+}
+
+// Writes each game text role's size, line height and weight on root, in base px, beside the kit's
+// roles. Throws, before writing any, on an invalid role or a name that is a kit role's.
+export function setGameTextRoles(roles: GameTextRoles, root: ElementCSSInlineStyle): boolean {
+  return writeLayoutProperties(gameTextRoleProperties(roles), root);
+}
+
+const REFERENCES = ["--ui-text-size", "--ui-text-line-height", "--ui-text-weight"];
+
+// Gives element one text role, a kit role's class or a game role's class and references, and
+// removes any other role given this way. Throws, before any change, on an invalid game role.
+export function setTextRole(role: TextRole | string, element: HTMLElement): void {
+  const kit = (TEXT_ROLES as readonly string[]).includes(role);
+  const references = kit ? {} : gameTextRoleReferences(role);
+  element.classList.remove(GAME_TEXT_ROLE_CLASS, ...TEXT_ROLES.map(textRoleClass));
+  for (const name of REFERENCES) {
+    element.style.removeProperty(name);
+  }
+  if (kit) {
+    element.classList.add(textRoleClass(role as TextRole));
+    return;
+  }
+  element.classList.add(GAME_TEXT_ROLE_CLASS);
+  writeLayoutProperties(references, element);
 }

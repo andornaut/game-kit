@@ -49,6 +49,11 @@ export type TextRoles = Readonly<Partial<Record<TextRole, TextStyle>>>;
 // The opt-in class that resets a native button's user-agent styling with zero specificity.
 export const BUTTON_RESET_CLASS = "ui-button-reset";
 
+// The opt-in classes of buttonFrame.css: a nine-slice frame of any size that follows its button's
+// state, and content that moves with the frame's lip.
+export const BUTTON_FRAME_CLASS = "ui-button-frame";
+export const BUTTON_FRAME_CONTENT_CLASS = "ui-button-frame-content";
+
 const HEX = /^#(?:[0-9a-f]{6}|[0-9a-f]{8})$/i;
 
 const kebab = (name: string) => name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
@@ -114,4 +119,49 @@ export function textRoleProperties(roles: TextRoles): Record<string, number> {
     properties[`${name}-weight`] = style.weight;
   }
   return properties;
+}
+
+// A game's own text roles beyond the kit's four, by lower camelCase name, such as dialogueName.
+// Each takes the same size, line height and weight as a kit role and inherits its colour.
+export type GameTextRoles = Readonly<Record<string, TextStyle>>;
+
+// The class that applies a game text role: it reads the role's lengths through the --ui-text-size,
+// --ui-text-line-height and --ui-text-weight references the element holds (gameTextRoleReferences).
+export const GAME_TEXT_ROLE_CLASS = "ui-text-role";
+
+const GAME_ROLE_NAME = /^[a-z][A-Za-z0-9]*$/;
+
+// The custom property prefix of a game text role, such as --ui-text-dialogue-name. Throws on a
+// name that is not lower camelCase or that is one of the kit's four roles.
+function gameRolePrefix(role: string): string {
+  if (!GAME_ROLE_NAME.test(role) || (TEXT_ROLES as readonly string[]).includes(role)) {
+    throw new RangeError(`A game text role needs its own lower camelCase name: ${role}`);
+  }
+  return `--ui-text-${kebab(role)}`;
+}
+
+// Each game role's size, line height and weight properties, such as --ui-text-dialogue-name-size,
+// as unitless numbers. Throws as textRoleProperties does, or on a name gameRolePrefix refuses.
+export function gameTextRoleProperties(roles: GameTextRoles): Record<string, number> {
+  const properties: Record<string, number> = {};
+  for (const [role, style] of Object.entries(roles)) {
+    const prefix = gameRolePrefix(role);
+    const checked = textRoleProperties({ body: style });
+    for (const field of ["size", "line-height", "weight"]) {
+      properties[`${prefix}-${field}`] = checked[`--ui-text-body-${field}`]!;
+    }
+  }
+  return properties;
+}
+
+// The properties an element of a game text role holds: references to the role's lengths, which
+// the theme root holds, so a change to the role reaches every element of it.
+export function gameTextRoleReferences(role: string): Record<string, string> {
+  const prefix = gameRolePrefix(role);
+  return Object.fromEntries(
+    ["size", "line-height", "weight"].map((field) => [
+      `--ui-text-${field}`,
+      `var(${prefix}-${field})`,
+    ]),
+  );
 }

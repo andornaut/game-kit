@@ -5,7 +5,11 @@
    box, face and icon box keep their geometry, and the press area is the action group's. A game
    sets --ui-hud-disc-edge (base px, default 0) for an edge drawn in every state, in the frame
    slot, and --ui-hud-disc-image and its focus, pressed and disabled variants for art faces, such
-   as a button skin's cut frames. */
+   as a button skin's cut frames. A game's own face fill draws over those, under the art and icon:
+   --ui-hud-disc-fill, a ring --ui-hud-disc-ring base px wide inside the edge in
+   --ui-hud-disc-ring-colour, and the icon's --ui-hud-disc-ink, each with selected, focus, pressed
+   and disabled variants (--ui-hud-disc-focus-fill). A state's fill or ink left unset shows the
+   theme's for that state; a state's ring colour left unset keeps the idle one. */
 
 :where(.ui-hud-disc) {
   appearance: none;
@@ -60,6 +64,47 @@
   background-image: var(--ui-hud-disc-disabled-image, var(--ui-hud-disc-image, none));
 }
 
+/* The game's face fill: a layer over the face's theme fill and image, inside its edge, under the
+   art and icon. Unset, it draws nothing. The ring is part of the fill, the same width in every
+   state. The last matching state wins: selected, focus, pressed, then disabled. */
+:where(.ui-hud-disc > .ui-hud-disc-face)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: calc(var(--ui-hud-disc-ring, 0) * var(--ui-unit, 1) * 1px) solid
+    var(--ui-hud-disc-ring-colour, transparent);
+  border-radius: 50%;
+  background-color: var(--ui-hud-disc-fill, transparent);
+  pointer-events: none;
+}
+
+:where(button.ui-hud-disc[data-ui-selected] > .ui-hud-disc-face)::before {
+  background-color: var(--ui-hud-disc-selected-fill, transparent);
+  border-color: var(
+    --ui-hud-disc-selected-ring-colour,
+    var(--ui-hud-disc-ring-colour, transparent)
+  );
+}
+
+:where(button.ui-hud-disc:focus-visible > .ui-hud-disc-face)::before {
+  background-color: var(--ui-hud-disc-focus-fill, transparent);
+  border-color: var(--ui-hud-disc-focus-ring-colour, var(--ui-hud-disc-ring-colour, transparent));
+}
+
+:where(button.ui-hud-disc[data-ui-pressed] > .ui-hud-disc-face)::before {
+  background-color: var(--ui-hud-disc-pressed-fill, transparent);
+  border-color: var(--ui-hud-disc-pressed-ring-colour, var(--ui-hud-disc-ring-colour, transparent));
+}
+
+:where(button.ui-hud-disc:is(:disabled, [aria-disabled="true"]) > .ui-hud-disc-face)::before {
+  background-color: var(--ui-hud-disc-disabled-fill, transparent);
+  border-color: var(
+    --ui-hud-disc-disabled-ring-colour,
+    var(--ui-hud-disc-ring-colour, transparent)
+  );
+}
+
 /* The game's face art fills the face under the icon. */
 :where(.ui-hud-disc-face > .ui-hud-disc-art) {
   position: absolute;
@@ -81,6 +126,29 @@
   pointer-events: none;
 }
 
+/* The icon's ink; unset, it is the face's text colour for the state. */
+:where(.ui-hud-disc-face > .ui-hud-disc-icon) {
+  color: var(--ui-hud-disc-ink, currentColor);
+}
+
+:where(button.ui-hud-disc[data-ui-selected] > .ui-hud-disc-face > .ui-hud-disc-icon) {
+  color: var(--ui-hud-disc-selected-ink, currentColor);
+}
+
+:where(button.ui-hud-disc:focus-visible > .ui-hud-disc-face > .ui-hud-disc-icon) {
+  color: var(--ui-hud-disc-focus-ink, currentColor);
+}
+
+:where(button.ui-hud-disc[data-ui-pressed] > .ui-hud-disc-face > .ui-hud-disc-icon) {
+  color: var(--ui-hud-disc-pressed-ink, currentColor);
+}
+
+:where(
+  button.ui-hud-disc:is(:disabled, [aria-disabled="true"]) > .ui-hud-disc-face > .ui-hud-disc-icon
+) {
+  color: var(--ui-hud-disc-disabled-ink, currentColor);
+}
+
 :where(.ui-hud-disc-icon > *) {
   display: block;
   width: 100%;
@@ -88,10 +156,18 @@
   image-rendering: pixelated;
 }
 
-/* System fills show the state; the game's face art steps aside. */
+/* System fills show the state; the game's face art, fill and ink step aside. */
 @media (forced-colors: active) {
   :where(.ui-hud-disc > .ui-hud-disc-face) {
     background-image: none;
+  }
+
+  :where(.ui-hud-disc > .ui-hud-disc-face)::before {
+    display: none;
+  }
+
+  :where(.ui-hud-disc-face > .ui-hud-disc-icon) {
+    color: currentColor;
   }
 
   :where(.ui-hud-disc-face > .ui-hud-disc-art) {

@@ -10,14 +10,14 @@ import {
 } from "../../../ui/index.ts";
 import { type ActionGroupView, createActionGroup } from "./actionGroup.ts";
 import { type ButtonAppearance, type ButtonView, createButton } from "./button.ts";
-import { type RefusalCue, refuse } from "./refusalCue.ts";
+import { type RefusalCue, refuse, refusing, stopRefusal } from "./refusalCue.ts";
 
 // The HTML pager (pager.css with actionGroup.css): an action group holding Previous, the page
 // count and Next, each a direct child in that focus order. Previous and Next are standard buttons
 // (button.ts) in the game's appearance; the count is player text, shown as text or as decorative
 // dots that take no focus or presses, and announced politely. An unavailable step is a disabled
 // button, or with a refusal cue a pointer refusal: out of the Tab order, playing the cue on a
-// press. The group element can be a footer group's middle slot.
+// press unless it is already playing there. The group element can be a footer group's middle slot.
 
 export const PAGER_CLASS = "ui-pager";
 export const PAGER_COUNT_CLASS = "ui-pager-count";
@@ -42,7 +42,8 @@ export interface PagerOptions {
   readonly step: (direction: -1 | 1) => void;
   // A caller guard, such as readiness or a modal scope: false blocks both steps.
   readonly active?: () => boolean;
-  // Plays the cue on a pointer press of an unavailable step instead of disabling it.
+  // Plays the cue on a pointer press of an unavailable step instead of disabling it. A press while
+  // the cue plays on that step leaves it playing.
   readonly refusal?: { readonly cue: RefusalCue; readonly reducedMotion: () => boolean };
   readonly className?: string;
 }
@@ -67,6 +68,9 @@ export interface PagerView {
   // Each part's natural face in whole base px.
   measure(): PagerSizes;
   arrange(context: PagerArrangeContext): ActionArrangement<HTMLElement>;
+  // Stops a refusal cue playing on either step, such as when the page or the scene changes.
+  stopRefusal(): void;
+  // Stops any refusal cue and releases both buttons and the group.
   dispose(): void;
 }
 
@@ -109,8 +113,11 @@ export function createPager(document: Document, options: PagerOptions): PagerVie
       ...(options.refusal === undefined
         ? {}
         : {
-            onPointerRefusal: () =>
-              refuse(options.refusal!.cue, options.refusal!.reducedMotion(), button.element),
+            onPointerRefusal: () => {
+              if (!refusing(button.element)) {
+                refuse(options.refusal!.cue, options.refusal!.reducedMotion(), button.element);
+              }
+            },
           }),
       rule: options.rule,
     });
@@ -151,6 +158,10 @@ export function createPager(document: Document, options: PagerOptions): PagerVie
     ]);
     return { count: countSize!, next: nextSize!, previous: previousSize! };
   };
+  const stopRefusals = () => {
+    stopRefusal(previous.element);
+    stopRefusal(next.element);
+  };
   return {
     arrange(context) {
       const sizes = context.sizes ?? measure();
@@ -171,6 +182,7 @@ export function createPager(document: Document, options: PagerOptions): PagerVie
     },
     count,
     dispose() {
+      stopRefusals();
       previous.dispose();
       next.dispose();
       group.dispose();
@@ -181,5 +193,6 @@ export function createPager(document: Document, options: PagerOptions): PagerVie
     next,
     previous,
     refresh,
+    stopRefusal: stopRefusals,
   };
 }

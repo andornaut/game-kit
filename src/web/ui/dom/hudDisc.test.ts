@@ -154,8 +154,25 @@ describe("hudDisc.css", () => {
       ...css.matchAll(/(:focus-visible|\[data-ui-pressed\]|:disabled)[^{]*\{([^}]*)\}/g),
     ]) {
       const properties = [...state[2]!.matchAll(/([a-z-]+)\s*:/g)].map((match) => match[1]);
-      expect(properties).toEqual(["background-image"]);
+      for (const property of properties) {
+        expect(["background-color", "background-image", "border-color", "color"]).toContain(
+          property,
+        );
+      }
     }
     expect(css).toContain("@media (forced-colors: active)");
+  });
+
+  it("draws the game's fill, ring and ink per state, which forced colours set aside", () => {
+    for (const state of ["", "selected-", "focus-", "pressed-", "disabled-"]) {
+      expect(css).toContain(`var(--ui-hud-disc-${state}fill, transparent)`);
+      expect(css).toContain(`var(--ui-hud-disc-${state}ink, currentColor)`);
+      expect(css).toMatch(new RegExp(`var\\(\\s*--ui-hud-disc-${state}ring-colour`));
+    }
+    // The ring is one width in every state, part of the fill layer under the art and icon.
+    expect(css.match(/--ui-hud-disc-ring,/g)).toHaveLength(1);
+    const forced = css.slice(css.indexOf("@media (forced-colors: active)"));
+    expect(forced).toMatch(/\.ui-hud-disc-face\)::before\s*\{\s*display: none;/);
+    expect(forced).toMatch(/\.ui-hud-disc-icon\)\s*\{\s*color: currentColor;/);
   });
 });

@@ -1,0 +1,168 @@
+/* Opt-in button frame states (buttonFrame), for a nine-slice frame of any size on a standard
+   button: the face itself or a layer inside the button. Every rule matches through :where(), with
+   zero specificity, so a game's component class always wins. The frame follows the button's state
+   from the kit's attributes: role primary, selected, pressed and disabled. The game points the
+   state tokens at its frames' properties (setNineSlice, a button skin): --ui-button-frame-image,
+   --ui-button-frame-slice and --ui-button-frame-width (a whole-pixel length, as --ui-frame-width)
+   for the idle frame, and the same three for primary, selected, pressed, primary-pressed and
+   disabled, such as --ui-button-frame-primary-pressed-image. A state's token left unset takes the
+   idle one, a primary pressed one the primary one. The last matching state wins: primary,
+   selected, pressed, then disabled. */
+
+:where(.ui-button-frame) {
+  --ui-button-frame-state-image: var(--ui-button-frame-image, none);
+  --ui-button-frame-state-slice: var(--ui-button-frame-slice, 0);
+  --ui-button-frame-state-width: var(--ui-button-frame-width, 0px);
+
+  box-sizing: border-box;
+  border-style: solid;
+  border-width: var(--ui-button-frame-state-width);
+  border-image-source: var(--ui-button-frame-state-image);
+  border-image-slice: var(--ui-button-frame-state-slice) fill;
+  background-clip: padding-box;
+  image-rendering: pixelated;
+}
+
+:where(
+  button[data-ui-button-role="primary"] .ui-button-frame,
+  button[data-ui-button-role="primary"].ui-button-frame
+) {
+  --ui-button-frame-state-image: var(
+    --ui-button-frame-primary-image,
+    var(--ui-button-frame-image, none)
+  );
+  --ui-button-frame-state-slice: var(
+    --ui-button-frame-primary-slice,
+    var(--ui-button-frame-slice, 0)
+  );
+  --ui-button-frame-state-width: var(
+    --ui-button-frame-primary-width,
+    var(--ui-button-frame-width, 0px)
+  );
+}
+
+:where(button[data-ui-selected] .ui-button-frame, button[data-ui-selected].ui-button-frame) {
+  --ui-button-frame-state-image: var(
+    --ui-button-frame-selected-image,
+    var(--ui-button-frame-image, none)
+  );
+  --ui-button-frame-state-slice: var(
+    --ui-button-frame-selected-slice,
+    var(--ui-button-frame-slice, 0)
+  );
+  --ui-button-frame-state-width: var(
+    --ui-button-frame-selected-width,
+    var(--ui-button-frame-width, 0px)
+  );
+}
+
+:where(button[data-ui-pressed] .ui-button-frame, button[data-ui-pressed].ui-button-frame) {
+  --ui-button-frame-state-image: var(
+    --ui-button-frame-pressed-image,
+    var(--ui-button-frame-image, none)
+  );
+  --ui-button-frame-state-slice: var(
+    --ui-button-frame-pressed-slice,
+    var(--ui-button-frame-slice, 0)
+  );
+  --ui-button-frame-state-width: var(
+    --ui-button-frame-pressed-width,
+    var(--ui-button-frame-width, 0px)
+  );
+}
+
+:where(
+  button[data-ui-button-role="primary"][data-ui-pressed] .ui-button-frame,
+  button[data-ui-button-role="primary"][data-ui-pressed].ui-button-frame
+) {
+  --ui-button-frame-state-image: var(
+    --ui-button-frame-primary-pressed-image,
+    var(--ui-button-frame-primary-image, var(--ui-button-frame-image, none))
+  );
+  --ui-button-frame-state-slice: var(
+    --ui-button-frame-primary-pressed-slice,
+    var(--ui-button-frame-primary-slice, var(--ui-button-frame-slice, 0))
+  );
+  --ui-button-frame-state-width: var(
+    --ui-button-frame-primary-pressed-width,
+    var(--ui-button-frame-primary-width, var(--ui-button-frame-width, 0px))
+  );
+}
+
+:where(
+  button:is(:disabled, [aria-disabled="true"]) .ui-button-frame,
+  button:is(:disabled, [aria-disabled="true"]).ui-button-frame
+) {
+  --ui-button-frame-state-image: var(
+    --ui-button-frame-disabled-image,
+    var(--ui-button-frame-image, none)
+  );
+  --ui-button-frame-state-slice: var(
+    --ui-button-frame-disabled-slice,
+    var(--ui-button-frame-slice, 0)
+  );
+  --ui-button-frame-state-width: var(
+    --ui-button-frame-disabled-width,
+    var(--ui-button-frame-width, 0px)
+  );
+}
+
+/* Inside the theme root, press and focus fill the frame's inside from the pressed slot and
+   controls.css's one focus fill: the frame keeps its edges and drops its centre. Focus wins over
+   press, as on a theme face. A disabled frame keeps its own centre. */
+:where(
+  [data-ui-theme] button[data-ui-pressed]:not(:disabled, [aria-disabled="true"]) .ui-button-frame,
+  [data-ui-theme] button[data-ui-pressed]:not(:disabled, [aria-disabled="true"]).ui-button-frame
+) {
+  border-image-slice: var(--ui-button-frame-state-slice);
+  background-color: var(--ui-colour-button-pressed-face);
+}
+
+:where(
+  [data-ui-theme] button:focus-visible:not(:disabled, [aria-disabled="true"]) .ui-button-frame,
+  [data-ui-theme] button:focus-visible:not(:disabled, [aria-disabled="true"]).ui-button-frame
+) {
+  border-image-slice: var(--ui-button-frame-state-slice);
+  background-color: var(--ui-button-focus-fill, Highlight);
+}
+
+/* Content the game marks to move with the frame's lip: down --ui-button-frame-pressed-shift base
+   px while pressed and --ui-button-frame-disabled-shift while disabled, both 0 by default. */
+:where(button[data-ui-pressed]:not(:disabled, [aria-disabled="true"]) .ui-button-frame-content) {
+  translate: 0 calc(var(--ui-button-frame-pressed-shift, 0) * var(--ui-unit, 1) * 1px);
+}
+
+:where(button:is(:disabled, [aria-disabled="true"]) .ui-button-frame-content) {
+  translate: 0 calc(var(--ui-button-frame-disabled-shift, 0) * var(--ui-unit, 1) * 1px);
+}
+
+/* System colours: the frame's art steps aside for a system edge and fill. */
+@media (forced-colors: active) {
+  :where(.ui-button-frame) {
+    forced-color-adjust: none;
+    border-image-source: none;
+    border-color: ButtonText;
+    background-color: ButtonFace;
+  }
+
+  :where(
+    button:is(:focus-visible, [data-ui-pressed], [data-ui-selected]):not(
+        :disabled,
+        [aria-disabled="true"]
+      )
+      .ui-button-frame,
+    button:is(:focus-visible, [data-ui-pressed], [data-ui-selected]):not(
+        :disabled,
+        [aria-disabled="true"]
+      ).ui-button-frame
+  ) {
+    background-color: Highlight;
+  }
+
+  :where(
+    button:is(:disabled, [aria-disabled="true"]) .ui-button-frame,
+    button:is(:disabled, [aria-disabled="true"]).ui-button-frame
+  ) {
+    border-color: GrayText;
+  }
+}

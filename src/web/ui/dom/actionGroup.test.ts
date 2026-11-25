@@ -10,6 +10,7 @@ import {
   ACTION_MEASURING_ATTRIBUTE,
   ACTION_MIDDLE_CLASS,
   createActionGroup,
+  createPressContext,
 } from "./actionGroup.ts";
 
 function fixture() {
@@ -138,6 +139,105 @@ describe("createActionGroup", () => {
     expect(seen).toEqual([true, true]);
     expect(group.element.hasAttribute(ACTION_MEASURING_ATTRIBUTE)).toBe(false);
     group.element.remove();
+  });
+});
+
+describe("arrangeGrid", () => {
+  it("places rows of columns by the pure grid, as a group", () => {
+    const group = createActionGroup(document);
+    const buttons = ["a", "b", "c"].map(() => document.createElement("button"));
+    group.element.append(...buttons);
+    const grid = group.arrangeGrid(
+      { cellWidth: "fill", columns: 2, width: 216 },
+      buttons.map((element) => ({ element, role: "secondary", size: { height: 48, width: 60 } })),
+    );
+    expect([grid.columns, grid.rows]).toEqual([2, 2]);
+    expect(group.element.dataset.uiActionAxis).toBe("grid");
+    expect(group.element.dataset.uiActionVariant).toBe("group");
+    expect(value(group.element, "--ui-action-group-height")).toBe("104");
+    expect(value(buttons[1]!, "--ui-action-x")).toBe("116");
+    expect(value(buttons[2]!, "--ui-action-x")).toBe("58");
+    expect(value(buttons[2]!, "--ui-action-outset-top")).toBe("4");
+  });
+});
+
+describe("createPressContext", () => {
+  // Every box is placed in px at --ui-unit 2 from the root's corner at (10, 20).
+  const at = (element: Element, x: number, y: number, width: number, height: number) =>
+    vi.spyOn(element, "getBoundingClientRect").mockReturnValue({
+      bottom: 20 + y + height,
+      height,
+      left: 10 + x,
+      right: 10 + x + width,
+      top: 20 + y,
+      width,
+      x: 10 + x,
+      y: 20 + y,
+    } as DOMRect);
+
+  function cheats() {
+    const root = document.createElement("div");
+    root.style.setProperty("--ui-unit", "2");
+    const stack = createActionGroup(document);
+    const unlock = document.createElement("button");
+    stack.element.append(unlock);
+    const row = document.createElement("button");
+    const footer = createActionGroup(document);
+    const back = document.createElement("button");
+    footer.element.append(back);
+    root.append(stack.element, row, footer.element);
+    document.body.append(root);
+    at(root, 0, 0, 400, 400);
+    at(stack.element, 0, 0, 200, 96);
+    at(row, 0, 120, 200, 96);
+    at(footer.element, 0, 240, 200, 96);
+    const size = { height: 48, width: 60 };
+    const arrange = () => {
+      stack.arrange({ width: 100 }, [{ element: unlock, role: "secondary", size }]);
+      footer.arrange({ width: 100 }, [{ element: back, role: "secondary", size }]);
+    };
+    return { arrange, back, footer, root, row, stack, unlock };
+  }
+
+  it("clamps groups toward a form row between them, so no stacking order is needed", () => {
+    const { arrange, back, footer, root, row, stack, unlock } = cheats();
+    arrange();
+    expect(value(unlock, "--ui-action-outset-bottom")).toBe("12");
+    const context = createPressContext(root);
+    context.add(stack);
+    context.add(row);
+    // A wrapping view, as a modal frame's footer is, is its group.
+    context.add({ ...footer });
+    context.apply();
+    // The row is 12 base px below the stack's face and above Back's.
+    expect(value(unlock, "--ui-action-outset-bottom")).toBe("6");
+    expect(value(back, "--ui-action-outset-top")).toBe("6");
+    expect(value(unlock, "--ui-action-outset-top")).toBe("12");
+    arrange();
+    expect(value(unlock, "--ui-action-outset-bottom")).toBe("6");
+    row.hidden = true;
+    context.apply();
+    expect(value(unlock, "--ui-action-outset-bottom")).toBe("12");
+    row.hidden = false;
+    context.apply();
+    context.remove(stack);
+    expect(value(unlock, "--ui-action-outset-bottom")).toBe("12");
+    context.dispose();
+    expect(value(back, "--ui-action-outset-top")).toBe("12");
+    root.remove();
+  });
+
+  it("keeps a group in one context and refuses a disposed one", () => {
+    const { footer, root, stack } = cheats();
+    const context = createPressContext(root);
+    context.add(stack);
+    context.add(stack);
+    expect(() => createPressContext(root).add(stack)).toThrow(RangeError);
+    footer.dispose();
+    expect(() => context.add(footer)).toThrow(Error);
+    stack.dispose();
+    context.apply();
+    root.remove();
   });
 });
 

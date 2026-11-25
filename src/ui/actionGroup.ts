@@ -493,9 +493,9 @@ export function arrangeActions<K, T = never>(
 
 // The action a press at point lands on: of the visible actions whose press area takes it in,
 // the one whose face centre is nearest, the earlier in the caller's order on a tie (hitAreas
-// pressedArea). Point is in the arrangement's projected space.
+// pressedArea). Point is in the arrangement's projected space. A grid's arrangement works alike.
 export function pressedAction<K, T>(
-  arrangement: ActionArrangement<K, T>,
+  arrangement: Pick<ActionArrangement<K, T>, "actions">,
   point: Point,
 ): K | undefined {
   return pressedArea(
@@ -504,4 +504,395 @@ export function pressedAction<K, T>(
     ),
     point,
   );
+}
+
+// Action grids: rows of columns, one gap rule. The grid's cells share one width: the widest face
+// (content) or the room split evenly (fill). Visible actions fill the rows in visual order,
+// secondary actions first and the primary last; a short last row is a centred row of its faces,
+// so a sole action is centred. A grid that does not fit its room at full size takes fewer columns,
+// down to one. Rows are the stacked gap apart and columns the row gap apart; a face is centred
+// in its row's height, the odd unit below, and a locked face in its cell, the odd unit right.
+// Press areas clamp toward every neighbour along and between rows by the rule separatePressAreas
+// applies between groups.
+
+export type ActionCellWidth = "content" | "fill";
+
+export interface ActionGridContext<K = unknown, T = never> {
+  // The room across, in whole units.
+  readonly width: number;
+  // The most columns, at least 1.
+  readonly columns: number;
+  readonly cellWidth?: ActionCellWidth;
+  readonly gap?: ActionGapSelection;
+  readonly origin?: Point;
+  readonly press?: ActionPress;
+  readonly pressOverlap?: ActionPressOverlap;
+  readonly project?: ActionProjection;
+  readonly placeText?: (face: Rect, item: ActionItem<K>) => T;
+}
+
+export interface ActionGridArrangement<K, T = never> {
+  // In the caller's order.
+  readonly actions: readonly (HiddenAction<K> | PlacedAction<K, T>)[];
+  readonly axis: "grid";
+  // The columns placed, at most context.columns.
+  readonly columns: number;
+  readonly gap: ActionGap;
+  readonly group: Rect;
+  readonly pressOverlap: ActionPressOverlap;
+  readonly rows: number;
+}
+
+// The outsets of a face toward each side, before clamping across members. Faces and outsets are
+// in the members' one space.
+interface Region {
+  readonly face: Rect;
+  // What the DOM draws: with nearest overlap, cut where the nearer face changes.
+  readonly drawn: { -readonly [S in keyof ActionOutset]: number };
+  // The press area's reach.
+  readonly press: { -readonly [S in keyof ActionOutset]: number };
+  readonly member: number;
+}
+
+type Along = "x" | "y";
+
+const SIDES = {
+  x: { after: "right", before: "left", length: "width" },
+  y: { after: "bottom", before: "top", length: "height" },
+} as const;
+
+// The space between two faces along an axis, with the earlier (left or top) first, or undefined
+// when their extents meet or cross.
+function spaceAlong(
+  along: Along,
+  a: Region,
+  b: Region,
+): { earlier: Region; later: Region; space: number } | undefined {
+  const { length } = SIDES[along];
+  if (a.face[along] + a.face[length] <= b.face[along]) {
+    return { earlier: a, later: b, space: b.face[along] - (a.face[along] + a.face[length]) };
+  }
+  if (b.face[along] + b.face[length] <= a.face[along]) {
+    return { earlier: b, later: a, space: a.face[along] - (b.face[along] + b.face[length]) };
+  }
+  return undefined;
+}
+
+// Whether two press areas share any extent across an axis: along x, their vertical extents.
+function reachAcross(along: Along, a: Region, b: Region): boolean {
+  const across: Along = along === "x" ? "y" : "x";
+  const { after, before, length } = SIDES[across];
+  const start = (region: Region) => region.face[across] - region.press[before];
+  const end = (region: Region) => region.face[across] + region.face[length] + region.press[after];
+  return start(a) < end(b) && start(b) < end(a);
+}
+
+// Separates the press areas of each pair of regions that pair() admits. A pair separated along
+// one axis whose press areas reach each other's extent across it are neighbours along that axis;
+// separated along both, along the axis with more space between them, the stacked axis on a tie.
+// Clamp gives each its share of the space: the earlier takes the lower half and the later the odd
+// unit. Nearest cuts only the drawn outsets, where the nearer face centre changes (the earlier on a
+// tie), and keeps the press areas. Bounds come from the press areas as given, so the result does
+// not depend on the regions' order. Faces that overlap have no space to share and stay as they
+// are.
+function separateRegions(
+  mode: ActionPressOverlap,
+  pair: (a: Region, b: Region) => boolean,
+  regions: readonly Region[],
+): void {
+  const bounds: { drawn: number; press: number; region: Region; side: keyof ActionOutset }[] = [];
+  for (const [index, a] of regions.entries()) {
+    for (const b of regions.slice(index + 1)) {
+      if (!pair(a, b)) {
+        continue;
+      }
+      const x = spaceAlong("x", a, b);
+      const y = spaceAlong("y", a, b);
+      const candidates = (
+        [
+          ["x", x],
+          ["y", y],
+        ] as const
+      ).filter(
+        (entry): entry is readonly [Along, NonNullable<typeof x>] =>
+          entry[1] !== undefined && reachAcross(entry[0], a, b),
+      );
+      if (candidates.length === 0) {
+        continue;
+      }
+      const [along, apart] =
+        candidates.length === 1 || candidates[1]![1].space >= candidates[0]![1].space
+          ? candidates[candidates.length - 1]!
+          : candidates[0]!;
+      const { earlier, later, space } = apart;
+      const { after, before, length } = SIDES[along];
+      const share = Math.floor(space / 2);
+      let cut = share;
+      if (mode === "nearest") {
+        // A unit cell [k, k + 1) is the earlier face's while its centre is no nearer the later
+        // face's centre, so the cut falls at floor(midpoint + 1/2), held to the space.
+        const end = earlier.face[along] + earlier.face[length];
+        const centres =
+          earlier.face[along] +
+          earlier.face[length] / 2 +
+          later.face[along] +
+          later.face[length] / 2;
+        cut = Math.min(space, Math.max(0, Math.floor(centres / 2 + 1 / 2) - end));
+      }
+      bounds.push(
+        {
+          drawn: cut,
+          press: mode === "nearest" ? Infinity : share,
+          region: earlier,
+          side: after,
+        },
+        {
+          drawn: space - cut,
+          press: mode === "nearest" ? Infinity : space - share,
+          region: later,
+          side: before,
+        },
+      );
+    }
+  }
+  for (const { drawn, press, region, side } of bounds) {
+    region.drawn[side] = Math.min(region.drawn[side], drawn);
+    region.press[side] = Math.min(region.press[side], press);
+  }
+}
+
+function outsetSides(spans: { x: Span; y: Span }): { -readonly [S in keyof ActionOutset]: number } {
+  return { bottom: spans.y.after, left: spans.x.before, right: spans.x.after, top: spans.y.before };
+}
+
+function validateItems<K>(items: readonly ActionItem<K>[]): ActionItem<K>[] {
+  const keys = new Set<K>();
+  for (const item of items) {
+    if (item.role !== "primary" && item.role !== "secondary" && item.role !== "navigation") {
+      throw new RangeError("Unknown button role");
+    }
+    whole("size.width", item.size.width, 1);
+    whole("size.height", item.size.height, 1);
+    if (keys.has(item.key)) {
+      throw new RangeError("Action keys must be unique");
+    }
+    keys.add(item.key);
+  }
+  const visible = items.filter((item) => item.hidden !== true);
+  if (visible.filter((item) => item.role === "primary").length > 1) {
+    throw new RangeError("An action group has at most one visible primary action");
+  }
+  return [
+    ...visible.filter((item) => item.role !== "primary"),
+    ...visible.filter((item) => item.role === "primary"),
+  ];
+}
+
+// Each visible face's place for columns, or undefined when they do not fit width.
+function placeGrid(
+  context: { cellWidth: ActionCellWidth; columns: number; gap: ActionGap; width: number },
+  actions: readonly ActionItem<unknown>[],
+): { faces: Rect[]; height: number; rows: number } | undefined {
+  const { cellWidth, columns, gap, width } = context;
+  const widest = Math.max(0, ...actions.map((item) => item.size.width));
+  const cell =
+    cellWidth === "fill" ? Math.floor((width - (columns - 1) * gap.row) / columns) : widest;
+  const span = columns * cell + (columns - 1) * gap.row;
+  if (widest > cell || span > width) {
+    return undefined;
+  }
+  const faces: Rect[] = [];
+  let y = 0;
+  let rows = 0;
+  for (let start = 0; start < actions.length; start += columns) {
+    const row = actions.slice(start, start + columns);
+    const widths = row.map((item) => (item.locked === true ? item.size.width : cell));
+    const height = Math.max(...row.map((item) => item.size.height));
+    let x =
+      row.length === columns
+        ? Math.floor((width - span) / 2)
+        : Math.floor(
+            (width - widths.reduce((sum, w) => sum + w, 0) - (row.length - 1) * gap.row) / 2,
+          );
+    for (const [index, item] of row.entries()) {
+      const offset = row.length === columns ? Math.floor((cell - widths[index]!) / 2) : 0;
+      faces.push({
+        height: item.size.height,
+        width: widths[index]!,
+        x: x + offset,
+        y: y + Math.floor((height - item.size.height) / 2),
+      });
+      x += (row.length === columns ? cell : widths[index]!) + gap.row;
+    }
+    y += height + gap.stack;
+    rows += 1;
+  }
+  return { faces, height: Math.max(0, y - gap.stack), rows };
+}
+
+// Arranges actions in rows of at most context.columns. Invalid input, or a single column wider
+// than its room, throws RangeError.
+export function arrangeActionGrid<K, T = never>(
+  context: ActionGridContext<K, T>,
+  items: readonly ActionItem<K>[],
+): ActionGridArrangement<K, T> {
+  const {
+    cellWidth = "content",
+    columns,
+    origin = { x: 0, y: 0 },
+    press = HIT_RULE,
+    pressOverlap = "clamp",
+    project: projection = IDENTITY,
+    width,
+  } = context;
+  whole("width", width);
+  whole("columns", columns, 1);
+  whole("origin.x", origin.x, Number.MIN_SAFE_INTEGER);
+  whole("origin.y", origin.y, Number.MIN_SAFE_INTEGER);
+  if (cellWidth !== "content" && cellWidth !== "fill") {
+    throw new RangeError("Unknown cell width");
+  }
+  if (pressOverlap !== "clamp" && pressOverlap !== "nearest") {
+    throw new RangeError("Unknown press overlap");
+  }
+  const gap = resolveGap(context.gap ?? "standard");
+  validatePress(press);
+  const ordered = validateItems(items);
+  let used = Math.max(1, Math.min(columns, ordered.length));
+  let fitted = placeGrid({ cellWidth, columns: used, gap, width }, ordered);
+  while (fitted === undefined && used > 1) {
+    used -= 1;
+    fitted = placeGrid({ cellWidth, columns: used, gap, width }, ordered);
+  }
+  if (fitted === undefined) {
+    throw new RangeError("Action grid exceeds its room at full size");
+  }
+  const placed = fitted;
+  const regions: Region[] = ordered.map((item, index) => {
+    const spans = desiredOutset(press, item.size);
+    return {
+      drawn: outsetSides(spans),
+      face: placed.faces[index]!,
+      member: 0,
+      press: outsetSides(spans),
+    };
+  });
+  separateRegions(pressOverlap, () => true, regions);
+  const shift = (rect: Rect): Rect => ({ ...rect, x: rect.x + origin.x, y: rect.y + origin.y });
+  const around = (face: Rect, outset: ActionOutset) =>
+    project(
+      projection,
+      shift({
+        height: face.height + outset.top + outset.bottom,
+        width: face.width + outset.left + outset.right,
+        x: face.x - outset.left,
+        y: face.y - outset.top,
+      }),
+    );
+  const actions = new Map<K, PlacedAction<K, T>>();
+  for (const [index, item] of ordered.entries()) {
+    const region = regions[index]!;
+    const face = project(projection, shift(region.face));
+    const taken = around(region.face, region.drawn);
+    actions.set(item.key, {
+      face,
+      hidden: false,
+      key: item.key,
+      order: index,
+      outset: {
+        bottom: taken.y + taken.height - (face.y + face.height),
+        left: face.x - taken.x,
+        right: taken.x + taken.width - (face.x + face.width),
+        top: face.y - taken.y,
+      },
+      press: around(region.face, region.press),
+      role: item.role,
+      ...(context.placeText === undefined ? {} : { text: context.placeText(face, item) }),
+    });
+  }
+  return {
+    actions: items.map(
+      (item) => actions.get(item.key) ?? { hidden: true, key: item.key, role: item.role },
+    ),
+    axis: "grid",
+    columns: used,
+    gap,
+    group: project(projection, shift({ height: placed.height, width, x: 0, y: 0 })),
+    pressOverlap,
+    rows: placed.rows,
+  };
+}
+
+// A member of shared press clamping: an action group's or grid's arrangement, or a box that is its
+// own press target, such as a form row. Members share one space: arrange each at its origin in it,
+// with the same projection.
+export type PressMember<K = unknown, T = unknown> =
+  ActionArrangement<K, T> | ActionGridArrangement<K, T> | Rect;
+
+// Clamps the press areas of neighbouring members toward each other, so press areas from different
+// groups, and between a group and a box, meet without overlap: each takes its share of the space
+// between two faces (the earlier the lower half, the later the odd unit), as within one group. A
+// box keeps its own area. Within a member nothing changes, so nearest overlap keeps routing its own
+// actions. Faces of two members that overlap, such as content scrolled under a footer, stay as
+// they are. Returns the members in order, each arrangement with clamped outsets and press areas.
+export function separatePressAreas<const M extends readonly PressMember[]>(members: M): M {
+  const regions: Region[] = [];
+  const placed: (PlacedAction<unknown, unknown> | undefined)[] = [];
+  for (const [member, entry] of members.entries()) {
+    if (!("actions" in entry)) {
+      regions.push({
+        drawn: { bottom: 0, left: 0, right: 0, top: 0 },
+        face: entry,
+        member,
+        press: { bottom: 0, left: 0, right: 0, top: 0 },
+      });
+      placed.push(undefined);
+      continue;
+    }
+    for (const action of entry.actions) {
+      if (action.hidden) {
+        continue;
+      }
+      const { face, press } = action;
+      regions.push({
+        drawn: { ...action.outset },
+        face,
+        member,
+        press: {
+          bottom: press.y + press.height - (face.y + face.height),
+          left: face.x - press.x,
+          right: press.x + press.width - (face.x + face.width),
+          top: face.y - press.y,
+        },
+      });
+      placed.push(action);
+    }
+  }
+  separateRegions("clamp", (a, b) => a.member !== b.member, regions);
+  const clamped = new Map<PlacedAction<unknown, unknown>, PlacedAction<unknown, unknown>>();
+  for (const [index, region] of regions.entries()) {
+    const action = placed[index];
+    if (action === undefined) {
+      continue;
+    }
+    const { drawn, face, press } = region;
+    clamped.set(action, {
+      ...action,
+      outset: { ...drawn },
+      press: {
+        height: face.height + press.top + press.bottom,
+        width: face.width + press.left + press.right,
+        x: face.x - press.left,
+        y: face.y - press.top,
+      },
+    });
+  }
+  return members.map((entry) =>
+    "actions" in entry
+      ? {
+          ...entry,
+          actions: entry.actions.map((action) => (action.hidden ? action : clamped.get(action)!)),
+        }
+      : entry,
+  ) as unknown as M;
 }

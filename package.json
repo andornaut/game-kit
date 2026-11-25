@@ -198,6 +198,7 @@
     "./runtime/web/ui/dom/actionGroup": "./src/web/ui/dom/actionGroup.ts",
     "./runtime/web/ui/dom/actionGroup.css": "./src/web/ui/dom/actionGroup.css",
     "./runtime/web/ui/dom/button": "./src/web/ui/dom/button.ts",
+    "./runtime/web/ui/dom/buttonFrame.css": "./src/web/ui/dom/buttonFrame.css",
     "./runtime/web/ui/dom/buttonLayout": "./src/web/ui/dom/buttonLayout.ts",
     "./runtime/web/ui/dom/buttonSkin": "./src/web/ui/dom/buttonSkin.ts",
     "./runtime/web/ui/dom/controlPresentation": "./src/web/ui/dom/controlPresentation.ts",

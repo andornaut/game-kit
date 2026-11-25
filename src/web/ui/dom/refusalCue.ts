@@ -68,3 +68,13 @@ export function refuse(cue: RefusalCue, reducedMotion: boolean, element: HTMLEle
   }
   return stop;
 }
+
+// Whether a cue refuse started is playing on element.
+export function refusing(element: HTMLElement): boolean {
+  return running.has(element);
+}
+
+// Stops the cue playing on element at once, if any.
+export function stopRefusal(element: HTMLElement): void {
+  running.get(element)?.();
+}

@@ -6,9 +6,11 @@ import {
   ACTION_GAPS,
   type ActionGroupContext,
   type ActionItem,
+  arrangeActionGrid,
   arrangeActions,
   type PlacedAction,
   pressedAction,
+  separatePressAreas,
 } from "./actionGroup.ts";
 import type { ButtonRole } from "./buttonLayout.ts";
 import { BUTTON_GAP, SMALL_BUTTON_GAP, STACK_BUTTON_GAP } from "./spacing.ts";
@@ -430,5 +432,165 @@ describe("arrangeActions", () => {
       expect(pressedAction(result, { x: 63, y: 20 })).toBe("a");
       expect(pressedAction(result, { x: 65, y: 20 })).toBe("b");
     });
+  });
+});
+
+describe("arrangeActionGrid", () => {
+  // Pause's five actions in two columns of the card's content: the primary alone and centred.
+  const pause = [
+    action("achievements", "secondary", 120),
+    action("resume", "primary", 103, 48, { locked: true }),
+    action("settings", "secondary", 90),
+    action("cheats", "secondary", 80),
+    action("home", "secondary", 140),
+  ];
+
+  it("fills rows of equal cells in visual order, a short last row centred", () => {
+    const grid = arrangeActionGrid({ cellWidth: "fill", columns: 2, width: 468 }, pause);
+    expect([grid.axis, grid.columns, grid.rows]).toEqual(["grid", 2, 3]);
+    expect(grid.group).toEqual({ height: 160, width: 468, x: 0, y: 0 });
+    expect(grid.actions.map((entry) => entry.key)).toEqual(pause.map((item) => item.key));
+    const faces = ["achievements", "settings", "cheats", "home", "resume"].map(
+      (key) => placed(grid, key).face,
+    );
+    expect(faces).toEqual([
+      { height: 48, width: 226, x: 0, y: 0 },
+      { height: 48, width: 226, x: 242, y: 0 },
+      { height: 48, width: 226, x: 0, y: 56 },
+      { height: 48, width: 226, x: 242, y: 56 },
+      { height: 48, width: 103, x: 182, y: 112 },
+    ]);
+    expect(placed(grid, "resume").order).toBe(4);
+  });
+
+  it("clamps press areas toward neighbours along and between rows, so none overlap", () => {
+    const grid = arrangeActionGrid({ cellWidth: "fill", columns: 2, width: 468 }, pause);
+    expect(placed(grid, "achievements").outset).toEqual({ bottom: 4, left: 12, right: 8, top: 12 });
+    expect(placed(grid, "home").outset).toEqual({ bottom: 4, left: 8, right: 12, top: 4 });
+    expect(placed(grid, "resume").outset).toEqual({ bottom: 12, left: 12, right: 12, top: 4 });
+    const presses = grid.actions.flatMap((entry) => (entry.hidden ? [] : [entry.press]));
+    for (const [index, a] of presses.entries()) {
+      for (const b of presses.slice(index + 1)) {
+        expect(rectsOverlap(a, b)).toBe(false);
+      }
+    }
+    expect(pressedAction(grid, { x: 230, y: 50 })).toBe("achievements");
+  });
+
+  it("takes the widest face as the cell and fewer columns when they do not fit", () => {
+    const items = [action("a", "secondary", 60), action("b", "secondary", 90)];
+    const two = arrangeActionGrid({ columns: 2, width: 200 }, items);
+    expect([two.columns, placed(two, "a").face, placed(two, "b").face]).toEqual([
+      2,
+      { height: 48, width: 90, x: 2, y: 0 },
+      { height: 48, width: 90, x: 108, y: 0 },
+    ]);
+    const one = arrangeActionGrid({ columns: 2, width: 150 }, items);
+    expect([one.columns, one.rows, placed(one, "b").face]).toEqual([
+      1,
+      2,
+      { height: 48, width: 90, x: 30, y: 56 },
+    ]);
+    expect(() => arrangeActionGrid({ columns: 2, width: 80 }, items)).toThrow(RangeError);
+  });
+
+  it("centres a sole action and leaves hidden ones out", () => {
+    const grid = arrangeActionGrid({ columns: 3, width: 101 }, [
+      action("gone", "secondary", 40, 48, { hidden: true }),
+      action("back", "secondary", 40),
+    ]);
+    expect(grid.actions[0]).toEqual({ hidden: true, key: "gone", role: "secondary" });
+    expect([grid.columns, placed(grid, "back").face.x]).toEqual([1, 30]);
+  });
+
+  it("keeps full press areas with nearest overlap and draws each cut at the nearer face", () => {
+    // Two 24 faces 8 apart grow to the 48 target: full areas overlap across the gap.
+    const items = [action("a", "secondary", 24, 24), action("b", "secondary", 24, 24)];
+    const grid = arrangeActionGrid(
+      { columns: 2, gap: { name: "tight", row: 8, stack: 8 }, pressOverlap: "nearest", width: 56 },
+      items,
+    );
+    const [a, b] = [placed(grid, "a"), placed(grid, "b")];
+    expect(a.press.x + a.press.width).toBeGreaterThan(b.press.x);
+    expect([a.outset.right, b.outset.left]).toEqual([4, 4]);
+    expect(pressedAction(grid, { x: 27.5, y: 10 })).toBe("a");
+    expect(pressedAction(grid, { x: 28.5, y: 10 })).toBe("b");
+  });
+
+  it("places at an origin through the projection, on whole numbers", () => {
+    const grid = arrangeActionGrid(
+      {
+        columns: 2,
+        origin: { x: 10, y: 5 },
+        project: { x: (edge) => edge * 2, y: (edge) => edge * 3 },
+        width: 200,
+      },
+      [action("a", "secondary", 90), action("b", "secondary", 90)],
+    );
+    expect(placed(grid, "b").face).toEqual({ height: 144, width: 180, x: 236, y: 15 });
+  });
+
+  it.each([
+    { columns: 0, width: 100 },
+    { columns: 1.5, width: 100 },
+    { cellWidth: "auto" as "fill", columns: 2, width: 100 },
+    { columns: 2, pressOverlap: "both" as "clamp", width: 100 },
+  ])("refuses %o", (context) => {
+    expect(() => arrangeActionGrid(context, [action("a", "secondary", 40)])).toThrow(RangeError);
+  });
+});
+
+describe("separatePressAreas", () => {
+  const sole = (key: string, y: number) =>
+    arrangeActions({ origin: { x: 0, y }, width: 100 }, [action(key, "secondary", 60)]);
+
+  it("gives two stacked groups each its share of the space between their faces", () => {
+    const [upper, lower] = separatePressAreas([sole("upper", 0), sole("lower", 61)]);
+    expect(placed(upper, "upper").outset.bottom).toBe(6);
+    expect(placed(lower, "lower").outset.top).toBe(7);
+    expect(placed(upper, "upper").press.y + placed(upper, "upper").press.height).toBe(
+      placed(lower, "lower").press.y,
+    );
+    expect(placed(upper, "upper").outset.left).toBe(12);
+  });
+
+  it("clamps a group toward a box that is its own press target, which keeps its area", () => {
+    const row = { height: 48, width: 100, x: 0, y: 56 };
+    const [group, box] = separatePressAreas([sole("unlock", 0), row]);
+    expect(placed(group, "unlock").outset.bottom).toBe(4);
+    expect(box).toBe(row);
+  });
+
+  it("does not depend on the members' order", () => {
+    const [lower, upper] = separatePressAreas([sole("lower", 61), sole("upper", 0)]);
+    expect([placed(upper, "upper").outset.bottom, placed(lower, "lower").outset.top]).toEqual([
+      6, 7,
+    ]);
+  });
+
+  it("separates diagonal neighbours along the axis with more space", () => {
+    const left = arrangeActions({ press: { margin: 20 }, width: 60 }, [
+      action("left", "secondary", 60),
+    ]);
+    const right = arrangeActions({ origin: { x: 70, y: 52 }, press: { margin: 20 }, width: 60 }, [
+      action("right", "secondary", 60),
+    ]);
+    const [a, b] = separatePressAreas([left, right]);
+    expect([placed(a, "left").outset.right, placed(a, "left").outset.bottom]).toEqual([5, 20]);
+    expect(rectsOverlap(placed(a, "left").press, placed(b, "right").press)).toBe(false);
+  });
+
+  it("keeps each group's own clamping and nearest routing", () => {
+    const pair = arrangeActions({ gap: "small", pressOverlap: "nearest", width: 90 }, [
+      action("a", "secondary", 33, 33),
+      action("b", "secondary", 33, 33),
+    ]);
+    const [same] = separatePressAreas([pair]);
+    expect(same).toEqual(pair);
+  });
+
+  it("leaves faces of two members that overlap as they are", () => {
+    const members = [sole("a", 0), sole("b", 40)] as const;
+    expect(separatePressAreas(members)).toEqual(members);
   });
 });

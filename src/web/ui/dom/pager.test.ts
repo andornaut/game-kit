@@ -94,6 +94,26 @@ describe("createPager", () => {
     expect(previous.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(false);
   });
 
+  it("leaves a playing refusal cue playing on another press, and stops it on request", () => {
+    vi.useFakeTimers();
+    const { pager } = fixture({
+      refusal: { cue: { shake: 2, stepMs: 50, steps: 4 }, reducedMotion: () => true },
+    });
+    const previous = pager.previous.element;
+    pointerClick(previous);
+    vi.advanceTimersByTime(150);
+    pointerClick(previous);
+    vi.advanceTimersByTime(50);
+    expect(previous.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(false);
+    pointerClick(previous);
+    expect(previous.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(true);
+    pager.stopRefusal();
+    expect(previous.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(false);
+    pointerClick(previous);
+    pager.dispose();
+    expect(previous.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(false);
+  });
+
   it("blocks both steps while the caller's guard is closed", () => {
     let open = false;
     const { pager, step } = fixture({ active: () => open });

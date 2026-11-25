@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { refuse } from "./refusalCue.ts";
+import { refuse, refusing, stopRefusal } from "./refusalCue.ts";
 
 const CUE = { shake: 3, stepMs: 80, steps: 4 };
 
@@ -89,5 +89,18 @@ describe("refuse", () => {
     stop();
     vi.advanceTimersByTime(80);
     expect(state(element)).toEqual([false, null]);
+  });
+
+  it("reports a playing cue and stops it from outside", () => {
+    const element = document.createElement("button");
+    expect(refusing(element)).toBe(false);
+    refuse(CUE, false, element);
+    expect(refusing(element)).toBe(true);
+    stopRefusal(element);
+    expect([refusing(element), ...state(element)]).toEqual([false, false, null]);
+    stopRefusal(element);
+    refuse(CUE, true, element);
+    vi.advanceTimersByTime(320);
+    expect(refusing(element)).toBe(false);
   });
 });

@@ -16,13 +16,24 @@ geometry only.
   or a named override, and each press area is an outset clamped to half the space toward a
   neighbour, so no consumer adds per-button padding or negative margins.
 - Fitting decides row or stack from face sizes the game supplies, at full font size. The primary
-  is last; a sole visible action is centred; a footer pins secondary left and primary right
-  around an optional middle slot.
+  is last; a sole visible action is centred, with no start-aligned option; a footer pins
+  secondary left and primary right around an optional middle slot.
+- A grid is rows of columns with the same gap rule: cells share the widest face's width or the
+  room split evenly, a short last row is centred, and a grid that does not fit takes fewer
+  columns. Its press areas clamp toward every neighbour along and between rows.
+- Press areas of neighbouring groups, and of a group and a control that is its own press target
+  such as a form row, clamp toward each other by the same share rule through a shared press
+  context, so no game adds a stacking order or an inset. Inside a group nothing changes.
 - Geometry is whole game units with a game projection of edges. An odd unit always falls right or
   below.
 - Colours are role-named slots under a theme root, with system colours in forced-colours mode.
   Focus, press and selection are fills; `controls.css` owns the one focus fill. Disabled is
   distinct and never dips. Theme rules have zero specificity.
+- Text roles are the kit's four plus any a game names, each the same size, line height and weight
+  on the theme root; an element of a game role refers to them, so it needs no game rule.
+- Button frame states are size-independent: a nine-slice frame on any face or layer follows its
+  button's role, selection, press and disabled state from game tokens, and press and focus fill
+  its inside.
 - Kit screens outside the UI layer, the crash screen and the loading failure card, take the text
   roles and colour slots from an ancestor such as the document root, each with its own type and
   colours as the fallback. The crash screen does this in CSS alone, so it needs no game code.
@@ -71,10 +82,12 @@ theme slots.
   edge on the switch's. Focus and press are fills only and a row never dips.
 - A pager is an action group of Previous, the count and Next, with one gap token on both sides
   of the count. Its buttons are standard buttons; an unavailable step is disabled or a pointer
-  refusal with the shared refusal cue. Dots are decorative. The pager fits a footer's middle slot.
+  refusal with the shared refusal cue, which a further press does not restart and the game can
+  stop. Dots are decorative. The pager fits a footer's middle slot.
 - A HUD disc is a round standard button whose box is its face, placed and given its press area by
   an action group. State changes only fill, face image or icon colour, never geometry; an edge
-  stays the same in every state. The icon's ink, less its side bearings, centres on the face with
+  stays the same in every state. The game's own face fill, a ring drawn as part of it and the
+  icon's ink take state tokens, so no per-state art is needed; a ring is never a focus outline. The icon's ink, less its side bearings, centres on the face with
   the odd unit right and below.
 - An action group may keep each full press area and route overlaps to the nearest face centre,
   the earlier action on a tie; the DOM draws each area cut where its face stops being nearest.

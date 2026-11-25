@@ -2,9 +2,14 @@
 export {
   type ActionArrangement,
   type ActionGapSelection,
+  type ActionGridArrangement,
+  type ActionGridContext,
   type ActionGroupContext,
   type ActionPress,
+  arrangeActionGrid,
   arrangeActions,
+  type PressMember,
+  separatePressAreas,
 } from "./actionGroup.ts";
 export {
   type ButtonFaceInsets,
@@ -63,6 +68,11 @@ export {
 export {
   colourProperties,
   colourProperty,
+  GAME_TEXT_ROLE_CLASS,
+  gameTextRoleProperties,
+  gameTextRoleReferences,
+  type GameTextRoles,
+  TEXT_ROLES,
   type TextRole,
   textRoleClass,
   textRoleProperties,
