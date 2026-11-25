@@ -18,3 +18,6 @@ Reference: [High-density game UI](../../README.md#high-density-game-ui), [Dialog
 | gk-0029 | Preserve pointer refusal on unavailable standard buttons  | [gk-0029.md](../work/gk-0029.md) |
 | gk-0031 | Use ring-free button state cues                           | [gk-0031.md](../work/gk-0031.md) |
 | gk-0037 | Respect pointer action admission and paint Retry presses  | [gk-0037.md](../work/gk-0037.md) |
+| gk-0054 | Provide the shared layout base for game UI                | [gk-0054.md](../work/gk-0054.md) |
+| gk-0055 | Provide the shared modal frame                            | [gk-0055.md](../work/gk-0055.md) |
+| gk-0056 | Provide the shared switch, form row, pager and HUD disc   | [gk-0056.md](../work/gk-0056.md) |

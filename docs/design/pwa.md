@@ -38,3 +38,4 @@ Reference: [Build output](../../README.md#build-output).
 | gk-0049 | Show shared error when browser launch is unavailable                        | [gk-0049.md](../work/gk-0049.md) |
 | gk-0050 | Install only the device codec from groups and read archive members          | [gk-0050.md](../work/gk-0050.md) |
 | gk-0051 | Compress group archives and export a test encoder                           | [gk-0051.md](../work/gk-0051.md) |
+| gk-0053 | Opt out of decoded group copies and require DecompressionStream at launch   | [gk-0053.md](../work/gk-0053.md) |
