@@ -135,6 +135,13 @@ describe("createHudDisc", () => {
 });
 
 const RING_INSET = "calc(var(--ui-hud-disc-ring-inset, 0) * var(--ui-unit, 1) * 1px)";
+const BAND = "var(--ui-hud-disc-layer-band)";
+const SHADOWS = [
+  "box-shadow:",
+  `0 0 0 calc(${BAND} - var(--ui-hud-disc-rim, 0) * var(--ui-unit, 1) * 1px)`,
+  "var(--ui-hud-disc-layer-fill),",
+  `0 0 0 ${BAND} var(--ui-hud-disc-layer-rim);`,
+].join(" ");
 
 describe("hudDisc.css", () => {
   it("matches only through zero-specificity selectors", () => {
@@ -151,10 +158,11 @@ describe("hudDisc.css", () => {
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b/i);
     expect(css).not.toMatch(/\b(rgb|hsl)a?\(/i);
     expect(css).not.toMatch(/\boutline\s*:/);
-    // The one shadow is the fill layer's own fill, spread over the band inside the edge.
+    // The one shadow list is the fill layer's own fill and rim, spread over the band inside the
+    // edge.
     expect(
       css.match(/\bbox-shadow\s*:[^;]*;/g)?.map((shadow) => shadow.replace(/\s+/g, " ")),
-    ).toEqual([`box-shadow: 0 0 0 ${RING_INSET} var(--ui-hud-disc-layer-fill);`]);
+    ).toEqual([SHADOWS]);
     expect(css.replace(/\* -?1px\b/g, "")).not.toMatch(/\d(px|rem|em)\b/);
     for (const state of [
       ...css.matchAll(/(:focus-visible|\[data-ui-pressed\]|:disabled)[^{]*\{([^}]*)\}/g),
@@ -163,6 +171,7 @@ describe("hudDisc.css", () => {
       for (const property of properties) {
         expect([
           "--ui-hud-disc-layer-fill",
+          "--ui-hud-disc-layer-rim",
           "background-color",
           "background-image",
           "border-color",
@@ -173,11 +182,12 @@ describe("hudDisc.css", () => {
     expect(css).toContain("@media (forced-colors: active)");
   });
 
-  it("draws the game's fill, ring and ink per state, which forced colours set aside", () => {
+  it("draws the game's fill, ring, rim and ink per state, which forced colours set aside", () => {
     for (const state of ["", "selected-", "focus-", "pressed-", "disabled-"]) {
       expect(css).toContain(`var(--ui-hud-disc-${state}fill, transparent)`);
       expect(css).toContain(`var(--ui-hud-disc-${state}ink, currentColor)`);
       expect(css).toMatch(new RegExp(`var\\(\\s*--ui-hud-disc-${state}ring-colour`));
+      expect(css).toMatch(new RegExp(`var\\(\\s*--ui-hud-disc-${state}rim-colour`));
     }
     // The ring is one width in every state, part of the fill layer under the art and icon.
     expect(css.match(/--ui-hud-disc-ring,/g)).toHaveLength(1);
@@ -185,6 +195,10 @@ describe("hudDisc.css", () => {
     for (const state of ["selected-", "focus-", "pressed-", "disabled-"]) {
       expect(css).toContain(
         `--ui-hud-disc-layer-fill: var(--ui-hud-disc-${state}fill, transparent);`,
+      );
+      // A state's rim colour left unset keeps the idle one.
+      expect(css.replace(/\s+/g, " ")).toContain(
+        `--ui-hud-disc-layer-rim: var( --ui-hud-disc-${state}rim-colour, var(--ui-hud-disc-rim-colour, transparent) );`,
       );
     }
     const forced = css.slice(css.indexOf("@media (forced-colors: active)"));
@@ -198,10 +212,26 @@ describe("hudDisc.css", () => {
     const layers = [...css.matchAll(/::before\s*\{([^}]*)\}/g)].map((match) => match[1]!);
     const [base, ...states] = layers;
     expect(base).toContain(`inset: ${RING_INSET};`);
-    expect(base).toContain(`box-shadow: 0 0 0 ${RING_INSET}`);
+    expect(base!.replace(/\s+/g, " ")).toContain(SHADOWS);
     for (const state of states) {
       expect(state).not.toMatch(/\b(inset|box-shadow|border-width|border)\s*:/);
+      expect(state).not.toMatch(/--ui-hud-disc-layer-band\s*:/);
     }
     expect(css.match(/--ui-hud-disc-ring-inset\b/g)).toHaveLength(2);
+  });
+
+  // The rim takes the band's outer rim width from the disc's edge, the rim inset inside the edge;
+  // the fill takes the rest of the band. With no rim tokens, the band is the ring inset and all
+  // fill, as before.
+  it("draws the rim at the disc's edge, one width and inset in every state", () => {
+    const [base] = [...css.matchAll(/::before\s*\{([^}]*)\}/g)].map((match) => match[1]!);
+    const band = [
+      "--ui-hud-disc-layer-band: calc(",
+      "(var(--ui-hud-disc-ring-inset, 0) - var(--ui-hud-disc-rim-inset, 0))",
+      "* var(--ui-unit, 1) * 1px );",
+    ].join(" ");
+    expect(base!.replace(/\s+/g, " ")).toContain(band);
+    expect(css.match(/--ui-hud-disc-rim,/g)).toHaveLength(1);
+    expect(css.match(/--ui-hud-disc-rim-inset\b/g)).toHaveLength(1);
   });
 });

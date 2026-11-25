@@ -115,8 +115,10 @@ theme slots.
   stays the same in every state. The game's own face fill, a ring drawn as part of it and the
   icon's ink take state tokens, so no per-state art is needed; a ring is never a focus outline.
   The ring may sit a whole-unit inset inside the edge, the same in every state, with the fill
-  between, and only the fill layer moves. The icon's ink, less its side bearings, centres on the
-  face with the odd unit right and below.
+  between, and only the fill layer moves. An outer rim, also part of the fill layer, takes the
+  band's outer units at the disc's edge, which may sit a whole-unit inset inside the edge; nothing
+  is painted beyond it, so the disc stays round with clear corners. The icon's ink, less its side
+  bearings, centres on the face with the odd unit right and below.
 - An action group may keep each full press area and route overlaps to the nearest face centre,
   the earlier action on a tie; the DOM draws each area cut where its face stops being nearest.
 

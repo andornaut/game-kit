@@ -7,10 +7,12 @@
    slot, and --ui-hud-disc-image and its focus, pressed and disabled variants for art faces, such
    as a button skin's cut frames. A game's own face fill draws over those, under the art and icon:
    --ui-hud-disc-fill, a ring --ui-hud-disc-ring base px wide in --ui-hud-disc-ring-colour,
-   --ui-hud-disc-ring-inset base px (default 0) inside the edge, and the icon's --ui-hud-disc-ink,
-   each with selected, focus, pressed and disabled variants (--ui-hud-disc-focus-fill). A state's
-   fill or ink left unset shows the theme's for that state; a state's ring colour left unset keeps
-   the idle one. */
+   --ui-hud-disc-ring-inset base px (default 0) inside the edge, an outer rim --ui-hud-disc-rim
+   base px wide in --ui-hud-disc-rim-colour at the disc's edge, --ui-hud-disc-rim-inset base px
+   (default 0) inside the edge with nothing painted beyond it, and the icon's --ui-hud-disc-ink.
+   Each colour has selected, focus, pressed and disabled variants (--ui-hud-disc-focus-fill,
+   --ui-hud-disc-focus-rim-colour). A state's fill or ink left unset shows the theme's for that
+   state; a state's ring or rim colour left unset keeps the idle one. */
 
 :where(.ui-hud-disc) {
   appearance: none;
@@ -66,13 +68,19 @@
 }
 
 /* The game's face fill: a layer over the face's theme fill and image, inside its edge, under the
-   art and icon. Unset, it draws nothing. The ring is part of the fill, the same width and inset in
-   every state: the layer's box sits the ring inset inside the edge with the ring as its border,
-   and a spread of the state's fill (--ui-hud-disc-layer-fill) covers the band between the edge and
-   the ring, so the whole inside is fill. The last matching state wins: selected, focus, pressed,
-   then disabled. */
+   art and icon. Unset, it draws nothing. The ring and rim are part of the fill, each the same
+   width and inset in every state. The layer's box sits the ring inset inside the edge with the
+   ring as its border. Two spreads paint the band from the disc's edge, the rim inset inside the
+   edge, to the ring: the state's rim colour (--ui-hud-disc-layer-rim) its outer rim width and the
+   state's fill (--ui-hud-disc-layer-fill) the rest. Beyond the disc's edge the layer paints
+   nothing, so the corners stay clear. A ring inset below the rim inset plus the rim covers the
+   rim. The last matching state wins: selected, focus, pressed, then disabled. */
 :where(.ui-hud-disc > .ui-hud-disc-face)::before {
   --ui-hud-disc-layer-fill: var(--ui-hud-disc-fill, transparent);
+  --ui-hud-disc-layer-rim: var(--ui-hud-disc-rim-colour, transparent);
+  --ui-hud-disc-layer-band: calc(
+    (var(--ui-hud-disc-ring-inset, 0) - var(--ui-hud-disc-rim-inset, 0)) * var(--ui-unit, 1) * 1px
+  );
   content: "";
   position: absolute;
   inset: calc(var(--ui-hud-disc-ring-inset, 0) * var(--ui-unit, 1) * 1px);
@@ -81,13 +89,19 @@
     var(--ui-hud-disc-ring-colour, transparent);
   border-radius: 50%;
   background-color: var(--ui-hud-disc-layer-fill);
-  box-shadow: 0 0 0 calc(var(--ui-hud-disc-ring-inset, 0) * var(--ui-unit, 1) * 1px)
-    var(--ui-hud-disc-layer-fill);
+  box-shadow:
+    0 0 0 calc(var(--ui-hud-disc-layer-band) - var(--ui-hud-disc-rim, 0) * var(--ui-unit, 1) * 1px)
+      var(--ui-hud-disc-layer-fill),
+    0 0 0 var(--ui-hud-disc-layer-band) var(--ui-hud-disc-layer-rim);
   pointer-events: none;
 }
 
 :where(button.ui-hud-disc[data-ui-selected] > .ui-hud-disc-face)::before {
   --ui-hud-disc-layer-fill: var(--ui-hud-disc-selected-fill, transparent);
+  --ui-hud-disc-layer-rim: var(
+    --ui-hud-disc-selected-rim-colour,
+    var(--ui-hud-disc-rim-colour, transparent)
+  );
   border-color: var(
     --ui-hud-disc-selected-ring-colour,
     var(--ui-hud-disc-ring-colour, transparent)
@@ -96,16 +110,28 @@
 
 :where(button.ui-hud-disc:focus-visible > .ui-hud-disc-face)::before {
   --ui-hud-disc-layer-fill: var(--ui-hud-disc-focus-fill, transparent);
+  --ui-hud-disc-layer-rim: var(
+    --ui-hud-disc-focus-rim-colour,
+    var(--ui-hud-disc-rim-colour, transparent)
+  );
   border-color: var(--ui-hud-disc-focus-ring-colour, var(--ui-hud-disc-ring-colour, transparent));
 }
 
 :where(button.ui-hud-disc[data-ui-pressed] > .ui-hud-disc-face)::before {
   --ui-hud-disc-layer-fill: var(--ui-hud-disc-pressed-fill, transparent);
+  --ui-hud-disc-layer-rim: var(
+    --ui-hud-disc-pressed-rim-colour,
+    var(--ui-hud-disc-rim-colour, transparent)
+  );
   border-color: var(--ui-hud-disc-pressed-ring-colour, var(--ui-hud-disc-ring-colour, transparent));
 }
 
 :where(button.ui-hud-disc:is(:disabled, [aria-disabled="true"]) > .ui-hud-disc-face)::before {
   --ui-hud-disc-layer-fill: var(--ui-hud-disc-disabled-fill, transparent);
+  --ui-hud-disc-layer-rim: var(
+    --ui-hud-disc-disabled-rim-colour,
+    var(--ui-hud-disc-rim-colour, transparent)
+  );
   border-color: var(
     --ui-hud-disc-disabled-ring-colour,
     var(--ui-hud-disc-ring-colour, transparent)

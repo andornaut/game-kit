@@ -45,6 +45,9 @@ const partsCss = `
     --ui-hud-disc-focus-fill: #00ff00; --ui-hud-disc-pressed-fill: #ffff00; outline: none; }
   .fixture-zero { --ui-hud-disc-ring-inset: 0; }
   .fixture-inset { --ui-hud-disc-ring-inset: 1; }
+  .fixture-rim { --ui-hud-disc-edge: 0; --ui-hud-disc-rim-inset: 1; --ui-hud-disc-rim: 1;
+    --ui-hud-disc-ring-inset: 3; --ui-hud-disc-rim-colour: #ff00ff;
+    --ui-hud-disc-focus-rim-colour: #00ffff; --ui-hud-disc-pressed-rim-colour: #ff8000; }
 `;
 const csp = "default-src 'self'; style-src 'self'; style-src-attr 'none'";
 const hostCss = `
@@ -999,8 +1002,9 @@ try {
     assert.deepEqual(inked.stack, ["rgb(33, 27, 20)", "rgb(208, 212, 216)"]);
 
     // A HUD disc's ring sits --ui-hud-disc-ring-inset units inside the edge in every state, with
-    // the state's fill between; unset or 0 it touches the edge, as before. The disc's box and hit
-    // area do not move.
+    // the state's fill between; unset or 0 it touches the edge, as before. A rim takes the band's
+    // outer units from the disc's edge, --ui-hud-disc-rim-inset inside the edge, with nothing
+    // painted beyond it. The disc's box and hit area do not move.
     await page.goto(`${origin}parts`);
     await page.evaluate(async () => {
       const discPath = "/src/web/ui/dom/hudDisc.ts";
@@ -1016,7 +1020,7 @@ try {
       const rule = { holdMs: 500, slopPx: 5 };
       const discs = document.querySelector<HTMLElement>("#discs")!;
       const views: Record<string, ReturnType<typeof createHudDisc>> = {};
-      for (const kind of ["inset", "unset", "zero"]) {
+      for (const kind of ["inset", "unset", "zero", "rim"]) {
         const view = createHudDisc(document, {
           className: `fixture-disc fixture-${kind}`,
           getAction: () => ({ activate: () => {} }),
@@ -1043,25 +1047,31 @@ try {
       }
     });
     const decoder = await browser.newPage();
-    const ringRow = async (id: string) => {
+    // Pixels at points in the disc's box, at 4 px a unit; a null y is the centre row.
+    const pixels = async (id: string, points: (readonly [number, number | null])[]) => {
       const png = await page.locator(id).screenshot({ animations: "disabled" });
-      return decoder.evaluate(async (data) => {
-        const image = new Image();
-        image.src = `data:image/png;base64,${data}`;
-        await image.decode();
-        const canvas = document.createElement("canvas");
-        canvas.width = image.width;
-        canvas.height = image.height;
-        const context = canvas.getContext("2d")!;
-        context.drawImage(image, 0, 0);
-        // Depths along the centre row from the left edge, at 4 px a unit: the edge, the unit
-        // inside it, the next two and the fill beyond.
-        return [2, 6, 10, 14, 20].map((x) => {
-          const [r, g, b] = context.getImageData(x, image.height / 2, 1, 1).data;
-          return `${r},${g},${b}`;
-        });
-      }, png.toString("base64"));
+      return decoder.evaluate(
+        async ({ data, points }) => {
+          const image = new Image();
+          image.src = `data:image/png;base64,${data}`;
+          await image.decode();
+          const canvas = document.createElement("canvas");
+          canvas.width = image.width;
+          canvas.height = image.height;
+          const context = canvas.getContext("2d")!;
+          context.drawImage(image, 0, 0);
+          return points.map(([x, y]) => {
+            const [r, g, b] = context.getImageData(x, y ?? image.height / 2, 1, 1).data;
+            return `${r},${g},${b}`;
+          });
+        },
+        { data: png.toString("base64"), points },
+      );
     };
+    // Depths along the centre row from the left edge: the edge, the unit inside it, the next two
+    // and the fill beyond.
+    const ringPoints = [2, 6, 10, 14, 20].map((x) => [x, null] as const);
+    const ringRow = (id: string) => pixels(id, ringPoints);
     const [red, blue, white, green, yellow] = [
       "255,0,0",
       "0,0,255",
@@ -1069,13 +1079,27 @@ try {
       "0,255,0",
       "255,255,0",
     ];
+    const [clear, magenta, cyan, orange] = ["0,0,0", "255,0,255", "0,255,255", "255,128,0"];
+    // The rim disc along the centre row: a unit outside the disc's edge, the rim, the band, the
+    // ring and the fill; then the box's corner and a point inside it just outside the circle.
+    const rimPoints = [
+      [2, null],
+      [6, null],
+      [10, null],
+      [16, null],
+      [26, null],
+      [2, 2],
+      [12, 12],
+    ] as const;
+    const rimRow = () => pixels("#disc-rim", [...rimPoints]);
     const boxes = await page.evaluate(() =>
-      ["inset", "unset", "zero"].map((kind) => {
+      ["inset", "unset", "zero", "rim"].map((kind) => {
         const { height, width } = document.querySelector(`#disc-${kind}`)!.getBoundingClientRect();
         return [width, height];
       }),
     );
     assert.deepEqual(boxes, [
+      [80, 80],
       [80, 80],
       [80, 80],
       [80, 80],
@@ -1089,11 +1113,12 @@ try {
       }),
     );
     assert.deepEqual(layers, [
-      "0px | 8px | rgb(0, 0, 255) 0px 0px 0px 0px",
-      "0px | 8px | rgb(0, 0, 255) 0px 0px 0px 0px",
+      "0px | 8px | rgb(0, 0, 255) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+      "0px | 8px | rgb(0, 0, 255) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
     ]);
     assert.deepEqual(await ringRow("#disc-unset"), [red, white, white, blue, blue]);
     assert.deepEqual(await ringRow("#disc-inset"), [red, blue, white, white, blue]);
+    assert.deepEqual(await rimRow(), [clear, magenta, blue, white, blue, clear, clear]);
     const bandHit = await page.evaluate(() => {
       const { height, x, y } = document.querySelector("#disc-inset")!.getBoundingClientRect();
       return document.elementFromPoint(x + 6, y + height / 2)?.closest("button")?.id;
@@ -1102,6 +1127,12 @@ try {
     await page.keyboard.press("Tab");
     assert.equal(await page.evaluate(() => document.activeElement?.id), "disc-inset");
     assert.deepEqual(await ringRow("#disc-inset"), [red, green, white, white, green]);
+    // Past the unset and zero discs to the rim disc.
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "disc-rim");
+    assert.deepEqual(await rimRow(), [clear, cyan, green, white, green, clear, clear]);
     await page.evaluate(() => {
       (document.activeElement as HTMLElement).blur();
       const { fixtureDiscs } = window as unknown as {
@@ -1109,9 +1140,20 @@ try {
       };
       fixtureDiscs.inset!.setPressed(true);
       fixtureDiscs.unset!.setPressed(true);
+      fixtureDiscs.rim!.setPressed(true);
     });
     assert.deepEqual(await ringRow("#disc-inset"), [red, yellow, white, white, yellow]);
     assert.deepEqual(await ringRow("#disc-unset"), [red, white, white, yellow, yellow]);
+    assert.deepEqual(await rimRow(), [clear, orange, yellow, white, yellow, clear, clear]);
+    // Forced colours set the fill layer aside, rim and ring with it.
+    await page.emulateMedia({ forcedColors: "active" });
+    const forcedLayer = await page.evaluate(
+      () =>
+        getComputedStyle(document.querySelector("#disc-rim > .ui-hud-disc-face")!, "::before")
+          .display,
+    );
+    await page.emulateMedia({ forcedColors: "none" });
+    assert.equal(forcedLayer, "none");
     await decoder.close();
 
     // A pager's refused Previous shakes outside any --ui-unit at the default unit of 1, and by the
