@@ -24,6 +24,7 @@
     "src/input/modalInput.ts",
     "src/input/onePress.ts",
     "src/input/outsideTap.ts",
+    "src/input/pressGuard.ts",
     "src/input/tapGuard.ts",
     "src/input/targetPress.ts",
     "src/lines.ts",

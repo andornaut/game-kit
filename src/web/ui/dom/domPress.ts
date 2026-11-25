@@ -1,28 +1,20 @@
 import {
   followOnePress,
   guardPassed,
-  type ModalInputScope,
   type OutsidePress,
   outsidePressMove,
+  type PressGuard,
 } from "../../../input/index.ts";
 import { readUnit } from "./viewUnits.ts";
+
+// The press guard types, defined in input/pressGuard, stay part of this module's exports.
+export type { PressGate, PressGuard } from "../../../input/index.ts";
 
 // DOM presses under the modal input gate (input/modalInput): a press captures the gate on its
 // pointerdown and its click checks that capture, so a gesture never crosses a modal-stack change.
 // Only the first pointer down is followed until it lifts (input/onePress). A view that breaks into
 // play can refuse presses until guardMs after it is first drawn (input/tapGuard). A click with no
 // pointer behind it (Enter or Space, or element.click()) needs only the gate to accept it then.
-
-// The gate the presses answer to: a modalInput scope, or the gate itself for presses outside any
-// modal.
-export type PressGate = Pick<ModalInputScope, "accepts" | "capture">;
-
-export interface PressGuard {
-  readonly gate: PressGate;
-  // Refuses presses until guardMs after drawnMs, when the view was first drawn, or while it is
-  // still null. Times are on the clock of event timeStamps and performance.now().
-  readonly tapGuard?: { readonly drawnMs: () => number | null; readonly guardMs: number };
-}
 
 interface FollowedPress {
   down(event: PointerEvent): void;

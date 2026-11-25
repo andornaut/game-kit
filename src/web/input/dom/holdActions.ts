@@ -3,10 +3,10 @@ import {
   type HoldPress,
   type HoldRule,
   moveHold,
+  type PressGuard,
   startHold,
   tickHold,
 } from "../../../input/index.ts";
-import type { PressGuard } from "../../ui/dom/domPress.ts";
 
 export interface HoldAction {
   // Permit the original refusal callback for this control's own ARIA state, never its scope.

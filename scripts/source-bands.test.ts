@@ -31,7 +31,6 @@ const KNOWN_VIOLATIONS: readonly string[] = [
   "unplaced: src/web/pwa/vite/hashedIconsPlugin.ts",
   "unplaced: src/web/pwa/vite/originMemberPacks.ts",
   "unplaced: src/web/pwa/vite/precachePlugin.ts",
-  "upward import: src/web/input/dom/holdActions.ts -> src/web/ui/dom/domPress.ts",
 ];
 
 const BANDS: SourceBands = [
