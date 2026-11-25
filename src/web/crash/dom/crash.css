@@ -1,8 +1,24 @@
 /* The crash screen (crashScreen.ts), over the whole page. installCrashScreen sets the colour
    variables on .crash from the game's CrashColours. It is appended inside <body>, so it turns with
    a page frame the game turns and keeps clear of the safe areas on the frame's own edges, the
-   --inset-* properties, or the screen's where nothing sets them. */
+   --inset-* properties, or the screen's where nothing sets them.
+
+   Type and colour follow the uiTheme text roles and colour slots (web/ui/dom/uiTheme) that a game
+   sets on an ancestor such as the document root, with role lengths in base px at --ui-unit. Each
+   var() fallback is the screen's own default, so a page that sets no roles or slots keeps that
+   look. A --crash-<role>-* length is invalid while its role is unset, which selects the fallback;
+   where a property has no fallback it inherits, as it does without a role. */
 .crash {
+  --crash-heading-size: calc(var(--ui-text-heading-size) * var(--ui-unit, 1) * 1px);
+  --crash-heading-line-height: calc(var(--ui-text-heading-line-height) * var(--ui-unit, 1) * 1px);
+  --crash-body-size: calc(var(--ui-text-body-size) * var(--ui-unit, 1) * 1px);
+  --crash-body-line-height: calc(var(--ui-text-body-line-height) * var(--ui-unit, 1) * 1px);
+  --crash-label-size: calc(var(--ui-text-label-size) * var(--ui-unit, 1) * 1px);
+  --crash-label-line-height: calc(var(--ui-text-label-line-height) * var(--ui-unit, 1) * 1px);
+  --crash-supporting-size: calc(var(--ui-text-supporting-size) * var(--ui-unit, 1) * 1px);
+  --crash-supporting-line-height: calc(
+    var(--ui-text-supporting-line-height) * var(--ui-unit, 1) * 1px
+  );
   position: fixed;
   inset: 0;
   z-index: 1000;
@@ -15,9 +31,11 @@
     max(16px, var(--inset-left, env(safe-area-inset-left, 0px)));
   overflow-y: auto;
   background: var(--crash-background);
-  color: var(--crash-text);
+  color: var(--ui-colour-text-primary, var(--crash-text));
+  /* The body role. */
   font:
-    16px/1.5 ui-monospace,
+    var(--ui-text-body-weight, 400) var(--crash-body-size, 16px) /
+      var(--crash-body-line-height, 1.5) ui-monospace,
     Menlo,
     Consolas,
     "Liberation Mono",
@@ -33,44 +51,67 @@
   width: 100%;
   max-width: 328px;
   padding: 24px 20px;
-  border: 4px solid var(--crash-text);
+  border: 4px solid var(--ui-colour-frame, var(--crash-text));
+  background-color: var(--ui-colour-card-face, transparent);
   box-shadow: 4px 4px 0 var(--crash-ink);
   text-align: center;
 }
 
+/* The heading role. */
 .crash-title {
   margin: 0 0 12px;
-  font-size: 22px;
-  line-height: 1.25;
+  font-size: var(--crash-heading-size, 22px);
+  font-weight: var(--ui-text-heading-weight, 700);
+  line-height: var(--crash-heading-line-height, 1.25);
 }
 
 .crash-body {
   margin: 0 0 24px;
 }
 
+/* Copy takes the button slots and Reload, the primary, the primary slots. Focus and press change
+   only the fill and text colour; focus defaults to the face and text swapped. */
 .crash-button {
+  --crash-action-face: var(--ui-colour-button-face, var(--crash-button-face));
+  --crash-action-text: var(--ui-colour-button-text, var(--crash-background));
   min-width: 160px;
   min-height: 48px;
   padding: 0 20px 4px;
   border: 3px solid var(--crash-ink);
   border-radius: 0;
-  background: var(--crash-button-face);
+  background: var(--crash-action-face);
   box-shadow: inset 0 -4px 0 var(--crash-button-lip);
-  color: var(--crash-background);
+  color: var(--crash-action-text);
+  /* The label role. */
   font: inherit;
-  font-weight: 700;
+  font-size: var(--crash-label-size, 1em);
+  font-weight: var(--ui-text-label-weight, 700);
+  line-height: var(--crash-label-line-height);
   cursor: pointer;
+}
+
+.crash-button[data-ui-button-role="primary"] {
+  --crash-action-face: var(
+    --ui-colour-button-primary-face,
+    var(--ui-colour-button-face, var(--crash-button-face))
+  );
+  --crash-action-text: var(
+    --ui-colour-button-primary-text,
+    var(--ui-colour-button-text, var(--crash-background))
+  );
 }
 
 .crash-button:active {
   padding: 4px 20px 0;
+  background-color: var(--ui-colour-button-pressed-face, var(--crash-action-face));
   box-shadow: inset 0 4px 0 var(--crash-button-lip);
+  color: var(--ui-colour-button-pressed-text, var(--crash-action-text));
 }
 
 .crash-button:focus-visible {
   outline: none;
-  background-color: var(--crash-background);
-  color: var(--crash-button-face);
+  background-color: var(--ui-colour-button-focus-face, var(--crash-action-text));
+  color: var(--ui-colour-button-focus-text, var(--crash-action-face));
 }
 
 .crash-details {
@@ -108,14 +149,16 @@
   }
 }
 
+/* The supporting role, in the panel's text colour over the dark backdrop. */
 .crash-stack {
   max-height: 40vh;
   margin: 8px 0 12px;
   padding: 8px;
   overflow: auto;
   background: var(--crash-ink);
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: var(--crash-supporting-size, 12px);
+  font-weight: var(--ui-text-supporting-weight);
+  line-height: var(--crash-supporting-line-height, 1.4);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

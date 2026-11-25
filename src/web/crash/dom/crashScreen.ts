@@ -1,9 +1,10 @@
 // The crash screen: plain HTML over the whole page, since the canvas may be what broke. It
 // writes nothing; a game that saves as it goes keeps what it last saved. Its styles are
 // web/crash/dom/crash.css, which the game imports (a script cannot add a <style> under a CSP
-// without 'unsafe-inline'), in the game's colours, which the screen sets as CSS variables. It
-// tracks the input modality from install and focuses Reload through focusTarget
-// (web/ui/dom/focusModality), so the ring shows only after keyboard input.
+// without 'unsafe-inline'), in the game's colours, which the screen sets as CSS variables. The
+// stylesheet takes the uiTheme text roles and colour slots set on the document root, else these
+// colours and its own type. It tracks the input modality from install and focuses Reload through
+// focusTarget (web/ui/dom/focusModality), so the focus fill shows only after keyboard input.
 import type { HoldActionBinding } from "../../input/dom/holdActions.ts";
 import { focusTarget, trackInputModality } from "../../ui/dom/focusModality.ts";
 import { createNativeButton } from "../../ui/dom/nativeButton.ts";
@@ -16,9 +17,11 @@ import {
   reportFromRejection,
 } from "../crashModel.ts";
 
-// The screen's colours, as CSS colours: the page behind the panel, the text and the panel's
-// border, a button's face and the lip under it (its pressed edge), and the darkest colour, for
-// the panel's shadow, the button's border and text, and the details' backdrop.
+// The screen's colours, as CSS colours: the page behind the panel and a button's text, the text
+// and the panel's border, a button's face and the lip under it (its pressed edge), and the
+// darkest colour, for the panel's shadow, the button's border and the details' backdrop. Where a
+// game sets them, the uiTheme slots replace the text, panel border and button colours, and
+// cardFace fills the panel.
 export interface CrashColours {
   readonly background: string;
   readonly buttonFace: string;
@@ -122,6 +125,7 @@ function showCrashScreen(page: CrashPage, options: CrashScreenOptions, report: C
   body.id = "crash-body";
   const actions: Parameters<HoldActionBinding>[0][] = [];
   const reload = button(document, actions, view.reload, () => page.location.reload());
+  reload.setAttribute("data-ui-button-role", "primary");
   const panel = el(document, "div", "crash-panel", title, body);
   if (view.details !== undefined) {
     panel.append(detailsSection(page, actions, `${options.buildLabel}\n${view.details}`));

@@ -53,6 +53,30 @@ function presentationFixture(unit = 1): LoadingFailurePresentation {
   };
 }
 
+// A text node's type: its uiTheme role's lengths and weight, else the given fallback.
+function expectRoleFont(
+  role: "body" | "heading" | "label",
+  fallback: { family: string; lineHeight: string; size: string; weight: string },
+  node: HTMLElement,
+) {
+  for (const [property, value] of Object.entries({
+    "font-family": fallback.family,
+    "font-size": `var(--loading-failure-${role}-size, ${fallback.size})`,
+    "font-weight": `var(--ui-text-${role}-weight, ${fallback.weight})`,
+    "line-height": `var(--loading-failure-${role}-line-height, ${fallback.lineHeight})`,
+  })) {
+    expect(node.style.getPropertyValue(property)).toBe(value);
+    expect(node.style.getPropertyPriority(property)).toBe("important");
+  }
+}
+
+const NATIVE_FONT = {
+  family: "sans-serif",
+  lineHeight: "normal",
+  size: "medium",
+  weight: "normal",
+};
+
 describe("mountLoadingFailure", () => {
   it("shows readable notice text through the same lifecycle without mounting any action", () => {
     const parent = document.createElement("div");
@@ -81,9 +105,11 @@ describe("mountLoadingFailure", () => {
       expect(view.element.querySelector("p")?.textContent).toBe(text);
       expect(view.element.querySelector("p")?.children).toHaveLength(0);
       expect(view.element.querySelector("button, [tabindex], link, style, img")).toBeNull();
+      expect(view.element.style.getPropertyValue("font")).toBe("medium sans-serif");
+      expect(view.element.style.getPropertyPriority("font")).toBe("important");
+      expectRoleFont("heading", NATIVE_FONT, view.element.querySelector("h2")!);
+      expectRoleFont("body", NATIVE_FONT, view.element.querySelector("p")!);
       for (const node of [view.element, ...view.element.querySelectorAll<HTMLElement>("h2, p")]) {
-        expect(node.style.getPropertyValue("font")).toBe("medium sans-serif");
-        expect(node.style.getPropertyPriority("font")).toBe("important");
         expect(node.style.getPropertyValue("all")).toBe("revert");
         expect(node.style.getPropertyPriority("all")).toBe("important");
       }
@@ -277,16 +303,18 @@ describe("mountLoadingFailure", () => {
       expect(view.element.style.maxHeight).toBe("calc(100% - 32px)");
       expect(view.element.style.overflow).toBe("auto");
       expect(view.element.style.padding).toBe("24px 16px 16px");
-      expect(view.element.style.backgroundColor).toBe("#ead4aa");
+      expect(view.element.style.backgroundColor).toBe("var(--ui-colour-card-face, #ead4aa)");
       for (const node of [title, body]) {
         expect(node.style.getPropertyValue("background-color")).toBe("transparent");
         expect(node.style.getPropertyPriority("background-color")).toBe("important");
       }
-      expect(button.style.backgroundColor).toBe("#63c74d");
+      expect(button.style.backgroundColor).toBe(
+        "var(--ui-colour-button-primary-face, var(--ui-colour-button-face, #63c74d))",
+      );
       expect(body.style.margin).toBe("16px 0px 24px");
-      expect(title.style.fontSize).toBe("24px");
-      expect(body.style.fontSize).toBe("18px");
-      expect(button.style.fontSize).toBe("18px");
+      expect(title.style.fontSize).toBe("var(--loading-failure-heading-size, 24px)");
+      expect(body.style.fontSize).toBe("var(--loading-failure-body-size, 18px)");
+      expect(button.style.fontSize).toBe("var(--loading-failure-label-size, 18px)");
       expect(button.style.width).toBe("64px");
       expect(button.style.height).toBe("24px");
       expect(Number.parseFloat(button.style.minHeight)).toBe(0);
@@ -326,8 +354,10 @@ describe("mountLoadingFailure", () => {
         expect(node.style.getPropertyValue("background-color")).toBe("transparent");
         expect(node.style.getPropertyPriority("background-color")).toBe("important");
       }
-      expect(element.style.backgroundColor).toBe("#ead4aa");
-      expect(button.style.backgroundColor).toBe("#63c74d");
+      expect(element.style.backgroundColor).toBe("var(--ui-colour-card-face, #ead4aa)");
+      expect(button.style.backgroundColor).toBe(
+        "var(--ui-colour-button-primary-face, var(--ui-colour-button-face, #63c74d))",
+      );
       mutableReplacement.action.heightPx = 500;
       expect(view.element).toBe(element);
       expect(element.querySelector("button")).toBe(button);
@@ -335,7 +365,7 @@ describe("mountLoadingFailure", () => {
       expect(button.disabled).toBe(true);
       expect(button.style.width).toBe("128px");
       expect(button.style.height).toBe("48px");
-      expect(title.style.fontSize).toBe("24px");
+      expect(title.style.fontSize).toBe("var(--loading-failure-heading-size, 24px)");
       expect(element.style.maxWidth).toBe("456px");
       const beforeInvalid = element.outerHTML;
       const invalid = presentationFixture();
@@ -624,12 +654,14 @@ describe("mountLoadingFailure", () => {
       "Some game files could not load. Try again.",
     );
     expect(view.element.querySelector("button")?.textContent).toBe("Retry");
+    expect(view.element.style.getPropertyValue("font")).toBe("medium sans-serif");
+    expectRoleFont("heading", NATIVE_FONT, view.element.querySelector("h2")!);
+    expectRoleFont("body", NATIVE_FONT, view.element.querySelector("p")!);
+    expectRoleFont("label", NATIVE_FONT, view.element.querySelector("button")!);
     for (const node of [
       view.element,
       ...view.element.querySelectorAll<HTMLElement>("h2, p, button"),
     ]) {
-      expect(node.style.getPropertyValue("font")).toBe("medium sans-serif");
-      expect(node.style.getPropertyPriority("font")).toBe("important");
       expect(node.style.getPropertyValue("all")).toBe("revert");
       expect(node.style.getPropertyPriority("all")).toBe("important");
     }
@@ -658,6 +690,78 @@ describe("mountLoadingFailure", () => {
     expect(onRetry).not.toHaveBeenCalled();
     view.dispose();
     writes.mockRestore();
+  });
+
+  it("takes the uiTheme roles and slots, with the native and configured values as fallbacks", () => {
+    const writes = vi.spyOn(CSSStyleDeclaration.prototype, "setProperty");
+    const native = mountLoadingFailure({ onRetry: vi.fn() }, document.createElement("div"));
+    const configured = mountLoadingFailure(
+      { onRetry: vi.fn(), presentation: presentationFixture() },
+      document.createElement("div"),
+    );
+    try {
+      for (const { element } of [native, configured]) {
+        for (const role of ["body", "heading", "label"]) {
+          for (const field of ["size", "line-height"]) {
+            expect(element.style.getPropertyValue(`--loading-failure-${role}-${field}`)).toBe(
+              `calc(var(--ui-text-${role}-${field}) * var(--ui-unit, 1) * 1px)`,
+            );
+          }
+        }
+      }
+      // The DOM emulator does not serialize CSS system colours; verify the actual CSSOM writes.
+      const nativeWrites = (name: string, value: string) =>
+        writes.mock.calls.filter(
+          ([written, colour, priority]) =>
+            written === name && colour === value && priority === "important",
+        );
+      expect(nativeWrites("background-color", "var(--ui-colour-card-face, Canvas)")).toHaveLength(
+        3,
+      );
+      expect(nativeWrites("color", "var(--ui-colour-text-primary, CanvasText)")).toHaveLength(3);
+      expect(
+        nativeWrites(
+          "background-color",
+          "var(--ui-colour-button-primary-face, var(--ui-colour-button-face, Canvas))",
+        ),
+      ).toHaveLength(1);
+      expect(
+        nativeWrites(
+          "color",
+          "var(--ui-colour-button-primary-text, var(--ui-colour-button-text, CanvasText))",
+        ),
+      ).toHaveLength(1);
+
+      const [title, body, retry] = [...configured.element.children] as HTMLElement[];
+      expectRoleFont(
+        "heading",
+        { family: "system-ui, sans-serif", lineHeight: "1.2", size: "24px", weight: "700" },
+        title!,
+      );
+      expectRoleFont(
+        "body",
+        { family: "system-ui, sans-serif", lineHeight: "1.45", size: "18px", weight: "400" },
+        body!,
+      );
+      expectRoleFont(
+        "label",
+        { family: "system-ui, sans-serif", lineHeight: "1.2", size: "18px", weight: "700" },
+        retry!,
+      );
+      for (const node of [title!, body!]) {
+        expect(node.style.color).toBe("var(--ui-colour-text-primary, #3e2731)");
+      }
+      expect(retry!.style.color).toBe(
+        "var(--ui-colour-button-primary-text, var(--ui-colour-button-text, #181425))",
+      );
+      for (const node of [configured.element, retry!]) {
+        expect(node.style.borderColor).toBe("var(--ui-colour-frame, #181425)");
+      }
+    } finally {
+      native.dispose();
+      configured.dispose();
+      writes.mockRestore();
+    }
   });
 
   it("uses caller spacing, target minimums and alignment after the hardened reset across states", () => {
@@ -710,8 +814,8 @@ describe("mountLoadingFailure", () => {
         for (const node of view.element.querySelectorAll<HTMLElement>("h2, p, button")) {
           expect(node.style.margin).toBe("0px");
           expect(node.style.getPropertyPriority("margin")).toBe("important");
-          expect(node.style.font).toBe("medium sans-serif");
-          expect(node.style.getPropertyPriority("font")).toBe("important");
+          expect(node.style.fontFamily).toBe("sans-serif");
+          expect(node.style.getPropertyPriority("font-family")).toBe("important");
           expect(node.style.getPropertyValue("all")).toBe("revert");
         }
       }

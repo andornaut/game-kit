@@ -765,9 +765,10 @@ try {
   view.update({attempt:1,kind:'failed',error:undefined});
   const button = view.element.querySelector('button');
   assert.ok(button);
-  assert.equal(view.element.querySelector('h2').style.fontSize,'24px');
-  assert.equal(view.element.querySelector('p').style.fontSize,'18px');
-  assert.equal(button.style.fontSize,'18px');
+  // Each size is its uiTheme role's, else the presentation's.
+  assert.equal(view.element.querySelector('h2').style.fontSize,'var(--loading-failure-heading-size, 24px)');
+  assert.equal(view.element.querySelector('p').style.fontSize,'var(--loading-failure-body-size, 18px)');
+  assert.equal(button.style.fontSize,'var(--loading-failure-label-size, 18px)');
   assert.equal(button.style.height,'30px');
   assert.equal(button.style.getPropertyValue('font-synthesis'),'weight');
   assert.equal(button.style.getPropertyPriority('font-synthesis'),'important');
@@ -786,7 +787,7 @@ try {
   assert.equal(button.disabled,true);
   assert.equal(button.style.height,'24px');
   assert.equal(button.style.width,'64px');
-  assert.equal(button.style.fontSize,'18px');
+  assert.equal(button.style.fontSize,'var(--loading-failure-label-size, 18px)');
   assert.equal(retries,1);
   const geometry = [button.style.width,button.style.height,button.style.fontSize,button.style.fontFamily];
   const acceptedText = [...view.element.querySelectorAll('h2, p')].map(node=>node.style.cssText);

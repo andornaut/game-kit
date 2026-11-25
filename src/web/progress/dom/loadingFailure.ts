@@ -1,4 +1,5 @@
 import { LOADING_FAILURE_TEXT, type LoadingAttemptState } from "../../../load/loadingAttempts.ts";
+import { colourProperty, type TextRole, type UiColourRole } from "../../../ui/uiTheme.ts";
 import type { HoldActionBinding } from "../../input/dom/holdActions.ts";
 import { createNativeButton } from "../../ui/dom/nativeButton.ts";
 import { paintRetryFocus } from "./retryFocus.ts";
@@ -108,6 +109,50 @@ function fallback(element: HTMLElement): void {
     element.style.setProperty(name, value, "important");
   }
 }
+
+// The uiTheme text roles and colour slots a game sets on an ancestor, such as the document root,
+// replace the renderer's type and colours; each var() falls back to the renderer's own value, so a
+// page that sets none renders as before. A role's lengths are base px at --ui-unit. Each
+// --loading-failure-<role>-* length is invalid while its role is unset, which selects the
+// fallback.
+type CardRole = Extract<TextRole, "body" | "heading" | "label">;
+
+const CARD_ROLES: readonly CardRole[] = ["body", "heading", "label"];
+
+function roleLengths(element: HTMLElement): void {
+  for (const role of CARD_ROLES) {
+    for (const field of ["size", "line-height"]) {
+      element.style.setProperty(
+        `--loading-failure-${role}-${field}`,
+        `calc(var(--ui-text-${role}-${field}) * var(--ui-unit, 1) * 1px)`,
+        "important",
+      );
+    }
+  }
+}
+
+interface RoleFallback {
+  readonly family: string;
+  readonly lineHeight: string;
+  readonly size: string;
+  readonly weight: string;
+}
+
+function roleFont(role: CardRole, fallback: RoleFallback): Record<string, string> {
+  return {
+    "font-family": fallback.family,
+    "font-size": `var(--loading-failure-${role}-size, ${fallback.size})`,
+    "font-weight": `var(--ui-text-${role}-weight, ${fallback.weight})`,
+    "line-height": `var(--loading-failure-${role}-line-height, ${fallback.lineHeight})`,
+  };
+}
+
+// A colour slot, or fallback while the game leaves it unset.
+const slot = (role: UiColourRole, fallback: string) => `var(${colourProperty(role)}, ${fallback})`;
+
+// Retry is the card's one action, so it takes the primary face slots, as uiTheme.css does.
+const actionFace = (fallback: string) => slot("buttonPrimaryFace", slot("buttonFace", fallback));
+const actionText = (fallback: string) => slot("buttonPrimaryText", slot("buttonText", fallback));
 
 // Values are CSS pixels at mount time, not game units. Keep layout independent of later caller
 // mutations and validate before creating or appending any fallback DOM.
@@ -304,6 +349,36 @@ export function mountLoadingFailure(
   for (const node of [element, ...contents]) {
     fallback(node);
   }
+  roleLengths(element);
+  const styles = (properties: Record<string, string>, node: HTMLElement) => {
+    for (const [name, value] of Object.entries(properties)) {
+      node.style.setProperty(name, value, "important");
+    }
+  };
+  if (presentation === undefined) {
+    const native = { family: "sans-serif", lineHeight: "normal", size: "medium", weight: "normal" };
+    for (const node of [element, title, body]) {
+      styles(
+        {
+          "background-color": slot("cardFace", "Canvas"),
+          color: slot("textPrimary", "CanvasText"),
+        },
+        node,
+      );
+    }
+    styles(roleFont("heading", native), title);
+    styles(roleFont("body", native), body);
+    if (retry !== undefined) {
+      styles(
+        {
+          "background-color": actionFace("Canvas"),
+          color: actionText("CanvasText"),
+          ...roleFont("label", native),
+        },
+        retry,
+      );
+    }
+  }
   if (layout !== undefined) {
     for (const [name, value] of Object.entries({
       "box-sizing": "border-box",
@@ -332,29 +407,35 @@ export function mountLoadingFailure(
   }
   const applyPresentation = (next: Presentation) => {
     const { action, palette, panel, text } = next;
-    const styles = (properties: Record<string, string>, node: HTMLElement) => {
-      for (const [name, value] of Object.entries(properties)) {
-        node.style.setProperty(name, value, "important");
-      }
-    };
-    const font = (style: LoadingFailureTextStyle, colour: string, node: HTMLElement) => {
+    const font = (
+      role: CardRole,
+      style: LoadingFailureTextStyle,
+      colour: string,
+      node: HTMLElement,
+    ) => {
       styles(
         {
           color: colour,
-          "font-family": "system-ui, sans-serif",
-          "font-size": `${style.sizePx}px`,
-          "font-weight": `${style.weight}`,
-          "line-height": `${style.lineHeight}`,
+          ...roleFont(role, {
+            family: "system-ui, sans-serif",
+            lineHeight: `${style.lineHeight}`,
+            size: `${style.sizePx}px`,
+            weight: `${style.weight}`,
+          }),
           "text-align": "center",
         },
         node,
       );
     };
+    // The frame slot goes in border-color itself: a longhand of a shorthand holding var() reads as
+    // empty, and Retry's focus paint saves and restores border-color.
+    const border = slot("frame", palette.border);
     styles(
       {
         "align-items": "center",
-        "background-color": palette.panel,
-        border: `${panel.borderWidthPx}px solid ${palette.border}`,
+        "background-color": slot("cardFace", palette.panel),
+        border: `${panel.borderWidthPx}px solid`,
+        "border-color": border,
         "box-shadow": [
           `inset 0 -${panel.lipHeightPx}px 0 ${palette.lip}`,
           `${panel.shadowOffsetPx}px ${panel.shadowOffsetPx}px 0 ${palette.shadow}`,
@@ -376,8 +457,8 @@ export function mountLoadingFailure(
     for (const node of [title, body]) {
       styles({ "background-color": "transparent", "max-width": "100%" }, node);
     }
-    font(text.title, palette.text, title);
-    font(text.body, palette.text, body);
+    font("heading", text.title, slot("textPrimary", palette.text), title);
+    font("body", text.body, slot("textPrimary", palette.text), body);
     styles(
       {
         margin: `${panel.titleBodyGapPx}px 0 ${retry === undefined ? 0 : panel.bodyActionGapPx}px`,
@@ -388,7 +469,7 @@ export function mountLoadingFailure(
     if (retry === undefined) {
       return;
     }
-    font(text.action, palette.actionText, retry);
+    font("label", text.action, actionText(palette.actionText), retry);
     if (text.action.synthesis === undefined) {
       retry.style.removeProperty("font-synthesis");
     } else {
@@ -402,8 +483,9 @@ export function mountLoadingFailure(
     styles(
       {
         "align-items": "center",
-        "background-color": palette.action,
-        border: `${action.borderWidthPx}px solid ${palette.border}`,
+        "background-color": actionFace(palette.action),
+        border: `${action.borderWidthPx}px solid`,
+        "border-color": border,
         "border-radius": "0",
         "box-shadow": [
           `inset 0 ${action.highlightHeightPx}px 0 ${palette.highlight}`,

@@ -23,6 +23,9 @@ geometry only.
 - Colours are role-named slots under a theme root, with system colours in forced-colours mode.
   Focus, press and selection are fills; `controls.css` owns the one focus fill. Disabled is
   distinct and never dips. Theme rules have zero specificity.
+- Kit screens outside the UI layer, the crash screen and the loading failure card, take the text
+  roles and colour slots from an ancestor such as the document root, each with its own type and
+  colours as the fallback. The crash screen does this in CSS alone, so it needs no game code.
 - `.ui-control-row` and `.ui-control-copy` remain for one control beside its copy in flow, with no
   press outsets.
 

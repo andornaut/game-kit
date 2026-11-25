@@ -226,6 +226,11 @@ it("exposes only Reload and dev Copy native closures once per crash", async () =
     "crash-button",
   ]);
   expect(panel?.children.at(-1)).toBe(reload.element);
+  // Reload takes the primary button slots in crash.css; Copy takes the plain ones.
+  const roles = [reload, copy].map((action) =>
+    (action.element as unknown as FakeElement).attributes.get("data-ui-button-role"),
+  );
+  expect(roles).toEqual(["primary", undefined]);
   expect(reload.available()).toBe(true);
   reload.activate();
   reload.element.dispatchEvent(new Event("click"));

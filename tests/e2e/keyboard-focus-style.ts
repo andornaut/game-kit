@@ -698,6 +698,231 @@ try {
     }
     assert.deepEqual(forcedSummary.outline, { colour: highlight, style: "solid", width: "2px" });
     assert.deepEqual(forcedShared.geometry, ordinary.geometry);
+
+    // The kit screens outside the UI layer take the uiTheme roles and slots from the document
+    // root, at the --ui-unit they inherit. With none set, each keeps its own type and colours,
+    // even under a unit.
+    await page.setViewportSize({ height: 520, width: 620 });
+    await page.goto(origin);
+    await page.evaluate(async () => {
+      const crashPath = "/src/web/crash/dom/crashScreen.ts";
+      const { installCrashScreen } = (await import(
+        crashPath
+      )) as typeof import("../../src/web/crash/dom/crashScreen.ts");
+      const failurePath = "/src/web/progress/dom/loadingFailure.ts";
+      const { mountLoadingFailure } = (await import(
+        failurePath
+      )) as typeof import("../../src/web/progress/dom/loadingFailure.ts");
+      installCrashScreen(
+        {
+          buildLabel: "Theme fixture",
+          colours: {
+            background: "#3e352b",
+            buttonFace: "#edb763",
+            buttonLip: "#ad7c3c",
+            ink: "#211b14",
+            text: "#f1dba7",
+          },
+          dev: true,
+          words: {
+            body: "An error interrupted play.",
+            reload: "Reload",
+            title: "Play interrupted",
+          },
+        },
+        window,
+      );
+      window.dispatchEvent(new ErrorEvent("error", { error: new Error("Theme fixture") }));
+      // Mounted after the crash, so outside its inert siblings.
+      const scaled = document.createElement("div");
+      scaled.id = "scaled";
+      scaled.style.setProperty("--ui-unit", "1.5");
+      const notice = document.createElement("div");
+      notice.id = "notice";
+      document.body.append(scaled, notice);
+      const title = { lineHeight: 1.25, sizePx: 20, weight: 700 };
+      mountLoadingFailure(
+        {
+          onRetry: () => {},
+          presentation: {
+            action: {
+              borderWidthPx: 3,
+              heightPx: 48,
+              highlightHeightPx: 1,
+              paddingBottomPx: 4,
+              paddingXPx: 12,
+              shadeHeightPx: 4,
+              widthPx: "content",
+            },
+            palette: {
+              action: "#54442c",
+              actionText: "#f1dba7",
+              border: "#211b14",
+              highlight: "#75603c",
+              lip: "#35291a",
+              panel: "#3e352b",
+              shade: "#35291a",
+              shadow: "#211b14",
+              text: "#f1dba7",
+            },
+            panel: {
+              bodyActionGapPx: 20,
+              borderWidthPx: 2,
+              lipHeightPx: 4,
+              maxWidthPx: 328,
+              paddingBottomPx: 16,
+              paddingTopPx: 24,
+              paddingXPx: 16,
+              safeInsetPx: 12,
+              shadowOffsetPx: 4,
+              titleBodyGapPx: 12,
+            },
+            text: {
+              action: { ...title, sizePx: 16 },
+              body: { lineHeight: 1.4, sizePx: 16, weight: 400 },
+              title,
+            },
+          },
+        },
+        scaled,
+      ).update({ attempt: 1, error: undefined, kind: "failed" });
+      mountLoadingFailure({ body: "Unsupported." }, notice).update({
+        attempt: 0,
+        error: undefined,
+        kind: "failed",
+      });
+    });
+    const reloadButton = ".crash-panel > .crash-button";
+    const screenStyles = (selectors: string[]) =>
+      page.evaluate(
+        (selectors) =>
+          Object.fromEntries(
+            selectors.map((selector) => {
+              const css = getComputedStyle(document.querySelector(selector)!);
+              const { backgroundColor, borderTopColor, color, fontSize, fontWeight } = css;
+              const type = `${fontSize}/${css.lineHeight} ${fontWeight}`;
+              return [selector, `${type} ${color} on ${backgroundColor} in ${borderTopColor}`];
+            }),
+          ),
+        selectors,
+      );
+    const screenSelectors = [
+      ".crash",
+      ".crash-panel",
+      ".crash-title",
+      ".crash-body",
+      ".crash-stack",
+      ".crash-actions .crash-button",
+      reloadButton,
+      "#scaled .loading-failure",
+      "#scaled h2",
+      "#scaled p",
+      "#scaled button",
+      "#notice .loading-failure",
+      "#notice h2",
+      "#notice p",
+    ];
+    const unthemed = await screenStyles(screenSelectors);
+    await page.evaluate(async () => {
+      const themePath = "/src/web/ui/dom/uiTheme.ts";
+      const { setTextRoles, setUiColours } = (await import(
+        themePath
+      )) as typeof import("../../src/web/ui/dom/uiTheme.ts");
+      const root = document.documentElement;
+      setTextRoles(
+        {
+          body: { lineHeight: 20, size: 15, weight: 500 },
+          heading: { lineHeight: 32, size: 28, weight: 800 },
+          label: { lineHeight: 22, size: 17, weight: 600 },
+          supporting: { lineHeight: 14, size: 11, weight: 300 },
+        },
+        root,
+      );
+      setUiColours(
+        {
+          buttonFace: 0x708090,
+          buttonFocusFace: 0x203040,
+          buttonFocusText: 0xf0e0d0,
+          buttonPressedFace: 0x304050,
+          buttonPressedText: 0xe0d0c0,
+          buttonPrimaryFace: 0xa02030,
+          buttonPrimaryText: 0xfffff0,
+          buttonText: 0xf0f0f0,
+          cardFace: 0xe0f0ff,
+          frame: 0x405060,
+          textPrimary: 0x102030,
+        },
+        root,
+      );
+    });
+    const themed = await screenStyles(screenSelectors);
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Tab");
+    const focusedReload = await screenStyles([reloadButton]);
+    await page.locator("#scaled button").focus();
+    await nextPaint(page);
+    const focusedRetry = await screenStyles(["#scaled button"]);
+    const reloadBox = (await page.locator(reloadButton).boundingBox())!;
+    await page.mouse.move(reloadBox.x + reloadBox.width / 2, reloadBox.y + reloadBox.height / 2);
+    await page.mouse.down();
+    await nextPaint(page);
+    const pressedReload = await screenStyles([reloadButton]);
+    await page.mouse.move(1, 1);
+    await page.mouse.up();
+    console.log(JSON.stringify({ focusedReload, focusedRetry, pressedReload, themed, unthemed }));
+    // Each screen's own type and colours, identical to the screens before they took the theme.
+    assert.deepEqual(unthemed, {
+      ".crash": "16px/24px 400 rgb(241, 219, 167) on rgb(62, 53, 43) in rgb(241, 219, 167)",
+      ".crash-panel": "16px/24px 400 rgb(241, 219, 167) on rgba(0, 0, 0, 0) in rgb(241, 219, 167)",
+      ".crash-title":
+        "22px/27.5px 700 rgb(241, 219, 167) on rgba(0, 0, 0, 0) in rgb(241, 219, 167)",
+      ".crash-body": "16px/24px 400 rgb(241, 219, 167) on rgba(0, 0, 0, 0) in rgb(241, 219, 167)",
+      ".crash-stack": "12px/16.8px 400 rgb(241, 219, 167) on rgb(33, 27, 20) in rgb(241, 219, 167)",
+      ".crash-actions .crash-button":
+        "16px/24px 700 rgb(62, 53, 43) on rgb(237, 183, 99) in rgb(33, 27, 20)",
+      ".crash-panel > .crash-button":
+        "16px/24px 700 rgb(62, 53, 43) on rgb(237, 183, 99) in rgb(33, 27, 20)",
+      "#scaled .loading-failure":
+        "16px/normal 400 rgb(0, 0, 0) on rgb(62, 53, 43) in rgb(33, 27, 20)",
+      "#scaled h2": "20px/25px 700 rgb(241, 219, 167) on rgba(0, 0, 0, 0) in rgb(241, 219, 167)",
+      "#scaled p": "16px/22.4px 400 rgb(241, 219, 167) on rgba(0, 0, 0, 0) in rgb(241, 219, 167)",
+      "#scaled button": "16px/20px 700 rgb(241, 219, 167) on rgb(84, 68, 44) in rgb(33, 27, 20)",
+      "#notice .loading-failure":
+        "16px/normal 400 rgb(0, 0, 0) on rgb(255, 255, 255) in rgb(0, 0, 0)",
+      "#notice h2": "16px/normal 400 rgb(0, 0, 0) on rgb(255, 255, 255) in rgb(0, 0, 0)",
+      "#notice p": "16px/normal 400 rgb(0, 0, 0) on rgb(255, 255, 255) in rgb(0, 0, 0)",
+    });
+    assert.deepEqual(themed, {
+      ".crash": "15px/20px 500 rgb(16, 32, 48) on rgb(62, 53, 43) in rgb(16, 32, 48)",
+      ".crash-panel": "15px/20px 500 rgb(16, 32, 48) on rgb(224, 240, 255) in rgb(64, 80, 96)",
+      ".crash-title": "28px/32px 800 rgb(16, 32, 48) on rgba(0, 0, 0, 0) in rgb(16, 32, 48)",
+      ".crash-body": "15px/20px 500 rgb(16, 32, 48) on rgba(0, 0, 0, 0) in rgb(16, 32, 48)",
+      ".crash-stack": "11px/14px 300 rgb(16, 32, 48) on rgb(33, 27, 20) in rgb(16, 32, 48)",
+      ".crash-actions .crash-button":
+        "17px/22px 600 rgb(240, 240, 240) on rgb(112, 128, 144) in rgb(33, 27, 20)",
+      ".crash-panel > .crash-button":
+        "17px/22px 600 rgb(255, 255, 240) on rgb(160, 32, 48) in rgb(33, 27, 20)",
+      "#scaled .loading-failure":
+        "16px/normal 400 rgb(0, 0, 0) on rgb(224, 240, 255) in rgb(64, 80, 96)",
+      "#scaled h2": "42px/48px 800 rgb(16, 32, 48) on rgba(0, 0, 0, 0) in rgb(16, 32, 48)",
+      "#scaled p": "22.5px/30px 500 rgb(16, 32, 48) on rgba(0, 0, 0, 0) in rgb(16, 32, 48)",
+      "#scaled button": "25.5px/33px 600 rgb(255, 255, 240) on rgb(160, 32, 48) in rgb(64, 80, 96)",
+      "#notice .loading-failure":
+        "16px/normal 400 rgb(16, 32, 48) on rgb(224, 240, 255) in rgb(16, 32, 48)",
+      "#notice h2": "28px/32px 800 rgb(16, 32, 48) on rgb(224, 240, 255) in rgb(16, 32, 48)",
+      "#notice p": "15px/20px 500 rgb(16, 32, 48) on rgb(224, 240, 255) in rgb(16, 32, 48)",
+    });
+    assert.deepEqual(focusedReload, {
+      ".crash-panel > .crash-button":
+        "17px/22px 600 rgb(240, 224, 208) on rgb(32, 48, 64) in rgb(33, 27, 20)",
+    });
+    assert.deepEqual(focusedRetry, {
+      "#scaled button": "25.5px/33px 600 rgb(240, 224, 208) on rgb(32, 48, 64) in rgb(64, 80, 96)",
+    });
+    assert.deepEqual(pressedReload, {
+      ".crash-panel > .crash-button":
+        "17px/22px 600 rgb(224, 208, 192) on rgb(48, 64, 80) in rgb(33, 27, 20)",
+    });
   } finally {
     await browser.close();
   }

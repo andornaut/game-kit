@@ -1,3 +1,5 @@
+import { colourProperty, type UiColourRole } from "../../../ui/uiTheme.ts";
+
 // Paint native button states under Retry's inline reset and without stylesheets.
 export function paintRetryFocus(
   button: HTMLButtonElement,
@@ -39,8 +41,14 @@ export function paintRetryFocus(
     if (forced.matches && !view.CSS.supports("forced-color-adjust", "none")) {
       return;
     }
-    // Reuse the caller's colour pair so both cues retain its text-to-face contrast.
+    // The uiTheme focus and pressed slots, where a game sets them. Otherwise reuse the caller's
+    // colour pair so both cues retain its text-to-face contrast.
     const invert = focused !== pressed;
+    const [faceSlot, textSlot]: [UiColourRole, UiColourRole] = pressed
+      ? ["buttonPressedFace", "buttonPressedText"]
+      : ["buttonFocusFace", "buttonFocusText"];
+    const slot = (role: UiColourRole, fallback: string) =>
+      `var(${colourProperty(role)}, ${fallback})`;
     const systemFill = focused ? "Highlight" : "ButtonFace";
     const systemText = focused ? "HighlightText" : "ButtonText";
     const properties: Record<string, string> = forced.matches
@@ -53,8 +61,8 @@ export function paintRetryFocus(
           outline: "none",
         }
       : {
-          "background-color": invert ? style.color : style.backgroundColor,
-          color: invert ? style.backgroundColor : style.color,
+          "background-color": slot(faceSlot, invert ? style.color : style.backgroundColor),
+          color: slot(textSlot, invert ? style.backgroundColor : style.color),
           outline: "none",
           ...(pressed ? { "text-decoration": "underline" } : {}),
         };
