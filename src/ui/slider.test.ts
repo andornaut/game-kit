@@ -121,6 +121,27 @@ describe("sliderLane and sliderGeometry", () => {
       sliderGeometry({ ...ARCHIE, project: { x: (edge) => -edge, y: (edge) => edge } }, 1),
     ).toThrow(RangeError);
   });
+
+  it("keeps the thumb and the track's height at their art size with artPixel", () => {
+    // Archie at 390x844@3: 3.25 device px per unit on whole 3 px art pixels.
+    const grid = (edge: number) => Math.round((edge * 3.25) / 3) * 3;
+    const project = { x: grid, y: grid };
+    const context = { ...ARCHIE, artPixel: 3, origin: { x: 40, y: 127 }, project };
+    for (let step = 0; step <= 20; step += 1) {
+      const units = sliderGeometry({ ...ARCHIE, origin: { x: 40, y: 127 } }, step);
+      const placed = sliderGeometry(context, step);
+      expect(placed.thumb).toEqual({
+        height: 48,
+        width: 30,
+        x: grid(units.thumb.x),
+        y: grid(units.thumb.y),
+      });
+      expect([placed.track.height, placed.fill.height]).toEqual([30, 30]);
+      expect(placed.track.width).toBe(grid(320) - grid(40));
+      expect(placed.fill.width).toBe(grid(units.fill.x + units.fill.width) - grid(40));
+    }
+    expect(() => sliderGeometry({ ...context, artPixel: 1.5 }, 0)).toThrow(RangeError);
+  });
 });
 
 describe("checkSliderArt and checkSliderStep", () => {

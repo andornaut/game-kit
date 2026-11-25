@@ -3,8 +3,9 @@
    layout, or on a placed list (createFormRows place) whole CSS px on the game's grid, through
    --ui-form-length. The list is a grid whose icon, label and value columns every row shares as a
    subgrid: the value column is as wide as the widest value stack, or the game's fixed track. Rows
-   are the action group's stacked gap apart and each row is one button face: the theme's state
-   fills with a clear idle face, controls.css's focus fill and no press dip. */
+   are the layout's gap apart, the action group's stacked gap by default, and each row is one
+   button face: the theme's state fills with a clear idle face, controls.css's focus fill and no
+   press dip unless the row opts in. */
 
 /* Each element that reads a length declares it, so a --ui-unit set on a row or a part applies
    there. */
@@ -212,6 +213,7 @@
 
 :where(.ui-form-rows[data-ui-form-projected] .ui-form-row-icon) {
   align-self: start;
+  justify-content: flex-start;
   margin-top: calc(var(--ui-form-icon-offset, 0) * var(--ui-form-length));
 }
 
@@ -224,6 +226,55 @@
   margin-top: calc(var(--ui-form-value-offset, 0) * var(--ui-form-length));
 }
 
-:where(.ui-form-rows[data-ui-form-projected][data-ui-form-state="center"] .ui-switch) {
+:where(.ui-form-rows[data-ui-form-projected] .ui-switch) {
   margin-right: calc(var(--ui-form-switch-end, 0) * var(--ui-form-length));
+}
+
+/* An end-placed state word's ink ends on the switch as drawn, which art-locked sizes can move off
+   the value column's end. */
+:where(.ui-form-rows[data-ui-form-projected][data-ui-form-state="end"] .ui-form-row-state) {
+  margin-right: calc(
+    (var(--ui-form-switch-end, 0) - var(--ui-form-state-bearing, 0)) * var(--ui-form-length)
+  );
+}
+
+/* A one-action row stays the button and its whole press target with a clear fill, and its one
+   face spans the row's columns at its whole-unit size, centred with the odd unit right, or on a
+   placed list at its placed corner. The face takes the standard button face's theme fills, focus
+   fill and press dip. */
+:where(.ui-form-row[data-ui-form-action]) {
+  background-color: transparent;
+  color: inherit;
+}
+
+:where(.ui-form-row[data-ui-form-action] > .ui-form-row-face) {
+  grid-column: 1 / -1;
+  justify-self: start;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  box-sizing: border-box;
+  width: calc(var(--ui-form-action-width) * var(--ui-form-length));
+  height: calc(var(--ui-form-action-height) * var(--ui-form-length));
+  margin-left: calc((100% - var(--ui-form-action-width) * var(--ui-form-length)) / 2);
+  margin-left: round(
+    down,
+    (100% - var(--ui-form-action-width) * var(--ui-form-length)) / 2,
+    var(--ui-form-length)
+  );
+}
+
+:where(.ui-form-rows[data-ui-form-projected] > [data-ui-form-action] > .ui-form-row-face) {
+  align-self: start;
+  margin-top: calc(var(--ui-form-action-top) * var(--ui-form-length));
+  margin-left: calc(var(--ui-form-action-left) * var(--ui-form-length));
+}
+
+/* A row that sets a press dip moves its art down while pressed, never while disabled: every child
+   but a one-action row's face, which dips as a standard button face does. */
+:where(
+  .ui-form-row[data-ui-form-press-dip][data-ui-pressed]:not(:disabled, [aria-disabled="true"])
+    > :not(.ui-button-face)
+) {
+  translate: 0 calc(var(--ui-form-row-press-dip, 0) * var(--ui-form-length));
 }

@@ -1,14 +1,20 @@
 import type { Point, Rect } from "../rect.ts";
 import { ACTION_GAPS } from "./actionGroup.ts";
-import { type ActionProjection, IDENTITY_PROJECTION, projectRect } from "./projection.ts";
+import {
+  type ActionProjection,
+  checkArtPixel,
+  IDENTITY_PROJECTION,
+  projectArtRect,
+  projectRect,
+} from "./projection.ts";
 
 // Form rows: a list of labelled rows, each one whole press target with an optional icon, its label
 // and note, and a trailing value stack (a switch over its state word, or a value). The list is a
 // CSS grid whose columns every row shares, so the value column is as wide as the widest value
-// stack without script measurement, and every label starts at the same x. Rows are the action
-// group's stacked standard gap apart. The game supplies the row's height, padding and column gap,
-// the icon slot, the switch's art-locked size, the state word's placement and its own text; every
-// length is a whole game unit (base px at --ui-unit).
+// stack without script measurement, and every label starts at the same x. Rows are the layout's
+// gap apart, the action group's stacked standard gap by default. The game supplies the row's
+// height, padding and column gap, the icon slot, the switch's art-locked size, the state word's
+// placement and its own text; every length is a whole game unit (base px at --ui-unit).
 
 // Row content alignment down the row: top-aligned with the given offsets, or centred.
 export type FormRowAlign = "center" | "start";
@@ -29,6 +35,8 @@ export interface FormRowLayout {
   readonly height: number;
   // Between the icon, label and value columns.
   readonly columnGap: number;
+  // Between rows; ACTION_GAPS.standard.stack by default.
+  readonly gap?: number;
   readonly padding?: FormRowSides;
   readonly align?: FormRowAlign;
   // The icon column's width and the icon's side; offset is its top below the row's content top
@@ -85,6 +93,7 @@ export function formRowPresentation(layout: FormRowLayout): FormRowPresentation 
   }
   whole("height", layout.height);
   whole("columnGap", layout.columnGap);
+  whole("gap", layout.gap);
   for (const side of ["bottom", "left", "right", "top"] as const) {
     whole(`padding.${side}`, padding?.[side]);
   }
@@ -108,7 +117,7 @@ export function formRowPresentation(layout: FormRowLayout): FormRowPresentation 
     "--ui-form-row-padding-left": padding?.left ?? 0,
     "--ui-form-row-padding-right": padding?.right ?? 0,
     "--ui-form-row-padding-top": padding?.top ?? 0,
-    "--ui-form-rows-gap": ACTION_GAPS.standard.stack,
+    "--ui-form-rows-gap": layout.gap ?? ACTION_GAPS.standard.stack,
     "--ui-form-state-bearing": value?.bearing ?? 0,
     "--ui-form-value-gap": value?.gap ?? 0,
     "--ui-form-value-offset": value?.offset ?? 0,
@@ -136,8 +145,10 @@ export function formRowPresentation(layout: FormRowLayout): FormRowPresentation 
 }
 
 // A row of a placed list, in the list's order: its height (the layout's by default), whether it
-// is a switch row, and a slider row's lane (SliderLayout): the first line's height, the gap under
-// it, the lane's height and its insets from the content sides.
+// is a switch row, a slider row's lane (SliderLayout: the first line's height, the gap under it,
+// the lane's height and its insets from the content sides), a one-action row's face size, its
+// press dip, and the gap above it from the previous row (the layout's gap by default; none above
+// the first).
 export interface FormRowsRow {
   readonly height?: number;
   readonly switch?: boolean;
@@ -147,15 +158,20 @@ export interface FormRowsRow {
     readonly inset?: { readonly left?: number; readonly right?: number };
     readonly line: number;
   };
+  readonly action?: { readonly height: number; readonly width: number };
+  readonly pressDip?: number;
+  readonly gap?: number;
 }
 
-// A placed list: its width and corner in whole units, its shown rows, and the projection that
-// maps edges to the caller's space, as for arrangeActions.
+// A placed list: its width and corner in whole units, its shown rows, the projection that maps
+// edges to the caller's space, as for arrangeActions, and artPixel, the whole output length of one
+// art pixel (one unit of art), which keeps art-locked parts at their art size (projectArtRect).
 export interface FormRowsContext {
   readonly width: number;
   readonly rows: readonly FormRowsRow[];
   readonly origin?: Point;
   readonly project?: ActionProjection;
+  readonly artPixel?: number;
 }
 
 export interface PlacedFormRow {
@@ -174,6 +190,10 @@ export interface PlacedFormRow {
   readonly stack: Rect;
   readonly switch?: Rect;
   readonly lane?: Rect;
+  // A one-action row's face.
+  readonly face?: Rect;
+  // How far the row's art moves down while pressed.
+  readonly pressDip?: number;
 }
 
 export interface FormRowsGeometry {
@@ -182,24 +202,31 @@ export interface FormRowsGeometry {
 }
 
 // Places a list's rows as formRow.css lays them out, for a caller that places every part on its
-// own grid: rows exactly their heights, ACTION_GAPS.standard.stack apart; the padding, then the
-// icon slot, the label column and the value column, columnGap apart, the value column value.track
-// wide at the content's end. The icon is centred in its slot; down the first line the icon and
-// the value stack are centred, or with align "start" at their offsets. A switch is at the value
-// column's end, or for a centred state word midway along it. A slider's lane is gap under its
-// first line, inset from the content sides. Each odd unit goes right or below. Throws RangeError
-// on an invalid layout, a list without value.track, or rows that do not fit.
+// own grid: rows exactly their heights, each its gap below the one before (the layout's gap by
+// default); the padding, then the icon slot, the label column and the value column, columnGap
+// apart, the value column value.track wide at the content's end. The icon is centred in its slot;
+// down the first line the icon and the value stack are centred, or with align "start" at their
+// offsets. A switch is at the value column's end, or for a centred state word midway along it. A
+// slider's lane is gap under its first line, inset from the content sides. A one-action row's
+// face is centred in its content. Each odd unit goes right or below. Every edge is projected on
+// its own, but with artPixel the icon and switch keep their art size from their projected corner
+// and a press dip is that many art pixels; without it a press dip is projected from the row's top.
+// Throws RangeError on an invalid layout, a list without value.track, or rows that do not fit.
 export function formRowsGeometry(
   layout: FormRowLayout,
   context: FormRowsContext,
 ): FormRowsGeometry {
   formRowPresentation(layout);
-  const { origin = { x: 0, y: 0 }, rows, width } = context;
+  const { artPixel, origin = { x: 0, y: 0 }, rows, width } = context;
   const project = context.project ?? IDENTITY_PROJECTION;
   whole("width", width);
   whole("origin.x", origin.x, Number.MIN_SAFE_INTEGER);
   whole("origin.y", origin.y, Number.MIN_SAFE_INTEGER);
+  if (artPixel !== undefined) {
+    checkArtPixel(artPixel);
+  }
   const { align = "center", columnGap, icon, padding, value } = layout;
+  const listGap = layout.gap ?? ACTION_GAPS.standard.stack;
   const track = value?.track;
   if (track === undefined) {
     throw new RangeError("A placed form row list needs a fixed value.track");
@@ -213,25 +240,39 @@ export function formRowsGeometry(
   const down = (box: { height: number; y: number }, height: number, offset: number | undefined) =>
     align === "start" ? box.y + (offset ?? 0) : box.y + Math.floor((box.height - height) / 2);
   const placed: PlacedFormRow[] = [];
-  // Every rect from the list's corner, then moved to origin and projected.
-  const at = (rect: Rect): Rect =>
-    projectRect(project, { ...rect, x: origin.x + rect.x, y: origin.y + rect.y });
+  // Every rect from the list's corner, then moved to origin and projected: its edges on their
+  // own, or for art its corner.
+  const shift = (rect: Rect): Rect => ({ ...rect, x: origin.x + rect.x, y: origin.y + rect.y });
+  const at = (rect: Rect): Rect => projectRect(project, shift(rect));
+  const art = (rect: Rect): Rect => projectArtRect(project, artPixel, shift(rect));
   let y = 0;
-  for (const entry of rows) {
+  rows.forEach((entry, i) => {
+    whole("row gap", entry.gap);
+    if (i > 0) {
+      y += entry.gap ?? listGap;
+    }
     const height = entry.height ?? layout.height;
     whole("row height", height);
+    whole("pressDip", entry.pressDip);
     if (pad.top + pad.bottom > height) {
       throw new RangeError("A form row's padding exceeds its height");
     }
     const content = { height: height - pad.top - pad.bottom, x: pad.left, y: y + pad.top };
     const contentWidth = width - pad.left - pad.right;
-    const { lane } = entry;
+    const { action, lane } = entry;
     if (lane !== undefined) {
       whole("lane.line", lane.line);
       whole("lane.gap", lane.gap);
       whole("lane.height", lane.height, 1);
       whole("lane.inset.left", lane.inset?.left);
       whole("lane.inset.right", lane.inset?.right);
+    }
+    if (action !== undefined) {
+      whole("action.width", action.width, 1);
+      whole("action.height", action.height, 1);
+      if (action.width > contentWidth || action.height > content.height) {
+        throw new RangeError("A one-action row's face must fit its content");
+      }
     }
     const line = { ...content, height: lane?.line ?? content.height };
     const across = (x: number, w: number): Rect => ({
@@ -256,17 +297,19 @@ export function formRowsGeometry(
     if (lane !== undefined && laneWidth < 0) {
       throw new RangeError("A slider lane's insets exceed its row");
     }
+    const row = at({ height, width, x: 0, y });
+    const dip = entry.pressDip;
     placed.push({
       content: at({ ...content, width: contentWidth }),
       label: at(across(labelX, valueX - columnGap - labelX)),
       line: at({ ...line, width: contentWidth }),
-      row: at({ height, width, x: 0, y }),
+      row,
       stack: at(stack),
       value: at(across(valueX, track)),
       ...(icon === undefined
         ? {}
         : {
-            icon: at({
+            icon: art({
               height: icon.size,
               width: icon.size,
               x: pad.left + Math.floor((icon.slot - icon.size) / 2),
@@ -277,7 +320,7 @@ export function formRowsGeometry(
       ...(entry.switch !== true || sw === undefined
         ? {}
         : {
-            switch: at({
+            switch: art({
               ...sw,
               x:
                 (value?.state ?? "center") === "end"
@@ -296,9 +339,25 @@ export function formRowsGeometry(
               y: line.y + line.height + (lane.gap ?? 0),
             }),
           }),
+      ...(action === undefined
+        ? {}
+        : {
+            face: at({
+              ...action,
+              x: content.x + Math.floor((contentWidth - action.width) / 2),
+              y: content.y + Math.floor((content.height - action.height) / 2),
+            }),
+          }),
+      ...(dip === undefined
+        ? {}
+        : {
+            pressDip:
+              artPixel === undefined
+                ? at({ height: dip, width: 0, x: 0, y }).height
+                : dip * artPixel,
+          }),
     });
-    y += height + ACTION_GAPS.standard.stack;
-  }
-  const height = rows.length === 0 ? 0 : y - ACTION_GAPS.standard.stack;
-  return { list: at({ height, width, x: 0, y: 0 }), rows: placed };
+    y += height;
+  });
+  return { list: at({ height: y, width, x: 0, y: 0 }), rows: placed };
 }

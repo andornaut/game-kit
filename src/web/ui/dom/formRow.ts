@@ -1,6 +1,7 @@
 import type { Point } from "../../../rect.ts";
 import {
   type ActionProjection,
+  type ButtonRole,
   type FormRowLayout,
   formRowPresentation,
   type FormRowsGeometry,
@@ -18,9 +19,12 @@ import { REFUSAL_ATTRIBUTES } from "./refusalCue.ts";
 // game's two ui-switch frames as --ui-switch-on-image and --ui-switch-off-image) over its state
 // word, or a value. A switch row is role switch with aria-checked; the stack is decorative and
 // the label is the row's name. Rows take the theme's button state slots with a clear idle face,
-// controls.css's one focus fill and no press dip.
+// controls.css's one focus fill and no press dip unless the row sets pressDip, which moves its art
+// down while pressed and never while disabled. A one-action row hosts one standard button face
+// (the label, and the icon before it) centred in the row, which stays the button and its whole
+// press target; the face dips by the theme's --ui-button-press-dip, as a standard button's does.
 // A placed list (place) writes every track and part in whole CSS px from the game's projected
-// edges instead, so pixel art lands on the game's grid.
+// edges instead, so pixel art lands on the game's grid, and with artPixel keeps art at its size.
 
 export const FORM_ROWS_CLASS = "ui-form-rows";
 export const FORM_ROW_CLASS = "ui-form-row";
@@ -31,14 +35,27 @@ export const FORM_ROW_NOTE_CLASS = "ui-form-row-note";
 export const FORM_ROW_VALUE_CLASS = "ui-form-row-value";
 export const FORM_ROW_STATE_CLASS = "ui-form-row-state";
 export const SWITCH_CLASS = "ui-switch";
+export const FORM_ROW_FACE_CLASS = "ui-form-row-face";
 export const FORM_ROWS_PROJECTED_ATTRIBUTE = "data-ui-form-projected";
+export const FORM_ROW_ACTION_ATTRIBUTE = "data-ui-form-action";
+export const FORM_ROW_PRESS_DIP_ATTRIBUTE = "data-ui-form-press-dip";
 
-// Where a placed list is: its width and corner in the game's units, and the projection to the
-// caller's CSS px, as for arrangeActions. The list element's corner is at the projected origin.
+// Where a placed list is: its width and corner in the game's units, the projection to the
+// caller's CSS px, as for arrangeActions, and artPixel, the whole CSS px of one art pixel, which
+// keeps the icons, switches and slider art at their art size from their projected corners. The
+// list element's corner is at the projected origin.
 export interface DomFormRowsContext {
   readonly project: ActionProjection;
   readonly width: number;
   readonly origin?: Point;
+  readonly artPixel?: number;
+}
+
+// A row to place: the list's own kit row, and the gap above it from the previous shown row in
+// whole units, the layout's gap by default.
+export interface PlacedFormRowEntry {
+  readonly element: HTMLElement;
+  readonly gap?: number;
 }
 
 export interface FormRowsView {
@@ -47,14 +64,15 @@ export interface FormRowsView {
   // on an invalid layout.
   setLayout(layout: FormRowLayout): void;
   // Places the list on the game's grid (formRowsGeometry): rows, the list's own kit rows
-  // (createFormRow, createSlider) in its order, each its height, the shown ones ACTION_GAPS
-  // stacked apart; every track and part in whole CSS px from the projected edges. The layout
-  // needs value.track and a slider row its layout's line. Place again after rows show, hide or
-  // change their layout, and after the projection changes. Returns the projected layout and units,
-  // the layout before projection, for the game's own ink. Throws RangeError before any change.
+  // (createFormRow, createSlider) in its order, each its height, the shown ones each its gap below
+  // the one before (the layout's gap by default); every track and part in whole CSS px from the
+  // projected edges. The layout needs value.track and a slider row its layout's line. Place again
+  // after rows show, hide or change their layout, and after the projection changes. Returns the
+  // projected layout and units, the layout before projection, for the game's own ink. Throws
+  // RangeError before any change.
   place(
     context: DomFormRowsContext,
-    rows: readonly { readonly element: HTMLElement }[],
+    rows: readonly PlacedFormRowEntry[],
   ): { readonly placed: FormRowsGeometry; readonly units: FormRowsGeometry };
 }
 
@@ -67,12 +85,11 @@ export function createFormRows(
   element.className = `${options.className ?? ""} ${FORM_ROWS_CLASS}`.trim();
   let written: readonly string[] = [];
   let current = layout;
-  let placement:
-    { context: DomFormRowsContext; rows: readonly { readonly element: HTMLElement }[] } | undefined;
+  let placement: { context: DomFormRowsContext; rows: readonly PlacedFormRowEntry[] } | undefined;
   const placeRows = (
     next: FormRowLayout,
     context: DomFormRowsContext,
-    rows: readonly { readonly element: HTMLElement }[],
+    rows: readonly PlacedFormRowEntry[],
   ) => {
     for (const row of rows) {
       if (row.element.parentElement !== element || !rowHooks.has(row.element)) {
@@ -80,20 +97,33 @@ export function createFormRows(
       }
     }
     const shown = rows.filter((row) => row.element.hidden === false);
+    const { artPixel, project } = context;
     const base = {
       ...(context.origin === undefined ? {} : { origin: context.origin }),
-      rows: shown.map((row) => rowHooks.get(row.element)!.entry()),
+      rows: shown.map((row) => ({
+        ...rowHooks.get(row.element)!.entry(),
+        ...(row.gap === undefined ? {} : { gap: row.gap }),
+      })),
       width: context.width,
     };
     const units = formRowsGeometry(next, base);
-    const placed = formRowsGeometry(next, { ...base, project: context.project });
-    const tracks = listTracks(placed);
+    const placed = formRowsGeometry(next, {
+      ...base,
+      ...(artPixel === undefined ? {} : { artPixel }),
+      project,
+    });
+    // The columns follow the edges, not the art: an art-locked icon starts its column.
+    const tracks = listTracks(
+      artPixel === undefined ? placed : formRowsGeometry(next, { ...base, project }),
+    );
     const writes = shown.map((row, i) => {
       const lane = units.rows[i]!.lane;
       return rowHooks.get(row.element)!.place({
         box: placed.rows[i]!.row,
-        properties: rowLengths(next, context.project, placed.rows[i]!, units.rows[i]!),
-        ...(lane === undefined ? {} : { lane: { project: context.project, units: lane } }),
+        properties: rowLengths(next, project, placed.rows[i]!, units.rows[i]!),
+        ...(lane === undefined
+          ? {}
+          : { lane: { ...(artPixel === undefined ? {} : { artPixel }), project, units: lane } }),
       });
     });
     return {
@@ -184,7 +214,7 @@ function rowLengths(
   placed: FormRowsGeometry["rows"][number],
   units: FormRowsGeometry["rows"][number],
 ): Record<string, number> {
-  const { content, icon, line, row, stack, value } = placed;
+  const { content, face, icon, line, row, stack, value } = placed;
   const bottom = (rect: { height: number; y: number }) => rect.y + rect.height;
   const valueRight = units.value.x + units.value.width;
   const lengths: Record<string, number> = {
@@ -214,6 +244,15 @@ function rowLengths(
     lengths["--ui-switch-height"] = placed.switch.height;
     lengths["--ui-switch-width"] = placed.switch.width;
   }
+  if (face !== undefined) {
+    lengths["--ui-form-action-height"] = face.height;
+    lengths["--ui-form-action-left"] = face.x - row.x;
+    lengths["--ui-form-action-top"] = face.y - content.y;
+    lengths["--ui-form-action-width"] = face.width;
+  }
+  if (placed.pressDip !== undefined) {
+    lengths["--ui-form-row-press-dip"] = placed.pressDip;
+  }
   if (placed.lane !== undefined) {
     lengths["--ui-slider-gap"] = placed.lane.y - bottom(line);
     lengths["--ui-slider-inset-left"] = placed.lane.x - row.x;
@@ -238,6 +277,17 @@ export interface FormRowOptions extends Omit<ButtonOptions, "appearance" | "cont
   readonly icon?: Element;
   // Makes the row a switch.
   readonly switch?: boolean;
+  // Makes the row a one-action row: the label (and the icon before it) on one standard button
+  // face of this whole-unit size, in the game's className and role, centred in the row's content.
+  // It takes no switch, note or value.
+  readonly action?: {
+    readonly size: { readonly height: number; readonly width: number };
+    readonly className?: string;
+    readonly role?: ButtonRole;
+  };
+  // Whole units the row's art (every child but a one-action row's face) moves down while it is
+  // pressed and not disabled.
+  readonly pressDip?: number;
   readonly getState?: (element: HTMLButtonElement) => FormRowState;
   readonly className?: string;
 }
@@ -250,6 +300,8 @@ export interface FormRowView {
   readonly state: HTMLElement;
   // The switch track, on a switch row.
   readonly switch?: HTMLElement;
+  // The face, on a one-action row.
+  readonly face?: HTMLElement;
   setLabel(label: string): void;
   setNote(note: string | undefined): void;
   refresh(): void;
@@ -266,8 +318,28 @@ function span(document: Document, className: string): HTMLElement {
   return element;
 }
 
+// A whole number of units, at least 0. Throws RangeError otherwise.
+function checkWhole(name: string, value: number): void {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new RangeError(`${name} must be a whole number of units, at least 0`);
+  }
+}
+
 export function createFormRow(document: Document, options: FormRowOptions): FormRowView {
-  const { className, getState, icon, label, note: noteText, ...button } = options;
+  const { action, className, getState, icon, label, note: noteText, pressDip, ...button } = options;
+  if (pressDip !== undefined) {
+    checkWhole("pressDip", pressDip);
+  }
+  if (action !== undefined) {
+    checkWhole("action.size.width", action.size.width);
+    checkWhole("action.size.height", action.size.height);
+    if (action.size.width < 1 || action.size.height < 1) {
+      throw new RangeError("A one-action row's face must be at least 1 unit across and down");
+    }
+    if (options.switch === true || (noteText !== undefined && noteText !== "")) {
+      throw new RangeError("A one-action row takes no switch or note");
+    }
+  }
   rows += 1;
   const id = `ui-form-row-${rows}`;
   const iconCell = icon === undefined ? undefined : span(document, FORM_ROW_ICON_CLASS);
@@ -299,9 +371,18 @@ export function createFormRow(document: Document, options: FormRowOptions): Form
     }
   };
   let valueShown = false;
+  const rowClass = `${className ?? ""} ${FORM_ROW_CLASS}`.trim();
   const view = createButton(document, {
     ...button,
-    appearance: { className: `${className ?? ""} ${FORM_ROW_CLASS}`.trim(), layout: "caller" },
+    appearance:
+      action === undefined
+        ? { className: rowClass, layout: "caller" }
+        : {
+            className: rowClass,
+            face: { className: `${action.className ?? ""} ${FORM_ROW_FACE_CLASS}`.trim() },
+            layout: "caller",
+            ...(action.role === undefined ? {} : { role: action.role }),
+          },
     content: { kind: "text", label },
     getState: (element) => {
       const { checked, value: shown, ...rest } = getState?.(element) ?? {};
@@ -313,7 +394,7 @@ export function createFormRow(document: Document, options: FormRowOptions): Form
         state.textContent = shown ?? "";
       }
       state.hidden = shown === undefined;
-      valueShown = shown !== undefined;
+      valueShown = action === undefined && shown !== undefined;
       describe(element, valueShown);
       return rest;
     },
@@ -325,9 +406,30 @@ export function createFormRow(document: Document, options: FormRowOptions): Form
     labelSlot.setAttribute(REFUSAL_ATTRIBUTES.label, "");
   };
   markLabel();
-  text.append(labelSlot, note);
-  view.element.append(...(iconCell === undefined ? [] : [iconCell]), text, value);
+  if (action === undefined) {
+    text.append(labelSlot, note);
+    view.element.append(...(iconCell === undefined ? [] : [iconCell]), text, value);
+  } else {
+    view.element.setAttribute(FORM_ROW_ACTION_ATTRIBUTE, "");
+    writeLayoutProperties(
+      {
+        "--ui-form-action-height": action.size.height,
+        "--ui-form-action-width": action.size.width,
+      },
+      view.element,
+    );
+    if (iconCell !== undefined) {
+      view.face.prepend(iconCell);
+    }
+  }
+  if (pressDip !== undefined) {
+    view.element.setAttribute(FORM_ROW_PRESS_DIP_ATTRIBUTE, "");
+    writeLayoutProperties({ "--ui-form-row-press-dip": pressDip }, view.element);
+  }
   const setNote = (next: string | undefined) => {
+    if (action !== undefined && next !== undefined && next !== "") {
+      throw new RangeError("A one-action row takes no note");
+    }
     noteShown = next !== undefined && next !== "";
     note.textContent = noteShown ? next! : "";
     note.hidden = !noteShown;
@@ -335,7 +437,11 @@ export function createFormRow(document: Document, options: FormRowOptions): Form
   };
   setNote(noteText);
   rowHooks.set(view.element, {
-    entry: () => ({ switch: track !== undefined }),
+    entry: () => ({
+      switch: track !== undefined,
+      ...(action === undefined ? {} : { action: action.size }),
+      ...(pressDip === undefined ? {} : { pressDip }),
+    }),
     place: (placement) => () => writeLayoutProperties(placement.properties, view.element),
   });
   return {
@@ -353,6 +459,7 @@ export function createFormRow(document: Document, options: FormRowOptions): Form
     setPressed: (pressed) => view.setPressed(pressed),
     state,
     ...(track === undefined ? {} : { switch: track }),
+    ...(action === undefined ? {} : { face: view.face }),
     value,
   };
 }

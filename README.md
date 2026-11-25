@@ -561,7 +561,7 @@ card.layout(
 
 Each component keeps pure state and geometry in `runtime/ui/<component>` and its DOM part in `runtime/web/ui/dom/<component>` with an opt-in `<component>.css`. Every rule has zero specificity, lengths are unitless base px at `--ui-unit` from the game's tokens, colours are the `uiTheme` slots with system colours in forced-colours mode, `controls.css` owns the one focus fill, and every label is player text. Invalid input throws `RangeError`.
 
-**Form rows.** `createFormRows(document, layout)` makes the list; `createFormRow(document, options)` makes a row, one standard button (`createButton`), so the whole row is the press target with the kit's hold, availability and refusal paths. A row holds an optional `icon` (one state-free frame of the game's art), its `label` and optional `note` (its description), and a trailing value stack. With `switch: true` the row is `role="switch"` with `aria-checked` from `getState().checked`, and the stack shows the game's `ui-switch` art (`--ui-switch-on-image`, `--ui-switch-off-image`, such as a button skin's cut frames) over the state word `getState().value` (On, Off, Shown or Hidden); without it `value` is a described value. The list is a grid whose icon, label and value columns every row shares as a subgrid, so the value column is the widest value stack (or `value.track`, a fixed width) with no script measurement. `runtime/ui/formRow` `formRowPresentation(layout)` turns the game's `FormRowLayout` into the list's properties: `height`, `columnGap`, `padding`, `align` (`"center"` or `"start"` with icon and value `offset`s), the `icon` slot and size, the art-locked `switch` size, and the state word's `value.state` (`"center"` under the switch, or `"end"` with its ink's right edge on the switch's by `value.bearing`) and `value.gap`. Rows are `ACTION_GAPS.standard.stack` apart. In the theme rows have a clear idle face and no press dip; state changes only the fill. A centred switch keeps whole-unit placement with the odd unit right when its column's right edge is whole; a `track` keeps it independent of the words' widths. A row refuses as its button does: a refused row (`{ kind: "refused" }`), value or switch, plays `refusal` on Enter, Space, pointer presses and holds, and with `{ refuse, reducedMotion }` calls the game's `refuse(reducedMotion, control)` with the row's button and never the kit cue. Pointer refusal calls only `onPointerRefusal`, never `refusal` or the kit cue, so a game plays its own cue there, such as `onPointerRefusal: () => playRefusal(reducedMotion(), row.element)`.
+**Form rows.** `createFormRows(document, layout)` makes the list; `createFormRow(document, options)` makes a row, one standard button (`createButton`), so the whole row is the press target with the kit's hold, availability and refusal paths. A row holds an optional `icon` (one state-free frame of the game's art), its `label` and optional `note` (its description), and a trailing value stack. With `switch: true` the row is `role="switch"` with `aria-checked` from `getState().checked`, and the stack shows the game's `ui-switch` art (`--ui-switch-on-image`, `--ui-switch-off-image`, such as a button skin's cut frames) over the state word `getState().value` (On, Off, Shown or Hidden); without it `value` is a described value. The list is a grid whose icon, label and value columns every row shares as a subgrid, so the value column is the widest value stack (or `value.track`, a fixed width) with no script measurement. `runtime/ui/formRow` `formRowPresentation(layout)` turns the game's `FormRowLayout` into the list's properties: `height`, `columnGap`, `padding`, `align` (`"center"` or `"start"` with icon and value `offset`s), the `icon` slot and size, the art-locked `switch` size, and the state word's `value.state` (`"center"` under the switch, or `"end"` with its ink's right edge on the switch's by `value.bearing`) and `value.gap`. Rows are `gap` apart, `ACTION_GAPS.standard.stack` by default. In the theme rows have a clear idle face and no press dip; state changes only the fill. A row with `pressDip` (whole units) moves its art, every child but a one-action row's face, down that far while pressed, never while disabled; the row and its press target stay put. A centred switch keeps whole-unit placement with the odd unit right when its column's right edge is whole; a `track` keeps it independent of the words' widths. A row refuses as its button does: a refused row (`{ kind: "refused" }`), value or switch, plays `refusal` on Enter, Space, pointer presses and holds, and with `{ refuse, reducedMotion }` calls the game's `refuse(reducedMotion, control)` with the row's button and never the kit cue. Pointer refusal calls only `onPointerRefusal`, never `refusal` or the kit cue, so a game plays its own cue there, such as `onPointerRefusal: () => playRefusal(reducedMotion(), row.element)`.
 
 ```ts
 import { createFormRow, createFormRows } from "@andornaut/game-kit/runtime/web/ui/dom/formRow";
@@ -584,13 +584,28 @@ const fps = createFormRow(document, {
 rows.element.append(fps.element);
 ```
 
-**Placed lists.** For a game that places its kit on its own pixel grid, `rows.place({ project, width, origin }, rows)` places the list through the game's projection (`ActionProjection`, as for `arrangeActions`) instead of CSS sizing. `rows` are the list's own kit rows (`createFormRow`, `createSlider`) in its order; the shown ones are each exactly their height (the layout's, or a slider's `layout.height`), `ACTION_GAPS.standard.stack` apart from `origin`, `width` units wide. The list takes `data-ui-form-projected` and writes its grid as explicit CSS px tracks between projected edges (`--ui-form-columns` and `--ui-form-rows`): the padding, the icon slot's sides and the column gaps are tracks of their own and each row track is its pitch to the next, so the rows' subgrids share whole-pixel columns. Each row's padding, icon, switch, state word gap and bearing, and a slider's line, gap, insets, lane, track, caps, fill and thumb are written in whole CSS px between their projected edges (`--ui-form-length: 1px`); text keeps its CSS alignment. The layout needs `value.track`; `value.height` gives a centred switch row's stack height (the switch's by default), and a slider's `layout.line` its first line's height, since a placed list measures nothing. The game puts the list element's corner at the projected `origin`. `place` returns `placed`, the projected layout, and `units`, the same layout in units (`runtime/ui/formRow` `formRowsGeometry`), for the game's own ink. `setLayout` places a placed list again; place it again after rows show, hide or change their layout, or the projection changes. A placed row is a press context member at its placed box.
+**One-action rows.** `createFormRow(document, { action: { size, className, role }, label, icon, ... })` makes a row whose only content is one standard button face of `size` (whole units), in the game's `className` and `role`, centred in the row's content with the odd unit right and below. The face holds the optional `icon` and the `label`; `view.face` is the face. The row stays the button, so its press target is the whole row with no outsets, and it takes the list's gap and the press context like any row. The face takes the standard button face's theme fills and focus fill and dips by the theme's `--ui-button-press-dip`, which the list sets to 0 and the game may set on the row. A one-action row takes no `switch`, note or value. This is the smaller shape than per-edge press margins on rows: a form row is already one press target, so a face inside it covers the row without margins, clamps or a second hit area.
+
+```ts
+// Archie's Install row: the sole action's 145x33 face, the whole row its press.
+const install = createFormRow(document, {
+  action: { className: "adw-face", role: "secondary", size: { height: 33, width: 145 } },
+  getAction: () => (accepts() ? { activate: startInstall } : null),
+  icon: installIcon,
+  label: words.install,
+  rule: HOLD_RULE,
+});
+```
+
+**Placed lists.** For a game that places its kit on its own pixel grid, `rows.place({ project, width, origin }, rows)` places the list through the game's projection (`ActionProjection`, as for `arrangeActions`) instead of CSS sizing. `rows` are the list's own kit rows (`createFormRow`, `createSlider`) in its order; the shown ones are each exactly their height (the layout's, or a slider's `layout.height`), each its gap below the one before from `origin`, `width` units wide. A row's gap is the layout's `gap`, or an entry's own: `{ element, gap }` sets the whole units above that row, ignored on the first shown row. The list takes `data-ui-form-projected` and writes its grid as explicit CSS px tracks between projected edges (`--ui-form-columns` and `--ui-form-rows`): the padding, the icon slot's sides and the column gaps are tracks of their own and each row track is its pitch to the next, so the rows' subgrids share whole-pixel columns. Each row's padding, icon, switch, state word gap and bearing, and a slider's line, gap, insets, lane, track, caps, fill and thumb are written in whole CSS px between their projected edges (`--ui-form-length: 1px`); text keeps its CSS alignment. With `artPixel`, the whole CSS px of one art pixel, art-locked parts keep their art size: icons, switches, a slider's thumb, its track's and fill's height and its caps are their units times `artPixel` from their projected corner, never stretched by snapping each edge, while rows, columns, the lane and the track's and fill's widths stay on projected edges. An icon starts at its column's left edge, and an end-placed state word's ink ends on the switch as drawn. A one-action row's face is placed by its projected edges, and a press dip is `pressDip` art pixels, or without `artPixel` the projected length from the row's top. The layout needs `value.track`; `value.height` gives a centred switch row's stack height (the switch's by default), and a slider's `layout.line` its first line's height, since a placed list measures nothing. The game puts the list element's corner at the projected `origin`. `place` returns `placed`, the projected layout, and `units`, the same layout in units (`runtime/ui/formRow` `formRowsGeometry`), for the game's own ink. `setLayout` places a placed list again; place it again after rows show, hide or change their layout, or the projection changes. A placed row is a press context member at its placed box.
 
 ```ts
 // Archie's Settings on its device art-pixel grid, its ink and art drawn from units.
 const grid = { x: (edge: number) => gridX(scale, edge), y: (edge: number) => gridY(scale, edge) };
 const rows = createFormRows(document, {
   columnGap: 4,
+  // A separator and its clearance between rows.
+  gap: 17,
   height: 48,
   icon: { size: 16, slot: 24 },
   padding: { bottom: 0, left: 8, right: 8, top: 0 },
@@ -601,11 +616,18 @@ const music = createSlider(document, {
   ...musicOptions,
   layout: { art: SLIDER_ART, gap: 4, height: 56, inset: { left: 2 }, line: 20 },
 });
-rows.element.append(sound.element, motion.element, music.element);
-const { units } = rows.place({ origin: { x: 8, y: 103 }, project: grid, width: 344 }, [
-  sound,
-  motion,
-  music,
+// Switch rows dip their art 1 unit while pressed.
+const sound = createFormRow(document, { ...soundOptions, pressDip: 1, switch: true });
+rows.element.append(sound.element, motion.element, music.element, install.element);
+const { units } = rows.place(
+  { artPixel: artPixel(scale), origin: { x: 8, y: 103 }, project: grid, width: 344 },
+  [sound, motion, music, install],
+);
+// Cheats: adjacent switches touch, other rows the list's gap apart.
+cheats.place({ artPixel: artPixel(scale), origin, project: grid, width: 344 }, [
+  invincible,
+  { element: ghost.element, gap: 0 },
+  resetSave,
 ]);
 placeBox(scale, ORIGIN, rows.element, units.list);
 ```

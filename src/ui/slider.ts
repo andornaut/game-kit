@@ -1,5 +1,11 @@
 import type { Point, Rect } from "../rect.ts";
-import { type ActionProjection, IDENTITY_PROJECTION, projectRect } from "./projection.ts";
+import {
+  type ActionProjection,
+  checkArtPixel,
+  IDENTITY_PROJECTION,
+  projectArtRect,
+  projectRect,
+} from "./projection.ts";
 
 // Sliders: a stepped value from 0 to a set number of steps, shown as the game's track art with a
 // thumb that slides along it. The track is a three-slice (fixed caps, a stretched middle) at its
@@ -29,6 +35,9 @@ export interface SliderContext {
   readonly origin?: Point;
   // Maps edges to the caller's space, as for arrangeActions.
   readonly project?: ActionProjection;
+  // The whole output length of one art pixel (one unit of art): the thumb keeps its art size from
+  // its projected corner, and the track and fill their art height (projectArtRect).
+  readonly artPixel?: number;
 }
 
 export interface SliderLane {
@@ -151,22 +160,41 @@ export function sliderLane(art: SliderArt): SliderLane {
   };
 }
 
-// The lane, the track, the fill and the thumb at step in the caller's space. Throws RangeError
-// on an invalid context, step or projection.
+// The lane, the track, the fill and the thumb at step in the caller's space, every edge projected
+// on its own; with artPixel the thumb is its art size from its projected corner and the track and
+// fill their art height. Throws RangeError on an invalid context, step or projection.
 export function sliderGeometry(context: SliderContext, step: number): SliderGeometry {
   const offset = sliderThumbOffset(context, step);
-  const { art, origin = { x: 0, y: 0 }, width } = context;
+  const { art, artPixel, origin = { x: 0, y: 0 }, width } = context;
   const project = context.project ?? IDENTITY_PROJECTION;
   whole("origin.x", origin.x, Number.MIN_SAFE_INTEGER);
   whole("origin.y", origin.y, Number.MIN_SAFE_INTEGER);
+  if (artPixel !== undefined) {
+    checkArtPixel(artPixel);
+  }
   const lane = sliderLane(art);
+  const rect = (x: number, y: number, w: number, h: number): Rect => ({
+    height: h,
+    width: w,
+    x: origin.x + x,
+    y: origin.y + y,
+  });
   const place = (x: number, y: number, w: number, h: number): Rect =>
-    projectRect(project, { height: h, width: w, x: origin.x + x, y: origin.y + y });
+    projectRect(project, rect(x, y, w, h));
+  // Across, edges on their own; down, the art's height.
+  const bar = (w: number): Rect => {
+    const placed = place(0, lane.trackTop, w, art.track.height);
+    return artPixel === undefined ? placed : { ...placed, height: art.track.height * artPixel };
+  };
   return {
-    fill: place(0, lane.trackTop, offset + art.thumb.width, art.track.height),
+    fill: bar(offset + art.thumb.width),
     lane: place(0, 0, width, lane.height),
-    thumb: place(offset, lane.thumbTop, art.thumb.width, art.thumb.height),
-    track: place(0, lane.trackTop, width, art.track.height),
+    thumb: projectArtRect(
+      project,
+      artPixel,
+      rect(offset, lane.thumbTop, art.thumb.width, art.thumb.height),
+    ),
+    track: bar(width),
   };
 }
 

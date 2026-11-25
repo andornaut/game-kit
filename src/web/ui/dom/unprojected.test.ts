@@ -13,17 +13,19 @@ import { createSlider } from "./slider.ts";
 
 // Callers without a projection get the same markup, inline styles and CSS as GameKit 0.83.0. The
 // digests are of 0.83.0's output for the same calls, and of its stylesheets with comments removed
-// and whitespace collapsed.
+// and whitespace collapsed. Rules for opt-in parts (one-action rows and press dips, 0.90.0) apply
+// only to rows that set them, so they are removed too. A placed list without the 0.90.0 options
+// (artPixel and gaps) writes what 0.89.0 wrote.
 
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 const markup = (...elements: Element[]) => elements.map((e) => e.outerHTML).join("\n");
 
-// A stylesheet as an unprojected caller resolves it: projected rules gone and the length variable
-// replaced by its unprojected definition, calc(var(--ui-unit, 1) * 1px).
+// A stylesheet as an unprojected caller resolves it: projected and opt-in rules gone and the length
+// variable replaced by its unprojected definition, calc(var(--ui-unit, 1) * 1px).
 function unprojectedCss(file: string, length: string): string {
   return readFileSync(join(import.meta.dirname, file), "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/[^{}]*projected[^{}]*\{[^{}]*\}/g, "")
+    .replace(/[^{}]*(projected|data-ui-form-action|data-ui-form-press-dip)[^{}]*\{[^{}]*\}/g, "")
     .replace(new RegExp(`\\s*${length}:[^;]*;`, "g"), "")
     .replace(/[^{}]*\{\s*\}/g, "")
     .replaceAll(`var(${length}) * -1`, "var(--ui-unit, 1) * -1px")
@@ -172,6 +174,53 @@ describe("unprojected callers", () => {
       "00a7208a9ee2ac94e0420b0c68f5b3893916f5499b92ce0af4f1314b5dd47a0e",
       "741a89832222ab9e1d3e672a1b366ebb7f493f1f2c05c8d1b515c23c5b7f379b",
     ]);
+  });
+
+  it("place a list without art pixels or gaps as 0.89.0 did", () => {
+    // Archie's grid at 390x844@3: whole 3 px art pixels, 3.25 device px per unit.
+    const grid = (edge: number) => Math.round((edge * 3.25) / 3) * 3;
+    const rows = createFormRows(document, {
+      columnGap: 4,
+      height: 48,
+      icon: { size: 16, slot: 24 },
+      padding: { bottom: 0, left: 8, right: 8, top: 0 },
+      switch: { height: 16, width: 32 },
+      value: { bearing: 1, gap: 4, state: "end", track: 40 },
+    });
+    document.body.append(rows.element);
+    const toggle = createFormRow(document, {
+      getAction: () => null,
+      getState: () => ({ checked: true, value: "On" }),
+      icon: document.createElement("img"),
+      label: "Sound",
+      rule,
+      switch: true,
+    });
+    const plain = createFormRow(document, {
+      getAction: () => null,
+      getState: () => ({ value: "Large" }),
+      label: "Text size",
+      rule,
+    });
+    const slider = createSlider(document, {
+      change: () => undefined,
+      getState: () => ({ step: 7, value: "35%" }),
+      icon: document.createElement("img"),
+      label: "Music",
+      layout: { art: ART, gap: 4, height: 56, inset: { left: 2 }, line: 20 },
+      slop: 4,
+      steps: 20,
+    });
+    rows.element.append(toggle.element, plain.element, slider.element);
+    toggle.refresh();
+    plain.refresh();
+    const { placed } = rows.place(
+      { origin: { x: 8, y: 103 }, project: { x: grid, y: grid }, width: 344 },
+      [toggle, plain, slider],
+    );
+    const state = markup(rows.element) + JSON.stringify(placed);
+    rows.element.remove();
+    expect(digest(state)).toBe("c302a8e5895ec0b99300c0644920327704ed6840025deda99ae29ce259adcc5c");
   });
 
   it("get the same modal frame markup with a kit footer", () => {

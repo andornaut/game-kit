@@ -13,7 +13,12 @@ import {
   createActionGroup,
   createPressContext,
 } from "./actionGroup.ts";
-import { createFormRow, createFormRows, FORM_ROWS_PROJECTED_ATTRIBUTE } from "./formRow.ts";
+import {
+  createFormRow,
+  createFormRows,
+  FORM_ROW_ACTION_ATTRIBUTE,
+  FORM_ROWS_PROJECTED_ATTRIBUTE,
+} from "./formRow.ts";
 import { createModalFrame } from "./modalFrame.ts";
 import { createSlider } from "./slider.ts";
 
@@ -473,4 +478,166 @@ describe("a projected modal frame", () => {
       ]);
     },
   );
+});
+
+// Archie's grid for a viewport w wide at dpr, as its probe builds it: the layer at the viewport's
+// corner, unit w / 360 CSS px per game pixel, and its art pixel in device px.
+function archieViewport(width: number, dpr: number) {
+  const scale = { dpr, origin: { x: 0, y: 0 }, unit: width / 360 };
+  return { art: Math.max(1, Math.floor(scale.unit * scale.dpr + 1e-9)), ...archieGrid(scale) };
+}
+
+describe("a placed list with art pixels, gaps, a one-action row and a press dip", () => {
+  it.each([
+    { art: 2, dpr: 2, height: 608, width: 360 },
+    { art: 3, dpr: 2.625, height: 915, width: 412 },
+    { art: 3, dpr: 3, height: 844, width: 390 },
+  ])("draws Archie's Settings art at its size at $width x $height @ $dpr", (viewport) => {
+    const { art, project } = archieViewport(viewport.width, viewport.dpr);
+    expect(art).toBe(viewport.art);
+    const { x, y } = project;
+    // Settings: rows a separator and its clearance apart, a switch that dips, a volume slider
+    // and the Install row, whose sole action's press is the whole row.
+    const rows = createFormRows(document, { ...LIST, gap: 17 });
+    const sound = createFormRow(document, {
+      getAction: () => null,
+      getState: () => ({ checked: true, value: "On" }),
+      icon: document.createElement("img"),
+      label: "Sound",
+      pressDip: 1,
+      rule,
+      switch: true,
+    });
+    const music = createSlider(document, {
+      change: () => undefined,
+      getState: () => ({ step: 7, value: "35%" }),
+      icon: document.createElement("img"),
+      label: "Music",
+      layout: { art: ART, gap: 4, height: 56, inset: { left: 2 }, line: 20 },
+      slop: 4,
+      steps: 20,
+    });
+    const install = createFormRow(document, {
+      action: { role: "secondary", size: { height: 33, width: 145 } },
+      getAction: () => null,
+      icon: document.createElement("img"),
+      label: "Install",
+      rule,
+    });
+    rows.element.append(sound.element, music.element, install.element);
+    document.body.append(rows.element);
+    const context = { origin: { x: 8, y: 103 }, project, width: 344 };
+    const edges = rows.place(context, [sound, music, install]);
+    const columns = value(rows.element, "--ui-form-columns");
+    const { placed, units } = rows.place({ ...context, artPixel: art }, [sound, music, install]);
+    expect(units.rows.map((row) => row.row.y)).toEqual([103, 168, 241]);
+    expect(value(rows.element, "--ui-form-rows")).toBe(
+      [y(168) - y(103), y(241) - y(168), y(289) - y(241)].map((px) => `${px}px`).join(" "),
+    );
+    // The columns stay on the projected edges; the icon starts its column.
+    expect(value(rows.element, "--ui-form-columns")).toBe(columns);
+    expect(placed.rows.map((row) => row.row)).toEqual(edges.placed.rows.map((row) => row.row));
+    expect(
+      numbers(sound.element, [
+        "--ui-form-icon-size",
+        "--ui-form-icon-height",
+        "--ui-switch-width",
+        "--ui-switch-height",
+        "--ui-form-switch-end",
+        "--ui-form-row-press-dip",
+      ]),
+    ).toEqual([16 * art, 16 * art, 32 * art, 16 * art, x(344) - (x(312) + 32 * art), art]);
+    expect(placed.rows[0]!.switch).toEqual({
+      height: 16 * art,
+      width: 32 * art,
+      x: x(312),
+      y: y(119),
+    });
+    expect(
+      numbers(music.element, [
+        "--ui-form-icon-size",
+        "--ui-slider-thumb-width",
+        "--ui-slider-thumb-height",
+        "--ui-slider-track-height",
+        "--ui-slider-empty-cap-left",
+        "--ui-slider-empty-cap-right",
+        "--ui-slider-fill-cap-left",
+        "--ui-slider-fill-cap-right",
+        "--ui-slider-lane-height",
+        "--ui-slider-fill-width",
+      ]),
+    ).toEqual([
+      16 * art,
+      10 * art,
+      16 * art,
+      10 * art,
+      4 * art,
+      4 * art,
+      4 * art,
+      4 * art,
+      y(192 + 16) - y(192),
+      // The thumb at step 7 of 20 is 111 along the 326 unit track.
+      x(18 + 111 + 10) - x(18),
+    ]);
+    // Install: the face centred in the row, the odd unit right and below, by projected edges.
+    expect(install.element.hasAttribute(FORM_ROW_ACTION_ATTRIBUTE)).toBe(true);
+    expect(install.face?.parentElement).toBe(install.element);
+    expect(
+      numbers(install.element, [
+        "--ui-form-action-left",
+        "--ui-form-action-top",
+        "--ui-form-action-width",
+        "--ui-form-action-height",
+      ]),
+    ).toEqual([x(107) - x(8), y(248) - y(241), x(252) - x(107), y(281) - y(248)]);
+    expect(placed.rows[2]!.row).toEqual({
+      height: y(289) - y(241),
+      width: x(352) - x(8),
+      x: x(8),
+      y: y(241),
+    });
+    if (viewport.width === 390) {
+      // Archie's numbers at 390x844@3: 30x48 thumb, 12/12 caps, 96x48 switch, 48x48 icon.
+      expect(
+        numbers(music.element, ["--ui-slider-thumb-width", "--ui-slider-thumb-height"]),
+      ).toEqual([30, 48]);
+      expect(
+        numbers(music.element, ["--ui-slider-empty-cap-left", "--ui-slider-empty-cap-right"]),
+      ).toEqual([12, 12]);
+      expect(numbers(sound.element, ["--ui-switch-width", "--ui-switch-height"])).toEqual([96, 48]);
+      expect(numbers(sound.element, ["--ui-form-icon-size", "--ui-form-icon-height"])).toEqual([
+        48, 48,
+      ]);
+    }
+  });
+
+  it("puts Cheats' adjacent switches 0 apart and keeps the gap of a hidden row's successor", () => {
+    const { project } = archieViewport(390, 3);
+    const rows = createFormRows(document, LIST);
+    const make = (label: string) =>
+      createFormRow(document, { getAction: () => null, label, rule, switch: true });
+    const [god, ghost, fast, reset] = ["Invincible", "Ghost", "Fast", "Reset"].map(make) as [
+      ReturnType<typeof make>,
+      ReturnType<typeof make>,
+      ReturnType<typeof make>,
+      ReturnType<typeof make>,
+    ];
+    rows.element.append(god.element, ghost.element, fast.element, reset.element);
+    document.body.append(rows.element);
+    ghost.element.hidden = true;
+    const { units } = rows.place({ origin: { x: 8, y: 103 }, project, width: 344 }, [
+      god,
+      { element: ghost.element, gap: 0 },
+      { element: fast.element, gap: 0 },
+      reset,
+    ]);
+    expect(units.rows.map((row) => row.row.y)).toEqual([103, 151, 207]);
+    const pitch = (from: number, to: number) => `${project.y(to) - project.y(from)}px`;
+    expect(value(rows.element, "--ui-form-rows")).toBe(
+      [pitch(103, 151), pitch(151, 207), pitch(207, 255)].join(" "),
+    );
+    expect(() =>
+      rows.place({ project, width: 344 }, [god, { element: fast.element, gap: 0.5 }]),
+    ).toThrow(RangeError);
+  });
 });

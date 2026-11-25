@@ -200,9 +200,104 @@ describe("formRowsGeometry", () => {
     expect(placed.list).toEqual(gridRect(units.list));
     placed.rows.forEach((row, i) => {
       for (const [part, rect] of Object.entries(row)) {
-        const unit = units.rows[i]![part as keyof typeof row]!;
+        const unit = units.rows[i]![part as keyof typeof row]! as Rect;
         expect(rect).toEqual(unit.height === 0 ? { ...gridRect(unit), height: 0 } : gridRect(unit));
       }
     });
+  });
+});
+
+// Archie's device grid for a viewport w x h at dpr, as its probe builds it: the layer at the
+// viewport's corner, unit w / 360 CSS px per game pixel.
+function archieViewport(width: number, dpr: number) {
+  const scale = { dpr, origin: { x: 0, y: 0 }, unit: width / 360 };
+  return { art: Math.max(1, Math.floor(scale.unit * scale.dpr + 1e-9)), ...archieGrid(scale) };
+}
+const VIEWPORTS = [
+  { dpr: 2, height: 608, width: 360 },
+  { dpr: 2.625, height: 915, width: 412 },
+  { dpr: 3, height: 844, width: 390 },
+];
+
+describe("formRowsGeometry gaps, one-action rows, press dips and art", () => {
+  it("spaces rows by the list's gap and each row's own, none above the first", () => {
+    // Archie's Settings: a separator and its clearance between rows, 17 in all.
+    const settings = formRowsGeometry({ ...LIST, gap: 17 }, ROWS);
+    expect(settings.rows.map((row) => row.row.y)).toEqual([103, 168, 233]);
+    expect(settings.list.height).toBe(48 + 17 + 48 + 17 + 56);
+    // Archie's Cheats: switches touch, other rows the stacked gap apart.
+    const cheats = formRowsGeometry(LIST, {
+      ...ROWS,
+      rows: [{ gap: 30, switch: true }, { gap: 0, switch: true }, {}],
+    });
+    expect(cheats.rows.map((row) => row.row.y)).toEqual([103, 151, 207]);
+    expect(formRowPresentation({ ...LIST, gap: 17 }).properties["--ui-form-rows-gap"]).toBe(17);
+    expect(() => formRowPresentation({ ...LIST, gap: 1.5 })).toThrow(RangeError);
+    expect(() => formRowsGeometry(LIST, { ...ROWS, rows: [{ gap: -1 }] })).toThrow(RangeError);
+  });
+
+  it("centres a one-action row's face in its content, the odd unit right and below", () => {
+    // Archie's Install: a 48 row whose sole action is a 145x33 face.
+    const { rows } = formRowsGeometry(LIST, {
+      ...ROWS,
+      rows: [{ action: { height: 33, width: 145 } }],
+    });
+    expect(rows[0]!.face).toEqual({ height: 33, width: 145, x: 8 + 8 + 91, y: 103 + 7 });
+    expect(rows[0]!.row).toEqual({ height: 48, width: 344, x: 8, y: 103 });
+    expect(() =>
+      formRowsGeometry(LIST, { ...ROWS, rows: [{ action: { height: 49, width: 10 } }] }),
+    ).toThrow(RangeError);
+  });
+
+  it("dips a row by its press dip, projected from its top or in whole art pixels", () => {
+    const { art, project } = archieViewport(390, 3);
+    const context = { ...ROWS, project, rows: [{ pressDip: 1, switch: true }, {}] };
+    const edges = formRowsGeometry(LIST, context).rows;
+    expect(edges[0]!.pressDip).toBe(project.y(104) - project.y(103));
+    expect(edges[1]!.pressDip).toBeUndefined();
+    expect(formRowsGeometry(LIST, { ...context, artPixel: art }).rows[0]!.pressDip).toBe(3);
+    expect(() => formRowsGeometry(LIST, { ...ROWS, rows: [{ pressDip: 0.5 }] })).toThrow(
+      RangeError,
+    );
+  });
+
+  it.each(VIEWPORTS)(
+    "keeps the icon and switch at their art size at $width x $height @ $dpr",
+    ({ dpr, width }) => {
+      const { art, project } = archieViewport(width, dpr);
+      const units = formRowsGeometry(LIST, ROWS).rows[0]!;
+      const placed = formRowsGeometry(LIST, { ...ROWS, artPixel: art, project }).rows[0]!;
+      const corner = (rect: Rect) => ({ x: project.x(rect.x), y: project.y(rect.y) });
+      expect(placed.icon).toEqual({ ...corner(units.icon!), height: 16 * art, width: 16 * art });
+      expect(placed.switch).toEqual({
+        ...corner(units.switch!),
+        height: 16 * art,
+        width: 32 * art,
+      });
+      // Boxes stay on their projected edges.
+      const edges = formRowsGeometry(LIST, { ...ROWS, project }).rows[0]!;
+      expect(placed.row).toEqual(edges.row);
+      expect(placed.value).toEqual(edges.value);
+      expect(() => formRowsGeometry(LIST, { ...ROWS, artPixel: 0, project })).toThrow(RangeError);
+    },
+  );
+
+  it("draws a 16x16 icon 48x48 and a 32x16 switch 96x48 at 390x844@3, unstretched", () => {
+    const { art, project } = archieViewport(390, 3);
+    expect(art).toBe(3);
+    // Six switch rows 17 apart, as on Archie's Settings page; snapping each edge stretches them.
+    const rows = Array.from({ length: 6 }, () => ({ switch: true }));
+    const context = { ...ROWS, rows };
+    const locked = formRowsGeometry({ ...LIST, gap: 17 }, { ...context, artPixel: art, project });
+    const snapped = formRowsGeometry({ ...LIST, gap: 17 }, { ...context, project });
+    for (const row of locked.rows) {
+      expect([row.icon!.width, row.icon!.height]).toEqual([48, 48]);
+      expect([row.switch!.width, row.switch!.height]).toEqual([96, 48]);
+    }
+    const sizes = snapped.rows.flatMap((row) => [
+      `${row.icon!.width}x${row.icon!.height}`,
+      `${row.switch!.width}x${row.switch!.height}`,
+    ]);
+    expect(sizes.some((size) => size !== "48x48" && size !== "96x48")).toBe(true);
   });
 });

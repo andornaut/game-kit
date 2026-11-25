@@ -38,7 +38,8 @@ import { readUnit } from "./viewUnits.ts";
 // travel is left to the browser's scrolling. A refused slider keeps its focus and value and plays
 // its refusal on a press, a drag or a step key: the kit cue, or the game's refuse in its place.
 // In a placed list (createFormRows place) the lane, track, fill and thumb are whole CSS px from the
-// game's projected edges, the thumb and fill again at every step.
+// game's projected edges, the thumb and fill again at every step; with the list's artPixel the
+// thumb, the track's height and the caps keep their art size.
 
 export const SLIDER_CLASS = "ui-slider-row";
 export const SLIDER_LANE_CLASS = "ui-slider-lane";
@@ -166,8 +167,9 @@ export function createSlider(document: Document, options: SliderOptions): Slider
   let placement: RowPlacement | undefined;
   // The lane's parts at step in CSS px between the projected edges, each from its holder's corner:
   // the track from the lane's, the thumb from the track's. The caps' border widths are projected
-  // apart from their slices, which stay in art pixels.
+  // apart from their slices, which stay in art pixels, or with artPixel are their art width.
   const writeLane = (placed: NonNullable<RowPlacement["lane"]>, step: number) => {
+    const { artPixel } = placed;
     const context = {
       art: layout.art,
       origin: { x: placed.units.x, y: placed.units.y },
@@ -175,17 +177,23 @@ export function createSlider(document: Document, options: SliderOptions): Slider
       width: placed.units.width,
     };
     const units = sliderGeometry(context, step);
-    const at = sliderGeometry({ ...context, project: placed.project }, step);
+    const at = sliderGeometry(
+      { ...context, ...(artPixel === undefined ? {} : { artPixel }), project: placed.project },
+      step,
+    );
     const { caps } = layout.art.track;
     const right = (rect: Rect) => rect.x + rect.width;
     const x = (edge: number) => placed.project.x(edge);
-    const capLeft = x(units.track.x + caps.left) - at.track.x;
+    const capLeft =
+      artPixel === undefined ? x(units.track.x + caps.left) - at.track.x : caps.left * artPixel;
+    const capRight = (bar: Rect, drawn: Rect) =>
+      artPixel === undefined ? right(drawn) - x(right(bar) - caps.right) : caps.right * artPixel;
     writeLayoutProperties(
       {
         "--ui-slider-empty-cap-left": capLeft,
-        "--ui-slider-empty-cap-right": right(at.track) - x(right(units.track) - caps.right),
+        "--ui-slider-empty-cap-right": capRight(units.track, at.track),
         "--ui-slider-fill-cap-left": capLeft,
-        "--ui-slider-fill-cap-right": right(at.fill) - x(right(units.fill) - caps.right),
+        "--ui-slider-fill-cap-right": capRight(units.fill, at.fill),
         "--ui-slider-fill-width": at.fill.width,
         "--ui-slider-lane-height": at.lane.height,
         "--ui-slider-thumb-height": at.thumb.height,
@@ -224,7 +232,14 @@ export function createSlider(document: Document, options: SliderOptions): Slider
       if (placed.lane !== undefined) {
         const { project, units } = placed.lane;
         sliderGeometry(
-          { art: layout.art, origin: units, project, steps, width: units.width },
+          {
+            art: layout.art,
+            ...(placed.lane.artPixel === undefined ? {} : { artPixel: placed.lane.artPixel }),
+            origin: units,
+            project,
+            steps,
+            width: units.width,
+          },
           step,
         );
       }

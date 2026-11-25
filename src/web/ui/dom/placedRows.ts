@@ -5,11 +5,16 @@ import type { ActionProjection, FormRowsRow } from "../../../ui/index.ts";
 // Not a package export.
 
 // What a placed list hands one row: its lengths in whole CSS px, its box in the projection's
-// space, and for a slider row its lane in units with the projection that places its parts.
+// space, and for a slider row its lane in units with the projection and art pixel that place its
+// parts.
 export interface RowPlacement {
   readonly box: Rect;
   readonly properties: Readonly<Record<string, number>>;
-  readonly lane?: { readonly project: ActionProjection; readonly units: Rect };
+  readonly lane?: {
+    readonly artPixel?: number;
+    readonly project: ActionProjection;
+    readonly units: Rect;
+  };
 }
 
 export interface PlacedRowHooks {

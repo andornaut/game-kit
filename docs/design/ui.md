@@ -95,14 +95,24 @@ theme slots.
 - A form row is one button and the whole press target. Its icon is one state-free frame; its
   label names it and its note describes it. The list's grid columns are shared by every row, so
   the value column is sized by CSS, never by script. The game sets the row height, padding,
-  icon slot, switch size and state word placement; rows are the stacked action gap apart.
+  icon slot, switch size and state word placement; rows are the list's gap apart, the stacked
+  action gap by default, and a placed row may set its own gap above it.
 - A placed list writes its grid as explicit CSS px tracks between projected edges, with the
   padding, the icon slot's sides and the column gaps as tracks of their own and each row track its
   pitch to the next, so rows keep sharing columns through the subgrid. Rows are exactly their
   heights and the game supplies what text would otherwise size: the value track, a centred switch
   stack's height and a slider's first line.
+- Art keeps its size: with the game's art pixel a placed list projects only the corner of an
+  icon, a switch, a slider's thumb and caps and the track's height, and sizes them in whole art
+  pixels. Boxes (rows, columns, the lane, the track's and fill's widths) keep edge projection.
+  Without an art pixel every edge projects on its own, as before.
+- A one-action row hosts a single standard button face centred in the row, which stays the
+  button, so its press covers the row with no outsets. This is the smallest shape: per-edge press
+  margins would add a second hit area and clamps to a control that is already one press target.
 - A switch row is a switch with its state word below the switch, centred or with its ink's right
-  edge on the switch's. Focus and press are fills only and a row never dips.
+  edge on the switch's. Focus and press are fills; a row dips its art only when it sets a press
+  dip in whole units, never while disabled, and a one-action row's face dips by the button press
+  dip token.
 - A form row refuses as its button does: a refused value or switch row plays the shared refusal
   cue or the game's refuse callback in its place, and pointer refusal calls only the game's
   pointer refusal callback, never the kit cue. A game with its own cue thus shows that one cue on

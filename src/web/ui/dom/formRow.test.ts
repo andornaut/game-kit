@@ -8,9 +8,12 @@ import { FORM_ROW_ATTRIBUTES } from "../../../ui/formRow.ts";
 import {
   createFormRow,
   createFormRows,
+  FORM_ROW_ACTION_ATTRIBUTE,
   FORM_ROW_CLASS,
+  FORM_ROW_FACE_CLASS,
   FORM_ROW_ICON_CLASS,
   FORM_ROW_LABEL_CLASS,
+  FORM_ROW_PRESS_DIP_ATTRIBUTE,
   FORM_ROW_TEXT_CLASS,
   FORM_ROW_VALUE_CLASS,
   FORM_ROWS_CLASS,
@@ -256,6 +259,75 @@ describe("createFormRow", () => {
     expect(element.hasAttribute(REFUSAL_ATTRIBUTES.red)).toBe(false);
     expect(vi.mocked(refusalCue.refuse).mock.calls).toEqual([[CUE, true, element]]);
     row.dispose();
+  });
+});
+
+describe("one-action rows and press dips", () => {
+  it("hosts one face in the row, which stays the button and its whole press target", () => {
+    const activate = vi.fn();
+    const icon = document.createElement("img");
+    const row = createFormRow(document, {
+      action: { className: "game-face", role: "secondary", size: { height: 33, width: 145 } },
+      getAction: () => ({ activate }),
+      getState: () => ({ value: "ignored" }),
+      icon,
+      label: "Install",
+      rule,
+    });
+    document.body.append(row.element);
+    const { element, face } = row;
+    expect(element.hasAttribute(FORM_ROW_ACTION_ATTRIBUTE)).toBe(true);
+    expect(element.getAttribute("data-ui-button-role")).toBe("secondary");
+    expect([...element.children]).toEqual([face]);
+    expect(face?.className).toBe(`game-face ${FORM_ROW_FACE_CLASS} ui-button-face`);
+    expect(face?.firstElementChild?.firstElementChild).toBe(icon);
+    expect(row.label.parentElement).toBe(face);
+    expect(row.label.textContent).toBe("Install");
+    expect(element.hasAttribute("aria-describedby")).toBe(false);
+    expect(element.style.getPropertyValue("--ui-form-action-width")).toBe("145");
+    expect(element.style.getPropertyValue("--ui-form-action-height")).toBe("33");
+    element.click();
+    expect(activate).toHaveBeenCalledOnce();
+    expect(() => row.setNote("A note")).toThrow(RangeError);
+    const base = { getAction: () => null, label: "Install", rule };
+    const size = { height: 33, width: 145 };
+    expect(() => createFormRow(document, { ...base, action: { size }, switch: true })).toThrow(
+      RangeError,
+    );
+    expect(() => createFormRow(document, { ...base, action: { size }, note: "Note" })).toThrow(
+      RangeError,
+    );
+    expect(() =>
+      createFormRow(document, { ...base, action: { size: { height: 0, width: 4 } } }),
+    ).toThrow(RangeError);
+  });
+
+  it("marks a row that dips with its dip in units, and only such rows", () => {
+    const dipping = createFormRow(document, {
+      getAction: () => null,
+      label: "Sound",
+      pressDip: 1,
+      rule,
+    });
+    expect(dipping.element.hasAttribute(FORM_ROW_PRESS_DIP_ATTRIBUTE)).toBe(true);
+    expect(dipping.element.style.getPropertyValue("--ui-form-row-press-dip")).toBe("1");
+    const still = createFormRow(document, { getAction: () => null, label: "Size", rule });
+    expect(still.element.hasAttribute(FORM_ROW_PRESS_DIP_ATTRIBUTE)).toBe(false);
+    expect(still.element.getAttribute("style")).toBeNull();
+    expect(() =>
+      createFormRow(document, { getAction: () => null, label: "Sound", pressDip: -1, rule }),
+    ).toThrow(RangeError);
+  });
+
+  it("dips a pressed row's art but never a disabled row's, and leaves a face to the theme", () => {
+    const dip = /:where\(\s*(\.ui-form-row\[data-ui-form-press-dip\][^{]*)\)\s*\{([^}]*)\}/.exec(
+      css,
+    );
+    expect(dip?.[1]).toContain('[data-ui-pressed]:not(:disabled, [aria-disabled="true"])');
+    expect(dip?.[1]).toContain("> :not(.ui-button-face)");
+    expect(dip?.[2]).toContain(
+      "translate: 0 calc(var(--ui-form-row-press-dip, 0) * var(--ui-form-length))",
+    );
   });
 });
 
