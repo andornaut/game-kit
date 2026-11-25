@@ -10,6 +10,14 @@ export const NPM_CACHE_MISS = "NPM_CACHE_MISS";
 export const CHECK_EVIDENCE = "/tmp/check-evidence";
 const INSTALL = ["ci", "--ignore-scripts", "--no-audit", "--no-fund"];
 
+// The parts of a working-tree check, in the order a full check runs them.
+export const WORKING_TREE_PARTS = ["lint", "test", "build"] as const;
+export type WorkingTreePart = (typeof WORKING_TREE_PARTS)[number];
+
+export function isWorkingTreePart(value: string): value is WorkingTreePart {
+  return (WORKING_TREE_PARTS as readonly string[]).includes(value);
+}
+
 export function isNpmCacheMiss(diagnostic: string): boolean {
   const codes = [...diagnostic.matchAll(/^npm (?:ERR!|error) code ([A-Z0-9]+)\s*$/gm)];
   if (codes.length > 0) {
@@ -76,6 +84,11 @@ export function containerCheck(env: NodeJS.ProcessEnv, args: string[]): void {
     run(process.execPath, ["node_modules/eslint/bin/eslint.js", "--max-warnings", "0", "."]);
     run(process.execPath, ["node_modules/markdownlint-cli2/markdownlint-cli2.mjs"]);
   };
+  // The unstamped distribution compile; its output stays in the container.
+  const build = () => {
+    run(process.execPath, ["scripts/release-build.ts", "/scratch/unstamped-distribution"]);
+  };
+  const parts = { build, lint, test } satisfies Record<WorkingTreePart, () => void>;
   switch (task) {
     case "test":
       test(focused);
@@ -83,15 +96,24 @@ export function containerCheck(env: NodeJS.ProcessEnv, args: string[]): void {
     case "lint":
       lint();
       return;
-    case "working-tree":
+    case "build":
       if (focused.length !== 0) {
         break;
       }
-      run("npm", [...INSTALL, "--maxsockets=1"]);
-      lint();
-      test();
-      run(process.execPath, ["scripts/release-build.ts", "/scratch/unstamped-distribution"]);
+      build();
       return;
+    case "working-tree": {
+      // Installs dependencies, then runs every part or the one part named.
+      const [part, ...rest] = focused;
+      if (rest.length !== 0 || (part !== undefined && !isWorkingTreePart(part))) {
+        break;
+      }
+      run("npm", [...INSTALL, "--maxsockets=1"]);
+      for (const name of part === undefined ? WORKING_TREE_PARTS : [part]) {
+        parts[name]();
+      }
+      return;
+    }
     case "fill-cache":
       if (focused.length !== 0) {
         break;
@@ -127,7 +149,7 @@ export function containerCheck(env: NodeJS.ProcessEnv, args: string[]): void {
     }
   }
   throw new ScriptError(
-    "Expected working-tree, release, artifact, fill-cache, install-offline, lint or test.",
+    "Expected working-tree [lint|test|build], release, artifact, fill-cache, install-offline, lint, test or build.",
     2,
   );
 }

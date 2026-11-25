@@ -41,3 +41,17 @@ it.each([
     expect(existsSync(join(evidence, NPM_CACHE_MISS))).toBe(marked);
   },
 );
+
+it.each([
+  ["working-tree", "deploy"],
+  ["working-tree", "lint", "test"],
+  ["build", "extra"],
+])("rejects an unknown working-tree part before installing: %s %s", (...args) => {
+  const bin = mkdtempSync(join(tmpdir(), "working-tree-part-"));
+  writeFileSync(join(bin, "npm"), `#!/bin/sh\ntouch "${join(bin, "installed")}"\n`, {
+    mode: 0o755,
+  });
+  const env = { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}` };
+  expect(() => containerCheck(env, args)).toThrow(expect.objectContaining({ status: 2 }));
+  expect(existsSync(join(bin, "installed"))).toBe(false);
+});

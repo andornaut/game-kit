@@ -159,6 +159,20 @@ it("verifies dirty working-tree bytes and refuses to use them for a release", ()
   expect(existsSync(destination)).toBe(false);
 });
 
+it.each([
+  ["lint", ["shellcheck", "working-tree lint"]],
+  ["test", ["working-tree test"]],
+  ["build", ["working-tree build"]],
+] as const)("runs only the %s part of a working-tree check", (part, launches) => {
+  const { root, run } = fixture();
+  checkLocal(process.env, root, { mode: "working-tree", part });
+  expect(
+    run.mock.calls.map(([, args]) =>
+      args.includes("/bin/shellcheck") ? "shellcheck" : args.slice(-2).join(" "),
+    ),
+  ).toEqual(launches);
+});
+
 it("rejects oversized memory before launching a container", () => {
   const { root, run } = fixture();
   const mode = { mode: "release", releaseDirectory: undefined } as const;

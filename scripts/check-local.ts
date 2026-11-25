@@ -17,7 +17,12 @@ import { loadavg, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { CHECK_EVIDENCE, NPM_CACHE_MISS } from "./container-check.ts";
+import {
+  CHECK_EVIDENCE,
+  isWorkingTreePart,
+  NPM_CACHE_MISS,
+  type WorkingTreePart,
+} from "./container-check.ts";
 import { pinReleaseSource, requireReleaseCheckout } from "./release-source.ts";
 import {
   CONTAINER_UID,
@@ -34,8 +39,10 @@ import {
 } from "./runtime.ts";
 import { isStockExcluded, sourceFingerprint } from "./source-fingerprint.ts";
 
+// A working-tree check runs every part, or only the part named.
 type CheckMode =
-  { mode: "working-tree" } | { mode: "release"; releaseDirectory: string | undefined };
+  | { mode: "working-tree"; part?: WorkingTreePart }
+  | { mode: "release"; releaseDirectory: string | undefined };
 
 function memoryLimit(value = "4g"): string {
   const parts = /^([+]?\d+(?:\.\d*)?|[+]?\.\d+)(e[+-]?\d+)? *(b|[kmgtp](?:b|ib)?)?$/i.exec(value);
@@ -197,7 +204,7 @@ export function checkLocal(env: NodeJS.ProcessEnv, checkout: string, options: Ch
         ],
       );
     }
-    function node(task: string, network: "none" | "bridge", copyTo?: string): void {
+    function node(task: string[], network: "none" | "bridge", copyTo?: string): void {
       const stage = release === undefined ? "cp -R -P /source/. /work/" : archive;
       launch(
         [
@@ -217,10 +224,7 @@ export function checkLocal(env: NodeJS.ProcessEnv, checkout: string, options: Ch
           "-ec",
           `${stage}\nexec sh tests/container/node "$@"`,
           "check-node",
-          task,
-          ...(task === "artifact" && release !== undefined
-            ? [release.revision, release.dateEpoch]
-            : []),
+          ...task,
         ],
         network,
         {
@@ -229,31 +233,34 @@ export function checkLocal(env: NodeJS.ProcessEnv, checkout: string, options: Ch
         },
       );
     }
+    const part = options.mode === "working-tree" ? options.part : undefined;
     let failure: unknown;
     try {
       const shellcheck = env.SHELLCHECK_IMAGE || "koalaman/shellcheck:v0.11.0";
-      launch(
-        [
-          ...readOnlyMount(source, "/work"),
-          ...["--entrypoint", "/bin/shellcheck", shellcheck],
-          ...[
-            "-x",
-            "-P",
-            "SCRIPTDIR",
-            "tests/container/stock",
-            "tests/container/check-stock",
-            "tests/container/node",
-            "tests/container/e2e",
+      if (part === undefined || part === "lint") {
+        launch(
+          [
+            ...readOnlyMount(source, "/work"),
+            ...["--entrypoint", "/bin/shellcheck", shellcheck],
+            ...[
+              "-x",
+              "-P",
+              "SCRIPTDIR",
+              "tests/container/stock",
+              "tests/container/check-stock",
+              "tests/container/node",
+              "tests/container/e2e",
+            ],
           ],
-        ],
-        "none",
-      );
+          "none",
+        );
+      }
       if (release === undefined || evidence === undefined) {
-        node("working-tree", "bridge");
+        node(["working-tree", ...(part === undefined ? [] : [part])], "bridge");
       } else {
         console.log("Checking types, lint and tests offline in a fresh container.");
         try {
-          node("release", "none", evidence);
+          node(["release"], "none", evidence);
         } catch (error) {
           const marker = join(evidence, NPM_CACHE_MISS);
           if (!existsSync(marker)) {
@@ -261,11 +268,11 @@ export function checkLocal(env: NodeJS.ProcessEnv, checkout: string, options: Ch
           }
           rmSync(marker);
           console.log("The npm cache is incomplete; populating it in a container.");
-          node("fill-cache", "bridge");
-          node("release", "none", evidence);
+          node(["fill-cache"], "bridge");
+          node(["release"], "none", evidence);
         }
         console.log("Packing and checking the tarball offline in a fresh container.");
-        node("artifact", "none", evidence);
+        node(["artifact", release.revision, release.dateEpoch], "none", evidence);
       }
     } catch (error) {
       failure = error;
@@ -305,10 +312,12 @@ export function checkLocal(env: NodeJS.ProcessEnv, checkout: string, options: Ch
 }
 
 main(import.meta.url, (args) => {
-  if (args.length !== 0) {
-    throw new ScriptError("Usage: check-stock", 2);
+  const [part, ...rest] = args;
+  if (rest.length !== 0 || (part !== undefined && !isWorkingTreePart(part))) {
+    throw new ScriptError("Usage: check-stock [lint|test|build]", 2);
   }
   checkLocal(process.env, resolve(dirname(fileURLToPath(import.meta.url)), ".."), {
     mode: "working-tree",
+    ...(part === undefined ? {} : { part }),
   });
 });

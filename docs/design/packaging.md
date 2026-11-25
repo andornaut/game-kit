@@ -9,6 +9,9 @@ source. Consumer receipts identify the checks that actually ran. See the release
 combining Archie and Chibi's receipt with the separately verified Ada snapshot. Docs-only CI runs
 lint and the attribution check.
 
+Like the other kits, `make check` verifies the working tree and `make lint`, `make test` and
+`make build` each run one part of it. All four go through the local check runner's containers.
+
 Place injected dependencies and configuration before the subject. Use named fields when a
 caller supplies several distinct ports or measurements. Keep short positional signatures for
 familiar operations with unambiguous roles. A factory's read hook can receive the object it
