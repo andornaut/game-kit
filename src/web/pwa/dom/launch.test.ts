@@ -704,7 +704,7 @@ describe("grouped updates", () => {
       groupStore: {
         complete: async () => sealed,
         put,
-        read: async () => (sealed ? { files: new Map(), kind: "ready" } : { kind: "unknown" }),
+        read: async () => (sealed ? { files: coldFiles(), kind: "ready" } : { kind: "unknown" }),
         reuse: async (_pointer, group) => group.sha256 === unchanged.sha256,
         seal,
       },
@@ -721,6 +721,7 @@ describe("grouped updates", () => {
     await vi.waitFor(() => expect(f.offers).toHaveLength(1));
     expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([
       BUILD_POINTER_URL,
+      build.pointer.manifest,
       changedPath,
       BUILD_POINTER_URL,
     ]);
@@ -784,6 +785,212 @@ describe("grouped updates", () => {
       expect(f.store.calls).toEqual([`reclaim ${V1.pointer.version}`]);
       expect(f.store.state).toEqual({ active: V1.pointer.version });
       expect(f.reload).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      f.launch.dispose();
+    }
+  });
+});
+
+describe("codec-aware groups", () => {
+  const bodies: Record<string, string> = {
+    "/a.js": "alpha",
+    "/hit.m4a": "m4a body bytes",
+    "/hit.ogg": "ogg",
+    "/play/": "<html>",
+  };
+  const groupOf = (archive: string, members: string[], soundFormat?: string) => ({
+    body: archive,
+    members,
+    reference: {
+      byteSize: archive.length,
+      schema: 1 as const,
+      sha256: sha(archive),
+      ...(soundFormat === undefined ? {} : { soundFormat }),
+    },
+  });
+  const core = groupOf("core group", ["/a.js", "/play/"]);
+  const ogg = groupOf("ogg group", ["/hit.ogg"], "ogg");
+  const m4a = groupOf("m4a group bytes", ["/hit.m4a"], "m4a");
+  // An earlier kit's group, holding both alternatives without a format.
+  const mixed = groupOf("mixed sounds", ["/hit.m4a", "/hit.ogg"]);
+  const deployment = (version: string, groups: ReturnType<typeof groupOf>[], cold: boolean) => {
+    const { manifest, pointer } = buildOf(version, bodies, ["/hit.m4a"]);
+    return {
+      groups,
+      manifest: { ...manifest, sounds: { "/hit": ["/hit.ogg", "/hit.m4a"] } },
+      pointer: {
+        ...pointer,
+        ...(cold ? { groupedFirstInstall: true as const } : {}),
+        groups: groups.map(({ reference }) => reference),
+      },
+    };
+  };
+  type Deployment = ReturnType<typeof deployment>;
+
+  // A group store whose ready files are the members of the groups the pointer it sealed names.
+  function groupStore(all: ReturnType<typeof groupOf>[], drop?: string) {
+    const members = new Map(all.map(({ members, reference }) => [reference.sha256, members]));
+    const stored = new Set<string>();
+    let sealed: BuildPointer | undefined;
+    const same = (pointer: BuildPointer) => JSON.stringify(pointer) === JSON.stringify(sealed);
+    const store = {
+      complete: vi.fn(async (_version: string, expected?: BuildPointer) =>
+        sealed === undefined ? false : expected === undefined || same(expected),
+      ),
+      put: vi.fn(async (_pointer: BuildPointer, group: { sha256: string }) => {
+        stored.add(group.sha256);
+      }),
+      read: vi.fn(async () => {
+        if (sealed === undefined) {
+          return { kind: "unknown" as const };
+        }
+        const urls = sealed.groups!.flatMap(({ sha256 }) => members.get(sha256)!);
+        const files = new Map(
+          urls
+            .filter((url) => url !== drop)
+            .map((url) => [
+              url,
+              {
+                blob: new Blob([bodies[url]!]),
+                byteSize: bodies[url]!.length,
+                contentType: "application/octet-stream",
+                offset: 0,
+              },
+            ]),
+        );
+        return { files, kind: "ready" as const };
+      }),
+      reuse: vi.fn(async (_pointer: BuildPointer, group: { sha256: string }) =>
+        stored.has(group.sha256),
+      ),
+      seal: vi.fn(async (pointer: BuildPointer) => {
+        sealed = pointer;
+      }),
+    } satisfies BuildGroupStore;
+    return { store, stored };
+  }
+
+  function launchFor(build: Deployment, soundFormat: string | undefined, drop?: string) {
+    const groups = groupStore(build.groups, drop);
+    const f = fixture({
+      groupStore: groups.store,
+      ...(soundFormat === undefined ? {} : { soundFormat }),
+    });
+    f.deploy(build);
+    for (const { body, reference } of build.groups) {
+      f.routes.set(buildArchivePartUrl(reference, 0), () => new Response(body));
+    }
+    f.container.claim((message, [port]) => {
+      port?.postMessage(message);
+      port?.close();
+    });
+    return { ...f, groups };
+  }
+
+  const archivePaths = (...groups: ReturnType<typeof groupOf>[]) =>
+    groups.map(({ reference }) => buildArchivePartUrl(reference, 0));
+
+  it("installs only the device format's groups and sizes progress from the reduced manifest", async () => {
+    const build = deployment("cdc1", [core, m4a, ogg], true);
+    const f = launchFor(build, "ogg");
+    await expect(f.launch.run()).resolves.toBe("reloading");
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([
+      BUILD_POINTER_URL,
+      build.pointer.manifest,
+      ...archivePaths(core, ogg),
+      BUILD_POINTER_URL,
+    ]);
+    const installed = { ...build.pointer, groups: [core.reference, ogg.reference] };
+    expect(f.groups.store.seal).toHaveBeenCalledExactlyOnceWith(installed, expect.any(AbortSignal));
+    expect(f.groups.store.put.mock.calls.map(([pointer]) => pointer)).toEqual([
+      installed,
+      installed,
+    ]);
+    expect(f.store.state).toEqual({ active: build.pointer.version });
+    // The boot file is the kept Ogg alternative of the manifest's M4A boot entry.
+    expect(f.progress.at(-1)).toMatchObject({
+      receivedBytes: core.reference.byteSize + ogg.reference.byteSize,
+      totalBytes: core.reference.byteSize + ogg.reference.byteSize + bodies["/hit.ogg"]!.length,
+    });
+    f.launch.dispose();
+  });
+
+  it("installs every group without a sound format", async () => {
+    const build = deployment("cdc2", [core, m4a, ogg], true);
+    const f = launchFor(build, undefined);
+    await expect(f.launch.run()).resolves.toBe("reloading");
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([
+      BUILD_POINTER_URL,
+      build.pointer.manifest,
+      ...archivePaths(core, m4a, ogg),
+      BUILD_POINTER_URL,
+    ]);
+    expect(f.groups.store.seal).toHaveBeenCalledExactlyOnceWith(
+      build.pointer,
+      expect.any(AbortSignal),
+    );
+    expect(f.store.state).toEqual({ active: build.pointer.version });
+    f.launch.dispose();
+  });
+
+  it.each([
+    ["the device format's member is missing", [core, m4a, ogg], "ogg", "/hit.ogg", false],
+    ["an untagged group also holds a left-out alternative", [core, mixed], "ogg", undefined, true],
+    ["every member is required without a format", [core, m4a, ogg], undefined, "/hit.m4a", false],
+  ] as const)(
+    "verifies a grouped first install against the reduced manifest when %s",
+    async (_case, groups, soundFormat, drop, activates) => {
+      const build = deployment("cdc3", [...groups], true);
+      const f = launchFor(build, soundFormat, drop);
+      const started = f.launch.run();
+      if (activates) {
+        await expect(started).resolves.toBe("reloading");
+        expect(f.store.state).toEqual({ active: build.pointer.version });
+      } else {
+        await vi.waitFor(() => expect(f.failures).toHaveLength(1));
+        expect(f.failures[0]?.reason).toBe("verification");
+        expect(f.store.calls).toEqual([]);
+        expect(f.reload).not.toHaveBeenCalled();
+      }
+      f.launch.dispose();
+    },
+  );
+
+  it("stages a grouped update from the device format's groups and verifies before offering", async () => {
+    const build = deployment("cdc4", [core, m4a, ogg], false);
+    const f = launchFor(build, "ogg");
+    f.groups.stored.add(core.reference.sha256);
+    f.store.state.active = V1.pointer.version;
+    await expect(f.launch.run()).resolves.toBe("play");
+    await vi.waitFor(() => expect(f.offers).toHaveLength(1));
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([
+      BUILD_POINTER_URL,
+      build.pointer.manifest,
+      ...archivePaths(ogg),
+      BUILD_POINTER_URL,
+    ]);
+    expect(f.groups.store.seal).toHaveBeenCalledExactlyOnceWith(
+      { ...build.pointer, groups: [core.reference, ogg.reference] },
+      expect.any(AbortSignal),
+    );
+    expect(f.store.state).toEqual({ active: V1.pointer.version, staged: build.pointer.version });
+    f.launch.dispose();
+  });
+
+  it("does not offer a grouped update missing a member of the device format", async () => {
+    const build = deployment("cdc5", [core, m4a, ogg], false);
+    const f = launchFor(build, "ogg", "/hit.ogg");
+    f.store.state.active = V1.pointer.version;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await expect(f.launch.run()).resolves.toBe("play");
+      await vi.waitFor(() =>
+        expect(f.updates).toContainEqual({ phase: "failed", version: build.pointer.version }),
+      );
+      expect(f.fetch.mock.calls.map(([url]) => url)).not.toContain(archivePaths(m4a)[0]);
+      expect(f.offers).toEqual([]);
+      expect(f.store.state).toEqual({ active: V1.pointer.version });
     } finally {
       warn.mockRestore();
       f.launch.dispose();

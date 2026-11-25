@@ -8,6 +8,7 @@ import {
 } from "./buildContract.ts";
 import {
   installedManifest,
+  installedPointer,
   parseBuildManifest,
   parseBuildPointer,
   parseVersionRecord,
@@ -117,9 +118,38 @@ describe("parseBuildPointer", () => {
       { groups: [groups[0], groups[0]] },
       { groups: [{ ...groups[0], byteSize: BUILD_ARCHIVE_PART_BYTES + 1 }] },
       { archive: groups[0], groups: [groups[0]] },
+      { groups: [{ ...groups[0], soundFormat: "" }] },
+      { groups: [{ ...groups[0], soundFormat: 1 }] },
     ]) {
       expect(() => parseBuildPointer({ ...pointer, ...invalid })).toThrow(TypeError);
     }
+  });
+});
+
+describe("installedPointer", () => {
+  const pointer = parseBuildPointer({
+    buildId: "id",
+    groupedFirstInstall: true,
+    groups: [
+      { byteSize: 10, schema: 1, sha256: sha("a") },
+      { byteSize: 10, schema: 1, sha256: sha("b"), soundFormat: "m4a" },
+      { byteSize: 10, schema: 1, sha256: sha("c"), soundFormat: "ogg" },
+    ],
+    manifest: buildManifestUrl("v1"),
+    schema: 1,
+    version: "v1",
+  });
+
+  it("keeps the groups without a format and those in the device's format", () => {
+    const installed = installedPointer("ogg", pointer);
+    expect(installed).toEqual({ ...pointer, groups: [pointer.groups![0], pointer.groups![2]] });
+    expect(installedPointer("wav", pointer).groups).toEqual([pointer.groups![0]]);
+  });
+
+  it("keeps every group without a format and leaves a pointer without groups unchanged", () => {
+    expect(installedPointer(undefined, pointer)).toBe(pointer);
+    const plain = { buildId: "id", manifest: buildManifestUrl("v1"), schema: 1, version: "v1" };
+    expect(installedPointer("ogg", parseBuildPointer(plain))).toEqual(plain);
   });
 });
 

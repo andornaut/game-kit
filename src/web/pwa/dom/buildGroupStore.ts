@@ -8,6 +8,7 @@ import {
   buildArchivePartUrl,
   type BuildArchiveReference,
   buildCacheName,
+  type BuildGroupReference,
   type BuildPointer,
   type BuildPolicy,
   GROUP_ARCHIVE_IDENTITY,
@@ -16,7 +17,9 @@ import {
 import { isBuildVersion, parseBuildPointer, RECORD_CONTENT_TYPE } from "../buildRecords.ts";
 import { withBuildStateLock } from "./buildStore.ts";
 
-type GroupedPointer = BuildPointer & { readonly groups: readonly BuildArchiveReference[] };
+// The pointer launch installs on this device (buildRecords' installedPointer), so the marker,
+// completeness and the router name only the groups of the device's sound format.
+type GroupedPointer = BuildPointer & { readonly groups: readonly BuildGroupReference[] };
 
 export interface BuildGroupFile {
   readonly blob: Blob;
@@ -60,15 +63,23 @@ function groupedPointer(value: unknown): GroupedPointer {
   return {
     buildId,
     ...(groupedFirstInstall === undefined ? {} : { groupedFirstInstall }),
-    groups: groups.map(({ byteSize, schema, sha256 }) => ({ byteSize, schema, sha256 })),
+    groups: groups.map(({ byteSize, schema, sha256, soundFormat }) => ({
+      byteSize,
+      schema,
+      sha256,
+      ...(soundFormat === undefined ? {} : { soundFormat }),
+    })),
     manifest,
     schema,
     version,
   };
 }
 
-const sameGroup = (a: BuildArchiveReference, b: BuildArchiveReference) =>
-  a.schema === b.schema && a.byteSize === b.byteSize && a.sha256 === b.sha256;
+const sameGroup = (a: BuildGroupReference, b: BuildGroupReference) =>
+  a.schema === b.schema &&
+  a.byteSize === b.byteSize &&
+  a.sha256 === b.sha256 &&
+  a.soundFormat === b.soundFormat;
 
 function samePointer(a: GroupedPointer, b: BuildPointer): boolean {
   const { groups } = b;
@@ -86,7 +97,11 @@ function samePointer(a: GroupedPointer, b: BuildPointer): boolean {
 }
 
 function member(pointer: GroupedPointer, input: BuildArchiveReference): BuildArchiveReference {
-  const group = pointer.groups.find((candidate) => sameGroup(candidate, input));
+  // A digest names at most one group of a pointer.
+  const group = pointer.groups.find(
+    ({ byteSize, schema, sha256 }) =>
+      schema === input.schema && byteSize === input.byteSize && sha256 === input.sha256,
+  );
   if (group === undefined) {
     throw new TypeError("Group does not belong to the build pointer");
   }

@@ -396,6 +396,35 @@ describe("group storage and routing", () => {
     expect(await store.complete("v1", sealed)).toBe(true);
   });
 
+  it("seals a device's format groups and routes a left-out alternative to the network", async () => {
+    const worker = startWorker(new FakeServer({ "/hit.m4a": "network m4a" }));
+    const store = createBuildGroupStore({
+      caches: worker.storage as unknown as CacheStorage,
+      origin: ORIGIN,
+      policy: POLICY,
+    });
+    const page = groupOf("/play/", "text/html; charset=utf-8", "<p>grouped</p>");
+    const ogg = groupOf("/hit.ogg", "audio/ogg", "ogg bytes");
+    const installed: BuildPointer = {
+      ...groupedBuild("v1", page),
+      groups: [page.reference, { ...ogg.reference, soundFormat: "ogg" }],
+    };
+    await store.put(installed, page.reference, page.blob);
+    await store.put(installed, ogg.reference, ogg.blob);
+    await store.seal(installed);
+    const records = await worker.records();
+    expect(JSON.parse((await records.text(groupRecord("v1")))!)).toEqual(installed);
+    expect(await store.complete("v1", installed)).toBe(true);
+    expect(await store.complete("v1", groupedBuild("v1", page, ogg))).toBe(false);
+    await worker.setRecord(ACTIVE, "v1");
+    expect(await (await worker.navigate("/play/", "tab"))!.text()).toBe("<p>grouped</p>");
+    expect(await (await worker.get("/hit.ogg", "tab"))!.text()).toBe("ogg bytes");
+    expect(await (await worker.get("/hit.m4a", "tab"))!.text()).toBe("network m4a");
+    expect(worker.fetches).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ url: `${ORIGIN}/hit.m4a` }),
+    );
+  });
+
   it("promotes groups, serves their typed bodies and keeps an older archive pin", async () => {
     const worker = startWorker(new FakeServer({ "/api/state": "network" }));
     await saveArchive(worker.storage, "v1");

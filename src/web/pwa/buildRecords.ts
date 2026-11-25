@@ -92,7 +92,12 @@ export function parseBuildPointer(value: unknown): BuildPointer {
     const seen = new Set<string>();
     for (const value of pointer.groups) {
       const group = parseBuildArchiveReference(value);
-      if (group.byteSize > BUILD_ARCHIVE_PART_BYTES || seen.has(group.sha256)) {
+      const { soundFormat } = value as { readonly soundFormat?: unknown };
+      if (
+        group.byteSize > BUILD_ARCHIVE_PART_BYTES ||
+        seen.has(group.sha256) ||
+        (soundFormat !== undefined && (typeof soundFormat !== "string" || soundFormat === ""))
+      ) {
         throw new TypeError("Invalid or duplicate build group");
       }
       seen.add(group.sha256);
@@ -326,4 +331,22 @@ export function installedManifest(
     ...(families === undefined ? {} : { verifiedJsonBodies: families }),
     ...(soundFormat === undefined ? {} : { soundFormat }),
   };
+}
+
+// The pointer a device installs, given the sound format the page plays: its groups reduced to
+// those without a sound format plus those in soundFormat. Without soundFormat, or without groups,
+// the pointer is unchanged. Launch, the group store's marker and the router read the reduced
+// pointer, as they read installedManifest.
+export function installedPointer(
+  soundFormat: string | undefined,
+  pointer: BuildPointer,
+): BuildPointer {
+  const { groups } = pointer;
+  if (soundFormat === undefined || groups === undefined) {
+    return pointer;
+  }
+  const kept = groups.filter(
+    (group) => group.soundFormat === undefined || group.soundFormat === soundFormat,
+  );
+  return kept.length === groups.length ? pointer : { ...pointer, groups: kept };
 }

@@ -15,6 +15,7 @@ import {
   recordsCacheName,
   STAGED_RECORD_PATH,
 } from "../../src/web/pwa/buildContract.ts";
+import { installedPointer } from "../../src/web/pwa/buildRecords.ts";
 import { buildDeployment, type Deployment } from "./build.ts";
 import type { E2eState } from "./fixture/play/main.ts";
 import { POLICY, SAVE_MS } from "./fixture/policy.ts";
@@ -76,8 +77,14 @@ const pinnedVariant = (page: Page) =>
     return ((await response.json()) as { variant: string }).variant;
   });
 
+// The fixture page's createLaunch soundFormat.
+const SOUND_FORMAT = "ogg";
+const devicePointer = (deployment: Deployment) =>
+  installedPointer(SOUND_FORMAT, deployment.pointer);
+
 async function verifyStoredTransport(page: Page, deployment: Deployment): Promise<void> {
-  const { archive, groups, version } = deployment.pointer;
+  const pointer = devicePointer(deployment);
+  const { archive, groups, version } = pointer;
   assert(archive ?? groups);
   const bodies = groups?.map((group) => ({
     byteSize: group.byteSize,
@@ -130,7 +137,7 @@ async function verifyStoredTransport(page: Page, deployment: Deployment): Promis
     },
   );
   assert.deepEqual(stored.keys, bodies.map(({ path }) => path).sort());
-  assert.deepEqual(stored.marker, deployment.pointer);
+  assert.deepEqual(stored.marker, pointer);
   assert.deepEqual(stored.bodies, bodies);
 }
 
@@ -146,9 +153,9 @@ async function stage(
 ): Promise<E2eState> {
   const { offline, page, requests, server } = context;
   const before = await playing(page, active);
-  const { archive, groups, version } = candidate.pointer;
+  const { archive, groups, version } = devicePointer(candidate);
   assert(archive ?? groups);
-  const activeGroups = new Set(active.pointer.groups?.map(({ sha256 }) => sha256));
+  const activeGroups = new Set(devicePointer(active).groups?.map(({ sha256 }) => sha256));
   const reused = groups?.filter(({ sha256 }) => activeGroups.has(sha256)) ?? [];
   const parts =
     groups === undefined
@@ -232,10 +239,18 @@ async function stage(
     [active, candidate].flatMap(({ manifest }) => manifest.files.map(({ url }) => url)),
   );
   const paths = [...requests.slice(requestsStart), ...network.map(({ path }) => path)];
-  assert(
-    !paths.includes(candidate.pointer.manifest),
-    "Legacy manifest requested for archive staging",
+  // Grouped staging reads the manifest to verify the stored groups.
+  assert.equal(
+    paths.includes(candidate.pointer.manifest),
+    groups !== undefined,
+    "Manifest request does not match the staging transport",
   );
+  const skipped = (candidate.pointer.groups ?? []).filter(
+    ({ sha256 }) => !groups?.some((group) => group.sha256 === sha256),
+  );
+  for (const group of skipped) {
+    assert(!paths.includes(buildArchivePartUrl(group, 0)), "Other sound format group requested");
+  }
   for (const group of reused) {
     assert(!paths.includes(buildArchivePartUrl(group, 0)), "Unchanged group requested again");
   }
@@ -424,9 +439,14 @@ export async function runWholeBuildAcceptance(mode: "grouped" | "whole-build"): 
         const partRequests = server.log
           .slice(firstInstallStart)
           .filter(({ path }) => path.startsWith("/.game-kit/archive-"));
+        const deviceGroups = devicePointer(baseline).groups!;
+        assert(
+          deviceGroups.length < baseline.pointer.groups!.length,
+          "Fixture must skip another sound format's group",
+        );
         assert.deepEqual(
           partRequests.map(({ path }) => path),
-          baseline.pointer.groups!.map((group) => buildArchivePartUrl(group, 0)),
+          deviceGroups.map((group) => buildArchivePartUrl(group, 0)),
         );
         assert(partRequests.every(({ status }) => status === 200));
         assert(!server.log.some(({ path }) => archiveOnly(path)));

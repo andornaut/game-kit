@@ -44,6 +44,12 @@ export function buildArchivePartUrl(archive: BuildArchiveReference, index: numbe
   return `/.game-kit/archive-${archive.sha256}-${index}.bin`;
 }
 
+// One update group. A group with soundFormat holds only sound alternatives in that format, so a
+// device that plays another format skips it (buildRecords' installedPointer).
+export interface BuildGroupReference extends BuildArchiveReference {
+  readonly soundFormat?: string;
+}
+
 export interface BuildPointer {
   readonly schema: 1;
   readonly version: string;
@@ -51,7 +57,7 @@ export interface BuildPointer {
   // buildManifestUrl(version).
   readonly manifest: string;
   readonly archive?: BuildArchiveReference;
-  readonly groups?: readonly BuildArchiveReference[];
+  readonly groups?: readonly BuildGroupReference[];
   // Install from groups even on a fresh browser. Some member URLs may only exist in the router.
   readonly groupedFirstInstall?: true;
 }

@@ -25,7 +25,12 @@ import {
   type UpdateOffer,
   type UpdateState,
 } from "../buildContract.ts";
-import { installedManifest, parseBuildManifest, parseBuildPointer } from "../buildRecords.ts";
+import {
+  installedManifest,
+  installedPointer,
+  parseBuildManifest,
+  parseBuildPointer,
+} from "../buildRecords.ts";
 import { downloadBuildArchive } from "./buildArchiveDownload.ts";
 import { BUILD_GROUP_ROUTER_PROBE, supportsBuildArchive } from "./buildArchiveRouter.ts";
 import { type BuildArchiveStore, createBuildArchiveStore } from "./buildArchiveStore.ts";
@@ -417,10 +422,11 @@ export function createLaunch(
     }
   };
 
+  // The deployed pointer, its groups reduced to the ones this device installs.
   const readPointer = async (): Promise<BuildPointer> => {
     const value = await fetchJson(BUILD_POINTER_URL, { cache: "no-store" });
     try {
-      return parseBuildPointer(value);
+      return installedPointer(options.soundFormat, parseBuildPointer(value));
     } catch {
       throw new LaunchError("verification", "Invalid build pointer");
     }
@@ -1003,14 +1009,23 @@ export function createLaunch(
     return "complete";
   };
 
-  const verifyGroupedManifest = async (manifest: BuildManifest) => {
-    const grouped = await context.groupStore?.read(manifest.version);
-    if (grouped?.kind !== "ready" || grouped.files.size !== manifest.files.length) {
+  // Every stored member is a deployed file of its size, and every file this device installs is
+  // stored. Groups without a sound format, such as an earlier kit's, may also hold left-out
+  // alternatives.
+  const verifyGroupedManifest = async (deployed: BuildManifest) => {
+    const grouped = await context.groupStore?.read(deployed.version);
+    if (grouped?.kind !== "ready") {
       throw new LaunchError("verification", "Grouped build members do not match the manifest");
     }
-    for (const { byteSize, url } of manifest.files) {
-      if (grouped.files.get(url)?.byteSize !== byteSize) {
+    const sizes = new Map(deployed.files.map(({ byteSize, url }) => [url, byteSize]));
+    for (const [url, { byteSize }] of grouped.files) {
+      if (sizes.get(url) !== byteSize) {
         throw new LaunchError("verification", `Grouped build member does not match ${url}`);
+      }
+    }
+    for (const { url } of installedManifest(options.soundFormat, deployed).files) {
+      if (!grouped.files.has(url)) {
+        throw new LaunchError("verification", `Grouped build member is missing for ${url}`);
       }
     }
   };
@@ -1021,7 +1036,12 @@ export function createLaunch(
     aborts.signal.throwIfAborted();
     await requireGroupRouter();
     const manifest = await readDeployedManifest(pointer);
-    progress = { ...progress, bootBytes: bootBytesOf(manifest), received: 0, total: 0 };
+    progress = {
+      ...progress,
+      bootBytes: bootBytesOf(installedManifest(options.soundFormat, manifest)),
+      received: 0,
+      total: 0,
+    };
     const result = await prepareGroups(
       pointer,
       (received, total) => {
@@ -1072,10 +1092,12 @@ export function createLaunch(
 
   const stageGroups = async (pointer: BuildPointer, state: BuildState) => {
     await requireGroupRouter();
+    const manifest = await readDeployedManifest(pointer);
     const result = await prepareGroups(pointer, (received, total) =>
       reportUpdate({ phase: "staging", value: received / total, version: pointer.version }),
     );
     if (result === "complete") {
+      await verifyGroupedManifest(manifest);
       await publishStaged(state, pointer.version, pointer);
     }
     return result;

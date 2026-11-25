@@ -53,6 +53,15 @@ Move image processing from `art/rgbaImage` to `build/rgbaImage`, which also expo
 
 Apply the mapping to JavaScript and TypeScript imports, test mocks and configuration, and stylesheet imports. Change the old build-info reference to `/// <reference types="@andornaut/game-kit/build/buildInfo" />`. This declaration-only export still provides `__APP_VERSION__`, `__BUILD_ID__` and `__COMMIT__`. Historical migration notes use the subpaths current at the time. The source inventory uses implementation paths relative to `src/`.
 
+## Codec-aware groups in 0.72.0
+
+`updateGroup` builds now split each group's sound alternatives into one group
+per format, so group digests and counts change once and a build near the
+100-group cap can exceed it. Grouped installs and updates skip groups of other
+sound formats and verify against the device's reduced manifest. See
+[grouped updates](#grouped-updates) and
+[serving group archive members](#serving-group-archive-members-at-the-origin).
+
 ## Migration to 0.65.0
 
 - `createButton(document, options)` passes the actual button element to
@@ -148,10 +157,38 @@ of the predicate. Keep selected members out of any separate public asset copy
 step as well. This option uses static archives and is incompatible with install
 packs, update group recipes, and whole-build archives.
 
-The build rejects more than 100 groups in grouped mode or more than 100 listed
-files in specific-file mode. This counts update units. First-install packs,
-and other website output have their own layout. The `wholeBuild: true`
-transport is separate from `updateGroup`.
+Sound alternatives form their own group per format under the name
+`updateGroup` returns, and the pointer tags each such group with its
+`soundFormat`. A grouped first install or update downloads only the groups
+without a format and those in `createLaunch`'s `soundFormat` (`buildRecords`'
+`installedPointer`), and verifies the stored groups against
+`installedManifest(soundFormat)` before activation or staging, so the device
+downloads no other format's sound bytes. An `undefined` sound format installs
+every group. Grouped staging reads the build manifest for this check. Groups
+an earlier kit built without format tags still install in full.
+
+The build rejects more than 100 groups in grouped mode, counting each sound
+format's group separately, or more than 100 listed files in specific-file
+mode. This counts update units. First-install packs, and other website output
+have their own layout. The `wholeBuild: true` transport is separate from
+`updateGroup`.
+
+## Serving group archive members at the origin
+
+Once installed, the router serves every page in its scope, including a
+separate gallery page, the active build's archived members at their original
+URLs. For a visitor without an installed build, an origin can serve
+`groupedFirstInstall` archive-only members from the emitted group archives.
+Pass the deployed `build.json` and an archive body storage callback to
+`createGroupArchiveMemberReader({ readArchive }, pointer)` from
+`runtime/web/pwa/dom/groupArchiveMemberReader`. The callback receives each
+group's emitted path, `buildArchivePartUrl(group, 0)`. Resolve the request
+pathname with `reader.read(path)`. The reader locates members from the
+archive indexes, then serves a member only after checking the whole archive's
+size and SHA-256 from the pointer. It retains one verified archive per
+instance. An unknown path returns `undefined` so the host can try ordinary
+assets. A known path with a missing or invalid archive rejects. The host owns
+HTTP method and cache policy.
 
 ## Packed origin files
 
@@ -544,7 +581,7 @@ Each compilation rejects the other environments' ambient globals, and ESLint rej
 - **Input:** callers supply event coordinates, timestamps, equality, hold thresholds, drag/fling tuning and reduced-motion policy. Clients perform returned actions and apply modal gates to their input routes.
 - **Install offer:** `web/pwa/dom/installFlow`'s `watchInstall(window)` holds the browser's install prompt and reports `installed`, `prompt` or `steps`; `offersInstall` is true unless installed. `install()` calls the prompt before any await, so the tap still counts as the gesture, and returns `accepted`, `dismissed` or `steps`. On `steps` the game shows its words for `stepsKind`, one of the `InstallStepsKind` values `installStepsKind(userAgent, maxTouchPoints)` chooses: `chromiumAndroid`, `chromiumDesktop`, `firefoxAndroid`, `firefoxDesktop`, `ios`, `other`, `safariMac` or `samsungInternet`. `other` covers unlisted browsers, Opera and WebViews. `wireInstallButton(flow, button, steps)` hides the button only once installed and opens the `steps` dialog on its `[data-steps="<kind>"]` section, titled by its `h2`, or its `other` section where the dialog has none for the kind; the dialog's first button closes it. The game supplies every string and the markup.
 - **Motion:** games validate finite coordinates, starts and nonnegative durations. Zero duration changes instantly at its start; infinite query positions select endpoints. Games retain clocks and randomness. `motion` re-exports the `Point` type from `rect`.
-- **Launch:** `web/pwa/dom/launch`'s `createLaunch(browserLaunchContext(policy), options).run()` runs once before game construction or save access; only `"reloading"` suppresses startup. With no active build it registers the router (`updateViaCache: "none"`), reads `build.json` with `no-store`, pins that manifest, reduced to the sound alternatives in `soundFormat` (`buildRecords`' `installedManifest`), and installs it in the foreground (6 lanes, default priority), reporting `onProgress` and, on a `network` or `verification` failure, `onFailure({ reason, retry })`, whose retry resumes from stored entries. When the router cannot register (`unsupported`) or storage is full (`quota`), it calls `onNetworkPlay({ reason })` once and resolves `"play"` from the network; each later launch tries the install again. The document a first install reloads into reports the carried progress at once. A redeploy mid-install restarts on the new manifest; the old document then reloads once into the new build instead of resolving `"play"`, and a network play reloads once onto the newer deployed build. With an active build it resolves `"play"` and checks `build.json` after reclaiming unused builds. A complete staged build normally promotes at the next cold launch. The page can reload once into the router if it still finds a distinct complete staged build at startup. Visibility return, window focus, reconnect and caller requests to `requestUpdateCheck()` share ordinary discovery while visible and online. Call the hook on genuine start-of-play and return-to-Start/Home transitions. An ordinary wake during `UPDATE_CHECK_MS` defers one check until the cooldown expires. The page does not poll continuously. It stages a newer build in the background (2 lanes, `low`, paused while hidden). Staging reports only `onUpdateState`, never `onFailure`; a failed staging retries while the page stays visible, after `UPDATE_RETRY_MS` (60 s) and then twice the previous wait up to `UPDATE_RETRY_MAX_MS` (15 minutes), cancelled while hidden and on `dispose()`. Staging fires `onUpdateReady({ version, updateNow, dismiss })` once per staged version on any screen; the game draws its prompt and pauses play. `updateNow(save)` awaits `save`, then revalidates the offer before activation and reload. On dismissal the game restores the previous view, focus and pause state. The staged build stays available for the next cold launch. Focus and scene transitions within the same document only wake discovery.
+- **Launch:** `web/pwa/dom/launch`'s `createLaunch(browserLaunchContext(policy), options).run()` runs once before game construction or save access; only `"reloading"` suppresses startup. With no active build it registers the router (`updateViaCache: "none"`), reads `build.json` with `no-store`, pins that manifest, reduced to the sound alternatives in `soundFormat` (`buildRecords`' `installedManifest`), or, for a grouped build, the groups `installedPointer` keeps for that format, and installs it in the foreground (6 lanes, default priority), reporting `onProgress` and, on a `network` or `verification` failure, `onFailure({ reason, retry })`, whose retry resumes from stored entries. When the router cannot register (`unsupported`) or storage is full (`quota`), it calls `onNetworkPlay({ reason })` once and resolves `"play"` from the network; each later launch tries the install again. The document a first install reloads into reports the carried progress at once. A redeploy mid-install restarts on the new manifest; the old document then reloads once into the new build instead of resolving `"play"`, and a network play reloads once onto the newer deployed build. With an active build it resolves `"play"` and checks `build.json` after reclaiming unused builds. A complete staged build normally promotes at the next cold launch. The page can reload once into the router if it still finds a distinct complete staged build at startup. Visibility return, window focus, reconnect and caller requests to `requestUpdateCheck()` share ordinary discovery while visible and online. Call the hook on genuine start-of-play and return-to-Start/Home transitions. An ordinary wake during `UPDATE_CHECK_MS` defers one check until the cooldown expires. The page does not poll continuously. It stages a newer build in the background (2 lanes, `low`, paused while hidden). Staging reports only `onUpdateState`, never `onFailure`; a failed staging retries while the page stays visible, after `UPDATE_RETRY_MS` (60 s) and then twice the previous wait up to `UPDATE_RETRY_MAX_MS` (15 minutes), cancelled while hidden and on `dispose()`. Staging fires `onUpdateReady({ version, updateNow, dismiss })` once per staged version on any screen; the game draws its prompt and pauses play. `updateNow(save)` awaits `save`, then revalidates the offer before activation and reload. On dismissal the game restores the previous view, focus and pause state. The staged build stays available for the next cold launch. Focus and scene transitions within the same document only wake discovery.
 - **Required update:** a save written by a newer game calls `launch.requireNewer()`, which never offers the update. A complete staged build, or a newer build another window already activated, switches at once; otherwise it checks `build.json` and stages the newer build, then switches. Keep Start, save loading and writes blocked for both `onRequireNewer` states, `"updating"` and `"unavailable"`; neither releases the save guard. Unavailable retries on online and visibility events.
 - **Build store:** `web/pwa/dom/buildStore` keeps one cache per build version, `<prefix>build-<version>`, and a records cache, `<prefix>records`, holding the `active` and `staged` records, one pin per window client and each build's manifest as this device installs it (reduced to its `soundFormat`, which it records), each under its own key (`buildContract`'s `ACTIVE_RECORD_PATH`, `STAGED_RECORD_PATH`, `pinRecordPath` and `buildManifestUrl`), so no write overwrites another. A record body is `{"version": string}`; an absent record has no entry. Callers write a record only after verifying what it names. `reclaim(documentVersions)` deletes every build neither active, staged, named by a pin nor in `documentVersions`; the router deletes closed clients' pins, so a pin names a build a live window runs.
 - **Install:** `web/pwa/dom/buildInstaller`'s `installBuild(context, options)` saves the pinned manifest, copies each missing file another build holds by digest without hashing it again, then fetches the rest, unhashed files and verified JSON with `cache: "no-store"` and files under the policy's `hashedAssetPrefix` in the default mode, which the HTTP cache may answer, streaming each body against the manifest's exact size and full SHA-256 before storing it with its `x-game-kit-sha256` header. `storage.persist()` and `estimate()` run first, so a full quota fails early. The foreground defaults (`FOREGROUND_INSTALL`) are six lanes at default priority, three attempts per file one and three seconds apart, and a 30 s inactivity timeout per attempt; `BACKGROUND_INSTALL` uses two lanes at `low` priority, and launch pauses it while the page is hidden. Only files the build cache lacks are fetched, so a later call resumes an interrupted install. A body that differs from the pinned manifest resolves `"changed"`, and launch re-reads `build.json` and installs the new manifest, reusing every verified entry. Completion is a metadata check: every file present with its digest header.

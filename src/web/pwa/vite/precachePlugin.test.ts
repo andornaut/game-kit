@@ -24,7 +24,7 @@ import {
   updateGroupRecipesPath,
 } from "../buildContract.ts";
 import { UNKNOWN_BUILD_ID, validateBuildManifest, validateBuildPointer } from "../buildManifest.ts";
-import { installedManifest, parseBuildPointer } from "../buildRecords.ts";
+import { installedManifest, installedPointer, parseBuildPointer } from "../buildRecords.ts";
 import type { CachePolicy } from "../cachePolicy.ts";
 import { assertClassicWorker } from "./classicWorker.ts";
 import { precachePlugin, type PrecachePluginOptions } from "./precachePlugin.ts";
@@ -469,6 +469,47 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     });
     expect(regrouped.pointer.version).not.toBe(next.pointer.version);
     expect(regrouped.manifest.files).toEqual(next.manifest.files);
+  });
+
+  it("splits each named group's sound alternatives into one tagged group per format", async () => {
+    const emitted = {
+      "art/hit.m4a": "m4a hit",
+      "art/hit.ogg": "ogg hit",
+      "art/hum.ogg": "ogg hum",
+      "art/sprite.png": "png",
+    };
+    const options: Build = {
+      emitted,
+      hashedFiles: () => ({
+        sounds: { "/art/hit": ["/art/hit.ogg", "/art/hit.m4a"], "/art/hum": ["/art/hum.ogg"] },
+        urls: ["/art/sprite.png"],
+      }),
+      updateGroup: (url) => (url.startsWith("/art/") ? "art" : "core"),
+    };
+    const { output, pointer } = await precache(options);
+    const identity = { buildId: GROUP_ARCHIVE_IDENTITY, version: GROUP_ARCHIVE_IDENTITY };
+    const groups = pointer.groups!;
+    expect(
+      groups.map((group) => {
+        const bytes = output.get(buildArchivePartUrl(group, 0).slice(1))!;
+        const { files } = parseBuildArchiveIndex(identity, bytes.byteLength, bytes);
+        return { soundFormat: group.soundFormat, urls: files.map(({ url }) => url) };
+      }),
+    ).toEqual([
+      { soundFormat: undefined, urls: ["/art/sprite.png"] },
+      { soundFormat: "m4a", urls: ["/art/hit.m4a"] },
+      { soundFormat: "ogg", urls: ["/art/hit.ogg", "/art/hum.ogg"] },
+      { soundFormat: undefined, urls: expect.arrayContaining(["/"]) },
+    ]);
+    expect(groups.filter((group) => Object.hasOwn(group, "soundFormat"))).toHaveLength(2);
+    expect(installedPointer("ogg", pointer).groups).toEqual([groups[0], groups[2], groups[3]]);
+
+    const next = await precache({
+      ...options,
+      emitted: { ...emitted, "art/hit.m4a": "m4a hit 2" },
+    });
+    expect(next.pointer.groups![2]).toEqual(groups[2]);
+    expect(next.pointer.groups![1]).not.toEqual(groups[1]);
   });
 
   it("uses the same full groups for first install and omits selected loose outputs", async () => {

@@ -16,6 +16,7 @@ import {
   BUILD_POINTER_URL,
   buildArchivePartUrl,
   type BuildArchiveReference,
+  type BuildGroupReference,
   type BuildManifest,
   buildManifestUrl,
   type BuildPack,
@@ -65,7 +66,8 @@ export interface PrecachePluginOptions {
   readonly packs?: { readonly maxBytes: number };
   // Emit a whole-build archive alongside the current first-install files and manifest.
   readonly wholeBuild?: true;
-  // Assign each canonical offline URL to a stable update group.
+  // Assign each canonical offline URL to a stable update group. Sound alternatives of each format
+  // form their own group under that name, tagged with the format.
   readonly updateGroup?: (url: string) => string;
   // Install from the prebuilt groups and omit selected logical URLs from the loose output.
   readonly groupedFirstInstall?: { readonly archiveOnly: (url: string) => boolean };
@@ -163,15 +165,19 @@ function archiveFiles(
   return { archive: { byteSize, schema: 1, sha256: hash.digest("hex") }, files, parts };
 }
 
+// Sound alternatives split from their named group by format, so a device downloads only its own
+// format's sound bytes (buildRecords' installedPointer).
 function groupedArchives(
   updateGroup: NonNullable<PrecachePluginOptions["updateGroup"]>,
+  alternatives: ReadonlySet<string>,
   listed: ReadonlyMap<string, Uint8Array>,
 ): {
-  archive: BuildArchiveReference;
+  archive: BuildGroupReference;
   files: readonly BuildArchiveFile[];
   source: Uint8Array;
 }[] {
-  const groups = new Map<string, string[]>();
+  // Keyed by the name, then a space and the sound format. Names contain no space.
+  const groups = new Map<string, { soundFormat?: string; urls: string[] }>();
   for (const url of [...listed.keys()].sort()) {
     const id = updateGroup(url);
     if (typeof id !== "string" || !id || /[^A-Za-z0-9._:-]/.test(id)) {
@@ -180,27 +186,38 @@ function groupedArchives(
           "using letters, digits, '.', '_', ':', or '-'",
       );
     }
-    const urls = groups.get(id) ?? [];
-    urls.push(url);
-    groups.set(id, urls);
+    const soundFormat = alternatives.has(url) ? soundFormatOf(url) : undefined;
+    const key = soundFormat === undefined ? id : `${id} ${soundFormat}`;
+    const group = groups.get(key) ?? {
+      ...(soundFormat === undefined ? {} : { soundFormat }),
+      urls: [],
+    };
+    group.urls.push(url);
+    groups.set(key, group);
   }
   if (groups.size > MAX_UPDATE_UNITS) {
     throw new RangeError(
-      `updateGroup selected ${groups.size} groups. Combine groups to stay at or below ${MAX_UPDATE_UNITS}`,
+      `updateGroup selected ${groups.size} groups, counting each sound format separately. ` +
+        `Combine groups to stay at or below ${MAX_UPDATE_UNITS}`,
     );
   }
   const identity = { buildId: GROUP_ARCHIVE_IDENTITY, version: GROUP_ARCHIVE_IDENTITY };
-  return [...groups.keys()].sort().map((id) => {
+  return [...groups.keys()].sort().map((key) => {
+    const { soundFormat, urls } = groups.get(key)!;
     try {
       const { archive, files, parts } = archiveFiles(
         identity,
         listed,
-        groups.get(id)!,
+        urls,
         BUILD_ARCHIVE_PART_BYTES,
       );
-      return { archive, files, source: parts[0]! };
+      return {
+        archive: { ...archive, ...(soundFormat === undefined ? {} : { soundFormat }) },
+        files,
+        source: parts[0]!,
+      };
     } catch (error) {
-      throw new TypeError(`update group ${JSON.stringify(id)}: ${(error as Error).message}`, {
+      throw new TypeError(`update group ${JSON.stringify(key)}: ${(error as Error).message}`, {
         cause: error,
       });
     }
@@ -464,7 +481,7 @@ export function precachePlugin({
         let grouped: ReturnType<typeof groupedArchives> | undefined;
         if (updateGroup !== undefined) {
           try {
-            grouped = groupedArchives(updateGroup, listed);
+            grouped = groupedArchives(updateGroup, new Set(Object.values(sounds).flat()), listed);
           } catch (error) {
             this.error(`precache: ${(error as Error).message}`);
           }
