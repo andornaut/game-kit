@@ -3,7 +3,8 @@
 One controller runs each required-file attempt and retries only on an explicit Retry. Progress
 geometry is shared by the Phaser and pre-script DOM bars. The loading-failure alert uses shared
 text and stays readable without game fonts or art; games may configure its presentation, and its
-type and colours follow the uiTheme text roles and slots where the game sets them.
+type and colours follow the uiTheme text roles and slots where the game sets them. A configured
+panel can draw a bevel highlight row under its top border.
 
 Reference: [Required loading failures](../../README.md#required-loading-failures).
 

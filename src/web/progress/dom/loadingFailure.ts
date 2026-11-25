@@ -33,6 +33,9 @@ export interface LoadingFailurePresentation<Width extends number | "content" = n
     readonly borderWidthPx: number;
     readonly lipHeightPx: number;
     readonly shadowOffsetPx: number;
+    // The bevel row under the top border, in palette.panelHighlight. Give both or neither; unset,
+    // the panel draws no highlight.
+    readonly highlightHeightPx?: number;
   };
   readonly text: {
     readonly title: LoadingFailureTextStyle;
@@ -59,6 +62,7 @@ export interface LoadingFailurePresentation<Width extends number | "content" = n
     readonly shadow: string;
     readonly highlight: string;
     readonly shade: string;
+    readonly panelHighlight?: string;
   };
 }
 
@@ -208,6 +212,16 @@ function presentationNumbers<K extends string>(
   ) as Record<K, number>;
 }
 
+function hexColour(name: string, colour: unknown): string {
+  if (
+    typeof colour !== "string" ||
+    !/^#(?:[\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/i.test(colour)
+  ) {
+    throw new RangeError(`presentation.palette.${name} must be a hex colour`);
+  }
+  return colour;
+}
+
 function checkedPresentation(value: Presentation | undefined): Presentation | undefined {
   if (value === undefined) {
     return undefined;
@@ -292,19 +306,25 @@ function checkedPresentation(value: Presentation | undefined): Presentation | un
   const paletteRecord = presentationRecord(record.palette);
   const palette = Object.fromEntries(
     ["panel", "text", "action", "actionText", "border", "lip", "shadow", "highlight", "shade"].map(
-      (name) => {
-        const colour = paletteRecord[name];
-        if (
-          typeof colour !== "string" ||
-          !/^#(?:[\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/i.test(colour)
-        ) {
-          throw new RangeError(`presentation.palette.${name} must be a hex colour`);
-        }
-        return [name, colour];
-      },
+      (name) => [name, hexColour(name, paletteRecord[name])],
     ),
   ) as unknown as LoadingFailurePresentation["palette"];
-  return { action, palette, panel, text };
+  const panelRecord = presentationRecord(record.panel);
+  const highlightColour = paletteRecord.panelHighlight;
+  if ((panelRecord.highlightHeightPx === undefined) !== (highlightColour === undefined)) {
+    throw new RangeError(
+      "presentation.panel.highlightHeightPx and presentation.palette.panelHighlight go together",
+    );
+  }
+  if (panelRecord.highlightHeightPx === undefined) {
+    return { action, palette, panel, text };
+  }
+  return {
+    action,
+    palette: { ...palette, panelHighlight: hexColour("panelHighlight", highlightColour) },
+    panel: { ...panel, ...presentationNumbers("panel", ["highlightHeightPx"], panelRecord) },
+    text,
+  };
 }
 
 // Mount in a visible, non-inert caller-owned parent outside any font/art reveal gate. The
@@ -437,6 +457,9 @@ export function mountLoadingFailure(
         border: `${panel.borderWidthPx}px solid`,
         "border-color": border,
         "box-shadow": [
+          ...(panel.highlightHeightPx === undefined
+            ? []
+            : [`inset 0 ${panel.highlightHeightPx}px 0 ${palette.panelHighlight}`]),
           `inset 0 -${panel.lipHeightPx}px 0 ${palette.lip}`,
           `${panel.shadowOffsetPx}px ${panel.shadowOffsetPx}px 0 ${palette.shadow}`,
         ].join(", "),

@@ -68,4 +68,24 @@ describe("crash.css", () => {
   ])("falls back from the slot in %s", (declaration) => {
     expect(flat).toContain(declaration);
   });
+
+  // Focus fills the summary row, as it does a button, in forced colours too; nothing outlines it.
+  it("fills the focused summary row and never outlines it", () => {
+    const summary = [...flat.matchAll(/\.crash-details summary:focus-visible \{([^{}]*)\}/g)].map(
+      ([, body]) => body ?? "",
+    );
+    expect(summary).toHaveLength(2);
+    const [base, forced] = summary as [string, string];
+    expect(base).toContain("outline: none");
+    expect(base).toContain(
+      "background-color: var(--ui-colour-button-focus-face, var(--ui-colour-text-primary, var(--crash-text)))",
+    );
+    expect(base).toContain(
+      "color: var(--ui-colour-button-focus-text, var(--ui-colour-card-face, var(--crash-background)))",
+    );
+    expect(forced).toContain("background-color: Highlight");
+    expect(forced).toContain("color: HighlightText");
+    expect(forced).toContain("forced-color-adjust: none");
+    expect(flat).not.toMatch(/outline: (?!none)/);
+  });
 });

@@ -129,9 +129,15 @@
   cursor: pointer;
 }
 
+/* Focus fills the summary row, as it does a button, with no outline: the focus slots, else the
+   row's own text and backdrop swapped. */
 .crash-details summary:focus-visible {
-  outline: 3px double var(--crash-button-face);
-  outline-offset: 2px;
+  outline: none;
+  background-color: var(
+    --ui-colour-button-focus-face,
+    var(--ui-colour-text-primary, var(--crash-text))
+  );
+  color: var(--ui-colour-button-focus-text, var(--ui-colour-card-face, var(--crash-background)));
 }
 
 @media (forced-colors: active) {
@@ -144,8 +150,9 @@
   }
 
   .crash-details summary:focus-visible {
-    outline: 2px solid Highlight;
-    outline-offset: 2px;
+    forced-color-adjust: none;
+    background-color: Highlight;
+    color: HighlightText;
   }
 }
 

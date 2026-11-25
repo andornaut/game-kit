@@ -657,7 +657,14 @@ try {
       assert(entry.focus && !entry.focusVisible);
       assert.equal(entry.outline.style, "none");
     }
-    for (const entry of [keyboardCancel, keyboardReturn, pressed, crashButton, selectedFocused]) {
+    for (const entry of [
+      keyboardCancel,
+      keyboardReturn,
+      pressed,
+      crashButton,
+      crashSummary,
+      selectedFocused,
+    ]) {
       assert(entry.focus && entry.focusVisible);
       assert.equal(entry.outline.style, "none");
     }
@@ -670,8 +677,11 @@ try {
     assert.deepEqual(crashButton.geometry, crashIdle.geometry);
     assert.equal(crashButton.border, crashIdle.border);
     assert.equal(crashButton.shadow, crashIdle.shadow);
-    assert.equal(crashSummary.outline.style, "double");
-    assert.equal(crashSummary.outline.colour, "rgb(237, 183, 99)");
+    // The summary row fills with its text and backdrop swapped while focused, and only then.
+    assert.equal(crashSummary.background, "rgb(241, 219, 167)");
+    assert.equal(crashSummary.colour, "rgb(62, 53, 43)");
+    assert.equal(pointerSummary.background, "rgba(0, 0, 0, 0)");
+    assert.equal(pointerSummary.colour, "rgb(241, 219, 167)");
     for (const entry of [pressed, keyboardReturn, pointerReturn]) {
       assert.deepEqual(entry.geometry, ordinary.geometry);
       assert.equal(entry.border, ordinary.border);
@@ -689,14 +699,19 @@ try {
     assert.equal(forcedIcon.iconOpacity, "0.65");
     assert.notEqual(disabled.opacity, ordinary.opacity);
     assert.deepEqual(crashSummary.geometry, pointerSummary.geometry);
-    for (const entry of [forcedShared, forcedCrashButton, forcedFallback, forcedIcon]) {
+    for (const entry of [
+      forcedShared,
+      forcedCrashButton,
+      forcedSummary,
+      forcedFallback,
+      forcedIcon,
+    ]) {
       assert(entry.focus && entry.focusVisible);
       assert.equal(entry.outline.style, "none");
       assert.equal(entry.forcedAdjustment, "none");
       assert.equal(entry.background, highlight);
       assert.equal(entry.colour, highlightText);
     }
-    assert.deepEqual(forcedSummary.outline, { colour: highlight, style: "solid", width: "2px" });
     assert.deepEqual(forcedShared.geometry, ordinary.geometry);
 
     // The kit screens outside the UI layer take the uiTheme roles and slots from the document
@@ -859,6 +874,8 @@ try {
     await page.keyboard.press("Shift+Tab");
     await page.keyboard.press("Tab");
     const focusedReload = await screenStyles([reloadButton]);
+    await page.keyboard.press("Shift+Tab");
+    const focusedSummary = await screenStyles([".crash-details summary"]);
     await page.locator("#scaled button").focus();
     await nextPaint(page);
     const focusedRetry = await screenStyles(["#scaled button"]);
@@ -870,6 +887,7 @@ try {
     await page.mouse.move(1, 1);
     await page.mouse.up();
     console.log(JSON.stringify({ focusedReload, focusedRetry, pressedReload, themed, unthemed }));
+    console.log(JSON.stringify({ focusedSummary }));
     // Each screen's own type and colours, identical to the screens before they took the theme.
     assert.deepEqual(unthemed, {
       ".crash": "16px/24px 400 rgb(241, 219, 167) on rgb(62, 53, 43) in rgb(241, 219, 167)",
@@ -912,6 +930,11 @@ try {
       "#notice h2": "28px/32px 800 rgb(16, 32, 48) on rgb(224, 240, 255) in rgb(16, 32, 48)",
       "#notice p": "15px/20px 500 rgb(16, 32, 48) on rgb(224, 240, 255) in rgb(16, 32, 48)",
     });
+    // The focused summary row takes the focus slots as its fill.
+    assert.match(
+      focusedSummary[".crash-details summary"]!,
+      / rgb\(240, 224, 208\) on rgb\(32, 48, 64\) in /,
+    );
     assert.deepEqual(focusedReload, {
       ".crash-panel > .crash-button":
         "17px/22px 600 rgb(240, 224, 208) on rgb(32, 48, 64) in rgb(33, 27, 20)",

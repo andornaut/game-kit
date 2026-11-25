@@ -37,6 +37,8 @@ geometry only.
 - Kit screens outside the UI layer, the crash screen and the loading failure card, take the text
   roles and colour slots from an ancestor such as the document root, each with its own type and
   colours as the fallback. The crash screen does this in CSS alone, so it needs no game code.
+  Its details summary shows focus as a fill, from the focus slots, else its text and backdrop
+  swapped, with no outline.
 - `.ui-control-row` and `.ui-control-copy` remain for one control beside its copy in flow, with no
   press outsets.
 

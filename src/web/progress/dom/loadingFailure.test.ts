@@ -166,6 +166,44 @@ describe("mountLoadingFailure", () => {
     expect(parent.children).toHaveLength(0);
   });
 
+  it("draws the panel highlight row above the lip only while the presentation gives one", () => {
+    const parent = document.createElement("div");
+    const plain = presentationFixture();
+    const highlighted: LoadingFailurePresentation = {
+      ...plain,
+      palette: { ...plain.palette, panelHighlight: "#fff8e7" },
+      panel: { ...plain.panel, highlightHeightPx: 2 },
+    };
+    const view = mountLoadingFailure({ onRetry: vi.fn(), presentation: plain }, parent);
+    const shadow = () => view.element.style.getPropertyValue("box-shadow");
+    try {
+      const unset = shadow();
+      expect(unset).toBe("inset 0 -4px 0 #e4a672, 4px 4px 0 #181425");
+      view.setPresentation(highlighted);
+      expect(shadow()).toBe(`inset 0 2px 0 #fff8e7, ${unset}`);
+      expect(view.element.style.getPropertyPriority("box-shadow")).toBe("important");
+      view.setPresentation(plain);
+      expect(shadow()).toBe(unset);
+    } finally {
+      view.dispose();
+    }
+    const mounted = mountLoadingFailure({ body: "Unsupported", presentation: highlighted }, parent);
+    const mountedShadow = mounted.element.style.getPropertyValue("box-shadow");
+    expect(mountedShadow).toMatch(/^inset 0 2px 0 #fff8e7, /);
+    mounted.dispose();
+    for (const invalid of [
+      { ...plain, panel: { ...plain.panel, highlightHeightPx: 2 } },
+      { ...plain, palette: { ...plain.palette, panelHighlight: "#fff8e7" } },
+      { ...highlighted, panel: { ...highlighted.panel, highlightHeightPx: -1 } },
+      { ...highlighted, panel: { ...highlighted.panel, highlightHeightPx: NaN } },
+      { ...highlighted, palette: { ...highlighted.palette, panelHighlight: "white" } },
+    ]) {
+      const mount = () => mountLoadingFailure({ onRetry: vi.fn(), presentation: invalid }, parent);
+      expect(mount).toThrow(RangeError);
+    }
+    expect(parent.children).toHaveLength(0);
+  });
+
   it("switches between intrinsic and numeric widths on the same hardened Retry", () => {
     const parent = document.createElement("div");
     const numeric = presentationFixture();
