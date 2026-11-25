@@ -142,3 +142,4 @@ in `src/web/ui/dom/slider.ts` with `slider.css`, in the form row list's grid.
 | gk-0062 | Close Chibi's shared component gaps                                     | [gk-0062.md](../work/gk-0062.md) |
 | gk-0063 | Add a panel highlight token and fill crash details focus                | [gk-0063.md](../work/gk-0063.md) |
 | gk-0064 | Place DOM action groups, form rows and sliders on the game grid         | [gk-0064.md](../work/gk-0064.md) |
+| gk-0065 | Fix themed crash details contrast and inset the HUD disc ring           | [gk-0065.md](../work/gk-0065.md) |
