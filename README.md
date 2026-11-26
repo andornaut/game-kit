@@ -58,6 +58,12 @@ Apply the mapping to JavaScript and TypeScript imports, test mocks and configura
 - Additive. A placed form row list takes a height per row: `rows.place(context, [{ element, height }])` and `FormRowsRow.height` in `formRowsGeometry`, in whole units. A row without one is a slider's `layout.height` or the layout's `height`. Each row's track, padding, icon, switch, lane, art-locked sizes and press dip follow its own height, so rows of different heights share one list instead of one list per height. Lists without per-row heights render as in 0.90.0.
 - Changed. A one-action row's face is centred in the whole row, the list's padding included, with the odd unit right and below; it was centred inside the padding. A one-action row in a list with unequal left and right, or top and bottom, padding moves its face, and the face must fit the row rather than its content. In CSS the row takes no padding, and on a placed list `--ui-form-action-top` is from the row's top. A game that gave its one-action row an unpadded list of its own can place it in the shared list. Rows without an action are unchanged.
 
+## Migration to 0.92.0
+
+The precache plugin now rejects `fetch-json-data-v1` with grouped or whole-build archive
+updates. Use per-file updates to keep that profile. For archive updates, use the URL-array
+form only for JSON families that meet its URL-independent response contract.
+
 ## Migration to 0.78.0
 
 Breaking. `runtime/web/pwa/dom/launch` no longer exports the deprecated
