@@ -72,3 +72,4 @@ config refuses to load while a shipped module is in no area or in two.
 | gk-0052 | Refactor for structure, encapsulation and simplicity                         | [gk-0052.md](../work/gk-0052.md) |
 | gk-0057 | Retire browserLaunchContext, add kit Makefile targets and split createLaunch | [gk-0057.md](../work/gk-0057.md) |
 | gk-0060 | Guard source bands with ESLint and retire the import check                   | [gk-0060.md](../work/gk-0060.md) |
+| gk-0073 | Refuse imports whose specifiers are all inline types                         | [gk-0073.md](../work/gk-0073.md) |

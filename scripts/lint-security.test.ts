@@ -73,3 +73,18 @@ it.each([
   expect(result!.messages.some(({ fatal }) => fatal)).toBe(false);
   expect(zones.length > 0).toBe(banned);
 });
+
+it.each([
+  { banned: true, source: 'import { type Rect } from "./rect.ts";' },
+  { banned: false, source: 'import type { Rect } from "./rect.ts";' },
+  { banned: false, source: 'import { type Rect, rectsOverlap } from "./rect.ts";' },
+])(
+  "refuses an import whose specifiers are all inline types: $source",
+  async ({ banned, source }) => {
+    const eslint = new ESLint({ cwd: root });
+    const [result] = await eslint.lintText(source, { filePath: join(root, "src/probe.ts") });
+    const rule = "@typescript-eslint/no-import-type-side-effects";
+    expect(result!.messages.some(({ fatal }) => fatal)).toBe(false);
+    expect(result!.messages.some(({ ruleId }) => ruleId === rule)).toBe(banned);
+  },
+);

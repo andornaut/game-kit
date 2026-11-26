@@ -221,12 +221,17 @@ export default defineConfig(
       ],
     },
   },
-  // No import cycles: a module in a cycle can run before what it imports has loaded. Type-only
-  // imports are erased at build time, so they never form one.
+  // No import cycles: a module in a cycle can run before what it imports has loaded. `import type`
+  // is erased at build time, so it never forms one. Under verbatimModuleSyntax an import whose
+  // specifiers are all inline types still loads its module, and no-cycle does not see that edge,
+  // so such imports must be written as `import type`.
   {
     ...IMPORT_X,
     files: [...KIT_FILES, ...TOOLING_FILES],
-    rules: { "import-x/no-cycle": "error" },
+    rules: {
+      "@typescript-eslint/no-import-type-side-effects": "error",
+      "import-x/no-cycle": "error",
+    },
   },
   // Tests and tooling: they verify or produce what ships rather than being it.
   {
