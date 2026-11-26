@@ -71,6 +71,10 @@ function sameIdentity<T>(a: T, b: T): boolean {
   return a === b || Object.is(a, b);
 }
 
+function positiveSeconds(seconds: number): boolean {
+  return Number.isFinite(seconds) && seconds > 0;
+}
+
 function hasContact<SupportId, ActorId>(
   contacts: readonly StandingContact<SupportId, ActorId>[],
   contact: StandingContact<SupportId, ActorId>,
@@ -95,7 +99,10 @@ export function beginCrumblingStep<SupportId, ActorId>(
   if (world.begunAtSeconds === request.timeSeconds) {
     return { status: "available", value: world };
   }
-  const definitions = new Map(context.definitions.map((d) => [d.supportId, d]));
+  const definitions = new Map<SupportId, CrumblingDefinition<SupportId>>();
+  for (const definition of context.definitions) {
+    definitions.set(definition.supportId, definition);
+  }
   if (definitions.size !== context.definitions.length) {
     throw new RangeError("Duplicate crumbling support identity");
   }
@@ -104,9 +111,8 @@ export function beginCrumblingStep<SupportId, ActorId>(
     const definition = definitions.get(support.supportId);
     if (
       !definition ||
-      ![definition.profile.warningSeconds, definition.profile.absentSeconds].every(
-        (n) => Number.isFinite(n) && n > 0,
-      ) ||
+      !positiveSeconds(definition.profile.warningSeconds) ||
+      !positiveSeconds(definition.profile.absentSeconds) ||
       (support.phase.kind === "warning" && !Number.isFinite(support.phase.removeAtSeconds)) ||
       (support.phase.kind === "absent" && !Number.isFinite(support.phase.restoreAfterSeconds))
     ) {
