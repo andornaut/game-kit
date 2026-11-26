@@ -53,3 +53,4 @@ Reference: [Build output](../../README.md#build-output).
 | gk-0053 | Opt out of decoded group copies and require DecompressionStream at launch   | [gk-0053.md](../work/gk-0053.md) |
 | gk-0076 | Recover audio groups for the active installed build                         | [gk-0076.md](../work/gk-0076.md) |
 | gk-0077 | Reject the JSON-data reuse profile with archive updates                     | [gk-0077.md](../work/gk-0077.md) |
+| gk-0082 | Diagnose first-open update manifest retries                                 | [gk-0082.md](../work/gk-0082.md) |
