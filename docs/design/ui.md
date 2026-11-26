@@ -185,4 +185,4 @@ in `src/web/ui/dom/slider.ts` with `slider.css`, in the form row list's grid.
 | gk-0070 | Let form rows and sliders play the game's refusal cue                               | [gk-0070.md](../work/gk-0070.md) |
 | gk-0071 | Keep art sizes and add row gaps, one-action rows and press dips to placed form rows | [gk-0071.md](../work/gk-0071.md) |
 | gk-0072 | Place rows of different heights in one list and centre one-action faces in the row  | [gk-0072.md](../work/gk-0072.md) |
-| gk-0074 | Skip pending artwork in modal keyboard navigation                                  | [gk-0074.md](../work/gk-0074.md) |
+| gk-0074 | Skip pending artwork in modal keyboard navigation                                   | [gk-0074.md](../work/gk-0074.md) |

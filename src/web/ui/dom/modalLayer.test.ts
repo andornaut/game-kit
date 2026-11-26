@@ -513,6 +513,21 @@ describe("createModalLayer", () => {
     expect(document.activeElement).toBe(parts.first);
   });
 
+  it("skips controls with pending artwork until their layer is ready", () => {
+    const pending = document.createElement("div");
+    pending.setAttribute("data-ui-pending", "");
+    const action = document.createElement("button");
+    pending.append(action);
+    parts.last.before(pending);
+    layer.open({ focus: parts.first }, parts.dialog);
+
+    key("Tab");
+    expect(document.activeElement).toBe(parts.last);
+    pending.removeAttribute("data-ui-pending");
+    key("Tab", { shiftKey: true });
+    expect(document.activeElement).toBe(action);
+  });
+
   it("clicks the focused control once per press and keeps the key from the page", () => {
     const click = vi.fn();
     parts.first.addEventListener("click", click);

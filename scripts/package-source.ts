@@ -32,30 +32,41 @@ export function sourceCommit(env: NodeJS.ProcessEnv): string {
 export function packageSnapshot(env: NodeJS.ProcessEnv, root: string, destination: string): string {
   const revision = sourceCommit(env);
   const staging = mkdtempSync(join(tmpdir(), "game-kit-package-"));
-  mkdirSync(destination, { recursive: true });
-  execFileSync(process.execPath, ["scripts/release-build.ts", staging], {
-    cwd: root,
-    env,
-    stdio: "inherit",
-  });
-  writeFileSync(join(staging, "SOURCE_COMMIT"), `${revision}\n`);
-  const packed = execFileSync(
-    "npm",
-    ["pack", "--offline", "--ignore-scripts", "--json", "--pack-destination", resolve(destination)],
-    { cwd: staging, env, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
-  );
-  const metadata = JSON.parse(packed) as { filename: string; version: string }[];
-  const item = metadata[0]!;
-  const filename = `game-kit-${item.version}.tgz`;
-  const artifact = join(destination, filename);
-  renameSync(join(destination, item.filename), artifact);
-  writeFileSync(join(destination, "pack.json"), packed);
-  writeFileSync(join(destination, "SOURCE_COMMIT"), `${revision}\n`);
-  writeFileSync(
-    join(destination, "SHA256SUMS"),
-    `${createHash("sha256").update(readFileSync(artifact)).digest("hex")}  ${filename}\n`,
-  );
-  return artifact;
+  try {
+    mkdirSync(destination, { recursive: true });
+    execFileSync(process.execPath, ["scripts/release-build.ts", staging], {
+      cwd: root,
+      env,
+      stdio: "inherit",
+    });
+    writeFileSync(join(staging, "SOURCE_COMMIT"), `${revision}\n`);
+    const packed = execFileSync(
+      "npm",
+      [
+        "pack",
+        "--offline",
+        "--ignore-scripts",
+        "--json",
+        "--pack-destination",
+        resolve(destination),
+      ],
+      { cwd: staging, env, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
+    );
+    const metadata = JSON.parse(packed) as { filename: string; version: string }[];
+    const item = metadata[0]!;
+    const filename = `game-kit-${item.version}.tgz`;
+    const artifact = join(destination, filename);
+    renameSync(join(destination, item.filename), artifact);
+    writeFileSync(join(destination, "pack.json"), packed);
+    writeFileSync(join(destination, "SOURCE_COMMIT"), `${revision}\n`);
+    writeFileSync(
+      join(destination, "SHA256SUMS"),
+      `${createHash("sha256").update(readFileSync(artifact)).digest("hex")}  ${filename}\n`,
+    );
+    return artifact;
+  } finally {
+    rmSync(staging, { force: true, recursive: true });
+  }
 }
 
 export function packageSource(env: NodeJS.ProcessEnv, root: string, destination: string): string {

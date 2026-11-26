@@ -59,10 +59,9 @@ const FOCUSABLE = [
 ].join(", ");
 
 const reachable = (element: HTMLElement) =>
-  element.tabIndex >= 0 && element.closest("[hidden], [inert]") === null;
+  element.tabIndex >= 0 && element.closest("[hidden], [inert], [data-ui-pending]") === null;
 
-// The controls Tab reaches in dialog, in document order: focusable, not tabindex -1 and not in a
-// hidden or inert subtree.
+// The controls Tab reaches in the dialog, in document order.
 export function focusTargets(dialog: HTMLElement): HTMLElement[] {
   return [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(reachable);
 }
