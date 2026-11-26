@@ -75,3 +75,4 @@ config refuses to load while a shipped module is in no area or in two.
 | gk-0073 | Refuse imports whose specifiers are all inline types                         | [gk-0073.md](../work/gk-0073.md) |
 | gk-0075 | Remove temporary package staging after each attempt                          | [gk-0075.md](../work/gk-0075.md) |
 | gk-0078 | Validate browser harness mode flags                                          | [gk-0078.md](../work/gk-0078.md) |
+| gk-0079 | Audit GameKit documentation against current source                           | [gk-0079.md](../work/gk-0079.md) |
