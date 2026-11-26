@@ -819,6 +819,8 @@ The page installer and the router apply the same response rules (`dom/verifiedJs
 
 A family may opt into `{ urls, responseProfile: "fetch-json-data-v1" }` instead of the URL array. Use this only for public JSON interpreted as data without dependencies on its response URL, per-URL headers or relative body URLs. The profile also accepts browser-decoded `zstd`, and its metadata changes the version.
 
+The JSON-data response profile requires per-file updates. If you use `updateGroup` or `wholeBuild`, remove the profile from your JSON family selection or switch to per-file updates before upgrading.
+
 The router answers an exact canonical same-origin GET data request (empty destination, nonnavigation mode, no Range or If-Range header) for a profile URL with the verified body and only `Content-Type: application/json; charset=utf-8` and `X-Content-Type-Options: nosniff`. Navigation and every other request context for a profile URL get that URL's own original response from the network, never the body alias. A profile URL with a query or another noncanonical form is refused. This mechanism provides neither parsed-object caching nor a download-time guarantee.
 
 ## Migration to 0.44.0

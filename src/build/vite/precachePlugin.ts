@@ -85,6 +85,7 @@ export interface PrecachePluginOptions {
   // Requires updateGroup without emitUpdateGroupRecipes.
   readonly omitDecodedGroupCopies?: true;
   // Explicit public, URL-independent JSON families selected from final emitted discovery.
+  // The fetch-json-data-v1 profile requires per-file updates.
   readonly verifiedJsonBodies?: (files: HashedFiles) => readonly VerifiedJsonFamilySelection[];
   // The hashed files beyond what the page links, read once the bundle is written: bundleFile
   // gives a build output file's bytes by its URL. Throws to fail the build.
@@ -536,6 +537,14 @@ export function precachePlugin({
                   const descriptor = Array.isArray(selection)
                     ? undefined
                     : (selection as Exclude<VerifiedJsonFamilySelection, readonly string[]>);
+                  if (
+                    descriptor?.responseProfile === "fetch-json-data-v1" &&
+                    (updateGroup !== undefined || wholeBuild === true)
+                  ) {
+                    throw new Error(
+                      "precache: fetch-json-data-v1 requires per-file updates; remove the profile or disable archive updates",
+                    );
+                  }
                   const urls = descriptor?.urls ?? (selection as readonly string[]);
                   const body = listed.get(urls[0] ?? "");
                   if (body === undefined) {

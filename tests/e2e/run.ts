@@ -6,6 +6,7 @@
 // whose first install takes over five minutes.
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { parseArgs } from "node:util";
 
 import { chromium, type Page } from "playwright-core";
 
@@ -20,12 +21,31 @@ import type { E2eState } from "./fixture/play/main.ts";
 import { POLICY, SAVE_MS } from "./fixture/policy.ts";
 import { type RequestRecord, startServer } from "./server.ts";
 
-const LONG = process.argv.includes("--long");
-const ARCHIVE_MODE = process.argv.includes("--grouped")
-  ? "grouped"
-  : process.argv.includes("--whole-build")
-    ? "whole-build"
-    : undefined;
+function readMode() {
+  try {
+    const { values } = parseArgs({
+      options: {
+        grouped: { type: "boolean" },
+        long: { type: "boolean" },
+        "whole-build": { type: "boolean" },
+      },
+    });
+    if (values.grouped && values["whole-build"]) {
+      throw new Error("Choose either --grouped or --whole-build.");
+    }
+    if (values.long && (values.grouped || values["whole-build"])) {
+      throw new Error("--long is supported only in per-file mode.");
+    }
+    return values;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(2);
+  }
+}
+
+const mode = readMode();
+const LONG = mode.long === true;
+const ARCHIVE_MODE = mode.grouped ? "grouped" : mode["whole-build"] ? "whole-build" : undefined;
 const SIZE: FixtureSize = LONG
   ? { fileBytes: 850_000, files: 80 }
   : { fileBytes: 16_000, files: 80 };

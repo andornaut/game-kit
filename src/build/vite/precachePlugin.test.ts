@@ -888,6 +888,23 @@ describe("precachePlugin", { timeout: 60_000 }, () => {
     expect(data.manifest.files).toEqual(legacy.manifest.files);
   });
 
+  it.each([{ updateGroup: () => "all" }, { wholeBuild: true }] as const)(
+    "rejects the fetch-json-data-v1 profile in archive mode %o",
+    async (archive) => {
+      await expect(
+        precache({
+          ...archive,
+          hashedFiles: () => ({ sounds: {}, urls: ["/a.json", "/b.json"] }),
+          lateEmitted: { "a.json": "{}", "b.json": "{}" },
+          root: site("icon"),
+          verifiedJsonBodies: () => [
+            { responseProfile: "fetch-json-data-v1", urls: ["/a.json", "/b.json"] },
+          ],
+        }),
+      ).rejects.toThrow(/fetch-json-data-v1 requires per-file updates/);
+    },
+  );
+
   it("builds one self-contained classic worker with no manifest written in", async () => {
     const root = site("icon");
     const shared = fileURLToPath(new URL("../../web/pwa/buildContract.ts", import.meta.url));
