@@ -8,6 +8,6 @@ Reference: [Modules and environments](../../README.md#modules-and-environments),
 
 ## Work items
 
-| ID      | Title                                   | Link                             |
-| ------- | --------------------------------------- | -------------------------------- |
+| ID      | Title                                    | Link                             |
+| ------- | ---------------------------------------- | -------------------------------- |
 | gk-0081 | Improve a measured game runtime hot path | [gk-0081.md](../work/gk-0081.md) |
