@@ -160,15 +160,15 @@ class FakeDocument extends EventTarget {
 function fixture({
   archiveStore,
   groupStore,
+  onUpdateProgress,
   soundFormat,
   updateProgress,
-  onUpdateProgress,
 }: {
   archiveStore?: BuildArchiveStore;
   groupStore?: BuildGroupStore;
+  onUpdateProgress?: (value: UpdateProgress) => void;
   soundFormat?: string;
   updateProgress?: UpdateProgress[];
-  onUpdateProgress?: (value: UpdateProgress) => void;
 } = {}) {
   const container = new FakeContainer();
   const visibility = new FakeDocument();
