@@ -23,6 +23,7 @@ import {
   type InstalledManifest,
   installedManifest,
   installedPointer,
+  isBuildVersion,
   LaunchError,
   type LaunchFailure,
   type LaunchProgress,
@@ -34,7 +35,6 @@ import {
   parseBuildManifest,
   parseBuildPointer,
   parseProgressCarry,
-  type ProgressCarry,
   progressCarryText,
   type ProgressCounts,
   requiredUpdateCandidate,
@@ -118,6 +118,31 @@ export interface LaunchContext {
 // update" message, and launch retries when the device reconnects and the page comes into view.
 export type RequiredUpdateState = "unavailable" | "updating";
 
+export type UpdateProgress =
+  | { readonly phase: "idle" }
+  | { readonly phase: "preparing"; readonly version: string }
+  | { readonly phase: "verifying"; readonly version: string }
+  | { readonly phase: "ready"; readonly version: string }
+  | { readonly phase: "failed"; readonly version: string }
+  | { readonly phase: "applied"; readonly version: string }
+  | { readonly phase: "applyFailed"; readonly version: string }
+  | {
+      readonly phase: "transferring";
+      readonly version: string;
+      readonly receivedBytes: number;
+      readonly totalBytes: number;
+    }
+  | {
+      readonly phase: "applying";
+      readonly version: string;
+      readonly step: "save" | "verify" | "activate" | "reload";
+    }
+  | {
+      readonly phase: "booting";
+      readonly version: string;
+      readonly counts?: { readonly done: number; readonly total: number };
+    };
+
 export interface LaunchOptions {
   readonly onFailure: (failure: LaunchFailure) => void;
   // A first install this device cannot complete: called once before run() resolves "play", and
@@ -126,6 +151,9 @@ export interface LaunchOptions {
   readonly onProgress: (progress: LaunchProgress) => void;
   // Reported only after requireNewer().
   readonly onRequireNewer?: (state: RequiredUpdateState) => void;
+  // Alternative progress reporting for staging and explicit Apply. The offered build version
+  // identifies Apply across documents. The new document renders its own progress view.
+  readonly onUpdateProgress?: (progress: UpdateProgress) => void;
   readonly onUpdateReady: (offer: UpdateOffer) => void;
   readonly onUpdateState: (state: UpdateState) => void;
   // The router worker's URL, registered with scope "/".
@@ -166,12 +194,33 @@ const MAX_RESTARTS = 3;
 const LAUNCH_RELOAD_KEY = "game-kit:launch-reload";
 const LAUNCH_PROGRESS_KEY = "game-kit:launch-progress";
 
-function readCarry(session: SessionLike | undefined): ProgressCarry | undefined {
+function readSession(session: SessionLike | undefined, key: string): string | null | undefined {
   try {
-    return parseProgressCarry(session?.getItem(LAUNCH_PROGRESS_KEY));
+    return session?.getItem(key);
   } catch {
     return undefined;
   }
+}
+
+function takeUpdateCarry(
+  session: SessionLike | undefined,
+  text: string | null | undefined,
+): string | undefined {
+  if (session === undefined || text == null) {
+    return undefined;
+  }
+  try {
+    const record: { updateVersion?: unknown } | null = JSON.parse(text);
+    const version = record?.updateVersion;
+    if (typeof version === "string" && isBuildVersion(version)) {
+      // If the marker cannot be consumed, ordinary boot progress is safe on every reload.
+      session.removeItem(LAUNCH_PROGRESS_KEY);
+      return version;
+    }
+  } catch {
+    // Session storage is optional.
+  }
+  return undefined;
 }
 
 // Calls a game callback, logging instead of propagating its failure.
@@ -359,6 +408,10 @@ export function createLaunch(
   let progress: ProgressCounts = { bootBytes: 0, received: 0, recorded: false, total: 0 };
   let lastValue = 0;
   let ready = false;
+  let bootingUpdate: string | undefined;
+  const reportUpdateProgress = (next: UpdateProgress) => {
+    notify("Update progress", () => options.onUpdateProgress?.(next));
+  };
   const report = (phase: LaunchProgress["phase"], bootFraction: number) => {
     const next = launchProgress(progress, lastValue, phase, bootFraction);
     lastValue = next.value;
@@ -391,6 +444,7 @@ export function createLaunch(
     reloading = true;
     cancelDiscovery();
     cancelRetry();
+    cancelEarlyPointer();
     aborts.abort();
     page.location.reload();
   };
@@ -672,7 +726,7 @@ export function createLaunch(
     return "play";
   };
 
-  // K4 reclaim, then the launch update check. Reclaim keeps the active and
+  // Discovery can read ahead, but staging waits for K4 reclaim. Reclaim keeps the active and
   // staged builds, each build a live window's pin names and this document's build.
   const afterLaunch = async () => {
     try {
@@ -683,7 +737,11 @@ export function createLaunch(
       console.warn("Could not reclaim unused builds.", error);
     }
     discoveryReady = true;
-    check(false);
+    if (required) {
+      advanceRequired(true);
+    } else if (visible || !earlyPointerStarted) {
+      check(false);
+    }
   };
 
   // Background updates: discovery, staging and the in-session offer.
@@ -696,6 +754,41 @@ export function createLaunch(
   let staging: Promise<void> | undefined;
   let updateState: UpdateState = { phase: "idle" };
   const offered = new Set<string>();
+
+  // Only the initial discovery attempt can consume this observation. No staged or active
+  // metadata is touched by the read, and cancellation also invalidates a settled observation.
+  let earlyPointerStarted = false;
+  let earlyPointer:
+    | {
+        readonly startup: BuildState;
+        readonly started: number;
+        readonly result: Promise<BuildPointer>;
+        readonly request: AbortController;
+      }
+    | undefined;
+  const cancelEarlyPointer = () => {
+    earlyPointer?.request.abort();
+    earlyPointer = undefined;
+  };
+  const startEarlyPointer = (startup: BuildState) => {
+    earlyPointerStarted = true;
+    const request = new AbortController();
+    const timer = page.timers.setTimeout(() => request.abort(), CONTROL_WAIT_MS);
+    const result = new Promise<BuildPointer>((resolve, reject) => {
+      const abort = () => reject(new LaunchError("network", "Installed update check interrupted"));
+      request.signal.addEventListener("abort", abort, { once: true });
+      void readPointer(request.signal).then(resolve, reject);
+    }).finally(() => page.timers.clearTimeout(timer));
+    // Discovery may not yet be waiting when the request fails.
+    void result.catch(() => undefined);
+    earlyPointer = { request, result, started: page.timers.now(), startup };
+  };
+
+  const reportTransfer = (version: string, receivedBytes: number, totalBytes: number) => {
+    if (totalBytes > 0 && options.onUpdateProgress !== undefined) {
+      reportUpdateProgress({ phase: "transferring", receivedBytes, totalBytes, version });
+    }
+  };
   const reportUpdate = (next: UpdateState) => {
     if (sameUpdateState(next, updateState)) {
       return;
@@ -758,12 +851,22 @@ export function createLaunch(
     version: string,
     save: () => void | PromiseLike<void>,
   ): Promise<void> => {
+    const applying = (step: "save" | "verify" | "activate" | "reload") =>
+      reportUpdateProgress({ phase: "applying", step, version });
+    let carried = false;
     switching ??= (async () => {
+      // Publish the shared switch promise before an opt-in progress callback can reenter.
+      if (options.onUpdateProgress !== undefined) {
+        await Promise.resolve();
+      }
+      applying("save");
       await save();
+      applying("verify");
       const offeredIsStaged = (state: BuildState) =>
         state.active === activeAtOffer && state.staged === version;
       const state = await store.readState();
       const verified = offeredIsStaged(state) && (await completeBuild(version));
+      applying("activate");
       const accepted = await withBuildStateLock(policy, async () => {
         const current = await store.readState();
         if (disposed || reloading || required) {
@@ -784,10 +887,21 @@ export function createLaunch(
       if (!accepted) {
         throw new Error(`Build ${version} is no longer available for this update offer`);
       }
-      if (!disposed && !reloading) {
-        reload();
+      if (disposed || reloading) {
+        reportUpdateProgress({ phase: "applyFailed", version });
+        return;
       }
+      if (options.onUpdateProgress !== undefined) {
+        writeSession(session, LAUNCH_PROGRESS_KEY, JSON.stringify({ updateVersion: version }));
+        carried = true;
+      }
+      applying("reload");
+      reload();
     })().catch((error: unknown) => {
+      if (carried) {
+        writeSession(session, LAUNCH_PROGRESS_KEY, undefined);
+      }
+      reportUpdateProgress({ phase: "applyFailed", version });
       switching = undefined;
       throw error;
     });
@@ -833,9 +947,15 @@ export function createLaunch(
     });
     if (published) {
       reportUpdate({ phase: "ready", version });
+      if (!disposed && !reloading) {
+        reportUpdateProgress({ phase: "ready", version });
+      }
       offer(previous.active, version);
     } else {
       reportUpdate({ phase: "idle" });
+      if (!disposed && !reloading) {
+        reportUpdateProgress({ phase: "idle" });
+      }
     }
   };
 
@@ -882,22 +1002,31 @@ export function createLaunch(
   const stageArchive = async (
     pointer: BuildPointer,
     state: BuildState,
+    revalidatePointer: boolean,
   ): Promise<"complete" | "changed"> => {
     const archiveStore = context.archiveStore;
     const { archive, version } = pointer;
     if (archiveStore === undefined || archive === undefined || !(await archiveRouterReady())) {
       throw new LaunchError("verification", "The controlling worker cannot serve build archives");
     }
-    if (!(await archiveStore.complete(version, pointer))) {
+    const complete = await archiveStore.complete(version, pointer);
+    let body: Blob | undefined;
+    if (!complete) {
       reportUpdate({ phase: "staging", value: 0, version });
-      const body = await downloadArchive(archive, (received, total) =>
-        reportUpdate({ phase: "staging", value: received / total, version }),
-      );
-      // A content-addressed transfer can finish even after a later release deploys.
+      body = await downloadArchive(archive, (received, total) => {
+        reportUpdate({ phase: "staging", value: received / total, version });
+        reportTransfer(version, received, total);
+      });
+    }
+    reportUpdateProgress({ phase: "verifying", version });
+    // A content-addressed transfer can finish even after a later release deploys.
+    if (!complete || revalidatePointer) {
       const deployed = await readPointer();
       if (deployed.version !== version || deployed.archive?.sha256 !== archive.sha256) {
         return "changed";
       }
+    }
+    if (body !== undefined) {
       await archiveStore.put(pointer, body, aborts.signal);
     }
     await publishStaged(state, version, pointer);
@@ -931,19 +1060,66 @@ export function createLaunch(
     reload,
     waitForRouter,
   };
-  const groupedStaging: GroupedStagingContext = { ...groups, publishStaged, reportUpdate };
+  const groupedStaging: GroupedStagingContext = {
+    ...groups,
+    onTransfer: reportTransfer,
+    onVerify: (version) => reportUpdateProgress({ phase: "verifying", version }),
+    publishStaged,
+    reportUpdate,
+  };
 
   // Stages the build the pointer names; a redeploy mid-staging restarts on the new manifest.
   // Records in attempt the version it tries, so a failure can name it.
   const stageDeployed = async (restarts: number, attempt: { version?: string }): Promise<void> => {
+    const observation = restarts === 0 ? earlyPointer : undefined;
+    // Keep the observation cancelable until the request and state read have both settled.
+    const observed = await observation?.result.catch((error: unknown) => {
+      if (earlyPointer === observation) {
+        throw error;
+      }
+      return undefined;
+    });
     const state = await store.readState();
-    const pointer = await readPointer();
-    if (pointer.version === documentVersion || pointer.version === state.active) {
+    const usable =
+      observation !== undefined &&
+      earlyPointer === observation &&
+      observation.startup.active === state.active &&
+      observation.startup.staged === state.staged &&
+      page.timers.now() - observation.started < CONTROL_WAIT_MS;
+    cancelEarlyPointer();
+    if (
+      (observation !== undefined && !visible && !required) ||
+      !page.online() ||
+      disposed ||
+      reloading
+    ) {
+      if (restarts === 0) {
+        lastCheck = undefined;
+      }
+      return;
+    }
+    const isRunning = ({ version }: BuildPointer) =>
+      version === documentVersion || version === state.active;
+    // Confirm a running pointer at the origin before it can clear a newer stage.
+    const prefetched =
+      usable &&
+      observed !== undefined &&
+      !(isRunning(observed) && state.staged !== undefined && state.staged !== observed.version);
+    const pointer = prefetched ? observed : await readPointer();
+    if (disposed || reloading) {
+      return;
+    }
+    if (isRunning(pointer)) {
       // The deployed build is already running; a staged one would roll it back.
       if (state.staged !== undefined && state.staged !== pointer.version) {
         await withBuildStateLock(policy, async () => {
           const current = await store.readState();
-          if (current.active === state.active && current.staged === state.staged) {
+          if (
+            !disposed &&
+            !reloading &&
+            current.active === state.active &&
+            current.staged === state.staged
+          ) {
             await store.setStaged(undefined);
           }
         });
@@ -951,21 +1127,41 @@ export function createLaunch(
       reportUpdate({ phase: "idle" });
       return;
     }
-    const { version } = pointer;
+    const { buildId, version } = pointer;
     attempt.version = version;
+    reportUpdateProgress({ phase: "preparing", version });
+    const restart = () => {
+      const next = nextRestart(restarts, "staging");
+      if (!disposed && !reloading) {
+        reportUpdateProgress({ phase: "idle" });
+      }
+      delete attempt.version;
+      return stageDeployed(next, attempt);
+    };
     if (pointer.archive !== undefined || pointer.groups !== undefined) {
       const result =
         pointer.groups !== undefined
-          ? await stageGroups(groupedStaging, state, pointer)
-          : await stageArchive(pointer, state);
+          ? await stageGroups(groupedStaging, state, pointer, prefetched)
+          : await stageArchive(pointer, state, prefetched);
       if (result === "changed") {
-        await stageDeployed(nextRestart(restarts, "staging"), attempt);
+        await restart();
       }
       return;
     }
     const manifest = await readPinnedManifest(pointer);
-    if (state.staged === version && (await store.complete(manifest))) {
+    const verify = async () => {
+      reportUpdateProgress({ phase: "verifying", version });
+      if (prefetched) {
+        const current = await readPointer();
+        if (current.version !== version || current.buildId !== buildId) {
+          await restart();
+          return;
+        }
+      }
       await publishStaged(state, version);
+    };
+    if (state.staged === version && (await store.complete(manifest))) {
+      await verify();
       return;
     }
     await store.saveManifest(manifest);
@@ -976,6 +1172,7 @@ export function createLaunch(
       onBytes: (receivedBytes, totalBytes) => {
         const value = totalBytes > 0 ? Math.min(1, receivedBytes / totalBytes) : 0;
         reportUpdate({ phase: "staging", value, version });
+        reportTransfer(version, receivedBytes, totalBytes);
       },
       // An update waits while the page is hidden, and resumes when it comes back into view.
       paused: () => !visible,
@@ -985,10 +1182,10 @@ export function createLaunch(
       return;
     }
     if (result === "changed") {
-      await stageDeployed(nextRestart(restarts, "staging"), attempt);
+      await restart();
       return;
     }
-    await publishStaged(state, version);
+    await verify();
   };
 
   const stage = async () => {
@@ -998,7 +1195,9 @@ export function createLaunch(
       retryMs = 0;
       cancelRetry();
     } catch (error) {
-      if (disposed) {
+      const canceled = !visible || !page.online();
+      cancelEarlyPointer();
+      if (disposed || reloading || (canceled && attempt.version === undefined)) {
         return;
       }
       // K3: a failed update is retried while the page stays visible and at the next check, and
@@ -1006,6 +1205,7 @@ export function createLaunch(
       console.warn("Background update failed.", error);
       if (attempt.version !== undefined) {
         reportUpdate({ phase: "failed", version: attempt.version });
+        reportUpdateProgress({ phase: "failed", version: attempt.version });
       }
       retryMs = nextUpdateRetryMs(retryMs);
       armRetry();
@@ -1046,7 +1246,7 @@ export function createLaunch(
   // Starts an update check unless one is under way, the page is offline, or (without force) the
   // last check ran within UPDATE_CHECK_MS. Returns whether a check is under way.
   const check = (force: boolean): boolean => {
-    if (disposed || reloading || documentVersion === undefined) {
+    if (!discoveryReady || disposed || reloading || documentVersion === undefined) {
       return false;
     }
     if (staging !== undefined) {
@@ -1156,6 +1356,7 @@ export function createLaunch(
       if (!visible) {
         cancelDiscovery();
         cancelRetry();
+        cancelEarlyPointer();
         return;
       }
       resumeArchiveTransfer?.();
@@ -1177,10 +1378,14 @@ export function createLaunch(
     }
   };
   page.eventTarget.addEventListener("online", online);
-  page.eventTarget.addEventListener("offline", cancelDiscovery);
+  const offline = () => {
+    cancelDiscovery();
+    cancelEarlyPointer();
+  };
+  page.eventTarget.addEventListener("offline", offline);
   page.eventTarget.addEventListener("focus", discoverOnWake);
   cleanups.push(() => page.eventTarget.removeEventListener("online", online));
-  cleanups.push(() => page.eventTarget.removeEventListener("offline", cancelDiscovery));
+  cleanups.push(() => page.eventTarget.removeEventListener("offline", offline));
   cleanups.push(() => page.eventTarget.removeEventListener("focus", discoverOnWake));
 
   const readStartup = async () => {
@@ -1210,6 +1415,8 @@ export function createLaunch(
     const { reloadVersion, state } = await readStartup().catch((error: unknown) => {
       throw new LaunchError("verification", "Could not read stored build state", { cause: error });
     });
+    const progressRecord = readSession(session, LAUNCH_PROGRESS_KEY);
+    const updateVersion = takeUpdateCarry(session, progressRecord);
     if (state.active === undefined) {
       return firstInstall();
     }
@@ -1217,7 +1424,7 @@ export function createLaunch(
     register().catch((error: unknown) =>
       console.warn("Service worker registration failed; offline play may be stale.", error),
     );
-    const carry = readCarry(session);
+    const carry = parseProgressCarry(progressRecord);
     if (carry !== undefined && carry.version === state.active) {
       progress = {
         bootBytes: carry.bootBytes,
@@ -1235,6 +1442,9 @@ export function createLaunch(
       writeSession(session, LAUNCH_RELOAD_KEY, reloadVersion);
       reload();
       return "reloading";
+    }
+    if (visible && page.online() && !disposed && !reloading) {
+      startEarlyPointer(state);
     }
     if (page.online()) {
       // Optional metadata reads must not leave an installed game waiting on an unreachable origin.
@@ -1258,10 +1468,20 @@ export function createLaunch(
           groupRouterReady: () => archiveRouterReady(BUILD_GROUP_REPAIR_ROUTER_PROBE),
           readDeployedManifest: (pointer) =>
             readMetadata((signal) => readDeployedManifest(pointer, signal)),
+          // Repair retains its own bounded read and revalidation. It never awaits the
+          // speculative discovery observation and can only repair the active version.
           readPointer: () => readMetadata(readPointer),
         },
         state,
       ).catch(() => undefined);
+    }
+    if (updateVersion !== undefined) {
+      if (updateVersion === state.active && !disposed) {
+        bootingUpdate = updateVersion;
+        reportUpdateProgress({ phase: "booting", version: updateVersion });
+      } else if (!disposed) {
+        reportUpdateProgress({ phase: "applyFailed", version: updateVersion });
+      }
     }
     return play(state.active);
   };
@@ -1276,14 +1496,26 @@ export function createLaunch(
         ready = true;
         writeSession(session, LAUNCH_PROGRESS_KEY, undefined);
         report("ready", 1);
+        if (bootingUpdate !== undefined) {
+          reportUpdateProgress({ phase: "applied", version: bootingUpdate });
+        }
         return;
       }
-      report("booting", Math.max(0, done) / total);
+      const settled = Math.max(0, done);
+      report("booting", settled / total);
+      if (bootingUpdate !== undefined) {
+        reportUpdateProgress({
+          counts: { done: settled, total },
+          phase: "booting",
+          version: bootingUpdate,
+        });
+      }
     },
     dispose() {
       disposed = true;
       cancelDiscovery();
       cancelRetry();
+      cancelEarlyPointer();
       aborts.abort();
       for (const cleanup of cleanups.splice(0)) {
         cleanup();

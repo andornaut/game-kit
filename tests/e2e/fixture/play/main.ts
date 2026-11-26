@@ -1,8 +1,12 @@
 // The fixture game: one loader through createLaunch, a boot that reads the manifest's boot files,
 // a tick counter that stands for play, and a game-drawn Update now prompt that pauses it. The
 // runner reads and drives window.e2e.
-import type { UpdateOffer } from "../../../../src/web/pwa/buildContract.ts";
-import { createLaunch, prepareBrowserLaunch } from "../../../../src/web/pwa/dom/launch.ts";
+import { BUILD_POINTER_URL, type UpdateOffer } from "../../../../src/web/pwa/buildContract.ts";
+import {
+  createLaunch,
+  prepareBrowserLaunch,
+  type UpdateProgress,
+} from "../../../../src/web/pwa/dom/launch.ts";
 import { POLICY, SAVE_MS } from "../policy.ts";
 
 declare const __VARIANT__: string;
@@ -30,8 +34,14 @@ export interface E2eState {
   paused: boolean;
   ticks: number;
   updateNowAt?: number;
+  pointerAt?: number;
+  offerAt?: number;
+  playingAt?: number;
+  updateProgress: UpdateProgress[];
+  updateFrames: { preparing?: number; transferring?: number };
+  appliedAt?: number;
   // The save the previous document wrote before Update now switched builds.
-  lastSave?: { at: number; variant: string };
+  lastSave?: { at: number; appliedAt?: number; variant: string };
   errors: string[];
 }
 
@@ -59,6 +69,8 @@ const state: E2eState = {
   phase: "launching",
   ticks: 0,
   timeOrigin: performance.timeOrigin,
+  updateFrames: {},
+  updateProgress: [],
   updateReady: [],
   updateStates: [],
   variant: __VARIANT__,
@@ -78,7 +90,10 @@ const save = async () => {
   await new Promise((resolve) => {
     setTimeout(resolve, SAVE_MS);
   });
-  localStorage.setItem(SAVE_KEY, JSON.stringify({ at: Date.now(), variant: state.variant }));
+  localStorage.setItem(
+    SAVE_KEY,
+    JSON.stringify({ appliedAt: state.updateNowAt, at: Date.now(), variant: state.variant }),
+  );
 };
 
 document.getElementById("update-now")?.addEventListener("click", () => {
@@ -112,32 +127,83 @@ if (preparation.kind === "unsupported") {
   if (lastSave !== undefined) {
     state.lastSave = lastSave;
   }
-  const launch = createLaunch(preparation.context, {
-    onFailure: (failure) => {
-      state.failures.push(failure.reason);
+  const meter = document.createElement("progress");
+  meter.hidden = true;
+  document.body.append(meter);
+  let displayed: UpdateProgress["phase"] | undefined;
+  const reportUpdate = (next: UpdateProgress) => {
+    state.updateProgress.push(next);
+    if (next.phase === "applied") {
+      state.appliedAt = performance.timeOrigin + performance.now();
+    }
+    const phase = next.phase;
+    displayed = phase;
+    meter.hidden =
+      phase !== "preparing" &&
+      phase !== "transferring" &&
+      phase !== "verifying" &&
+      phase !== "applying" &&
+      phase !== "booting";
+    if (phase === "transferring") {
+      meter.max = next.totalBytes;
+      meter.value = next.receivedBytes;
+    } else if (phase === "booting" && next.counts !== undefined) {
+      meter.max = next.counts.total;
+      meter.value = next.counts.done;
+    } else {
+      meter.removeAttribute("value");
+    }
+    if (phase === "preparing" || phase === "transferring") {
+      requestAnimationFrame((at) => {
+        if (displayed === phase) {
+          state.updateFrames[phase] ??= performance.timeOrigin + at;
+        }
+      });
+    }
+  };
+  const context = preparation.context;
+  const launch = createLaunch(
+    {
+      ...context,
+      page: {
+        ...context.page,
+        fetch(url, init) {
+          if (url === BUILD_POINTER_URL) {
+            state.pointerAt ??= performance.timeOrigin + performance.now();
+          }
+          return context.page.fetch(url, init);
+        },
+      },
     },
-    onNetworkPlay: (notice) => {
-      state.networkPlay.push(notice.reason);
+    {
+      onFailure: (failure) => {
+        state.failures.push(failure.reason);
+      },
+      onNetworkPlay: (notice) => {
+        state.networkPlay.push(notice.reason);
+      },
+      onProgress: ({ phase, receivedBytes, totalBytes, value }) => {
+        state.progress = { phase, receivedBytes, totalBytes, value };
+      },
+      onUpdateProgress: reportUpdate,
+      onUpdateReady: (next) => {
+        state.offerAt = performance.timeOrigin + performance.now();
+        state.updateReady.push(next.version);
+        offer = next;
+        state.paused = true;
+        prompt.hidden = false;
+      },
+      onUpdateState: (next) => {
+        const label = next.phase === "idle" ? "idle" : `${next.phase}:${next.version}`;
+        if (state.updateStates.at(-1) !== label) {
+          state.updateStates.push(label);
+        }
+      },
+      serviceWorkerUrl: "/sw.js",
+      // A game chooses with canPlayType; the fixture plays ogg, so the runner can predict requests.
+      soundFormat: "ogg",
     },
-    onProgress: ({ phase, receivedBytes, totalBytes, value }) => {
-      state.progress = { phase, receivedBytes, totalBytes, value };
-    },
-    onUpdateReady: (next) => {
-      state.updateReady.push(next.version);
-      offer = next;
-      state.paused = true;
-      prompt.hidden = false;
-    },
-    onUpdateState: (next) => {
-      const label = next.phase === "idle" ? "idle" : `${next.phase}:${next.version}`;
-      if (state.updateStates.at(-1) !== label) {
-        state.updateStates.push(label);
-      }
-    },
-    serviceWorkerUrl: "/sw.js",
-    // A game chooses with canPlayType; the fixture plays ogg, so the runner can predict requests.
-    soundFormat: "ogg",
-  });
+  );
 
   const boot = async () => {
     state.phase = "booting";
@@ -162,6 +228,7 @@ if (preparation.kind === "unsupported") {
     state.bootFiles = done;
     state.gameVariant = (await import("./game.ts")).GAME_VARIANT;
     state.phase = "playing";
+    state.playingAt = performance.timeOrigin + performance.now();
   };
 
   launch

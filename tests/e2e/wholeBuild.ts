@@ -19,6 +19,7 @@ import {
 } from "../../src/web/pwa/buildContract.ts";
 import { installedPointer } from "../../src/web/pwa/buildRecords.ts";
 import { buildDeployment, type Deployment } from "./build.ts";
+import { connectBrowserNetwork } from "./cdp.ts";
 import type { E2eState } from "./fixture/play/main.ts";
 import { POLICY, SAVE_MS } from "./fixture/policy.ts";
 import { type FixtureServer, type RequestRecord, startServer } from "./server.ts";
@@ -28,6 +29,7 @@ const ROUTER_PATH = "/sw.js";
 const ARCHIVE_ROUTER_PROBE = "game-kit:archive-router:1";
 const GROUP_ROUTER_PROBE = "game-kit:group-router:1";
 const WAIT = 45_000;
+const CDP_PORT = 9334;
 
 declare global {
   interface Window {
@@ -177,6 +179,7 @@ async function stage(
   },
   active: Deployment,
   candidate: Deployment,
+  fromInstalledLaunch = false,
 ): Promise<E2eState> {
   const { offline, page, requests, server } = context;
   const before = await playing(page, active);
@@ -199,7 +202,7 @@ async function stage(
     ),
     "Fixture must contain unchanged entries that a delta update could copy",
   );
-  assert.equal(await page.evaluate(() => navigator.onLine), false);
+  assert.equal(await page.evaluate(() => navigator.onLine), fromInstalledLaunch);
   await page.waitForFunction(
     (router) => navigator.serviceWorker.controller?.scriptURL === router,
     server.origin + ROUTER_PATH,
@@ -235,7 +238,11 @@ async function stage(
   const requestsStart = requests.length;
   const writesStart = await page.evaluate(() => window.wholeBuildCacheWrites.length);
   server.deploy(candidate.directory);
-  await offline(false);
+  if (fromInstalledLaunch) {
+    await page.reload();
+  } else {
+    await offline(false);
+  }
   await page.waitForFunction(
     () =>
       window.e2e?.updateReady.length > 0 ||
@@ -244,7 +251,25 @@ async function stage(
     { timeout: WAIT },
   );
   const offered = await playing(page, active);
-  assert.equal(offered.timeOrigin, before.timeOrigin);
+  if (fromInstalledLaunch) {
+    assert(offered.timeOrigin > before.timeOrigin);
+    const phases = offered.updateProgress.map(({ phase }) => phase);
+    assert.equal(phases[0], "preparing");
+    assert.equal(phases[1], "transferring");
+    assert.deepEqual(phases.slice(-2), ["verifying", "ready"]);
+    assert(offered.pointerAt && offered.offerAt);
+    const relative = (at: number | undefined) =>
+      at === undefined
+        ? "no rendered frame observed"
+        : `${(at - offered.timeOrigin).toFixed(1)} ms`;
+    console.log(
+      `Installed launch to pointer request ${relative(offered.pointerAt)}, ` +
+        `prep frame ${relative(offered.updateFrames.preparing)}, ` +
+        `transfer frame ${relative(offered.updateFrames.transferring)}, offer ${relative(offered.offerAt)}`,
+    );
+  } else {
+    assert.equal(offered.timeOrigin, before.timeOrigin);
+  }
   assert.deepEqual(offered.updateReady, [version]);
   assert.equal(offered.updateStates.filter((label) => label === `ready:${version}`).length, 1);
   assert.equal(offered.paused, true);
@@ -291,7 +316,9 @@ async function stage(
     );
   }
   assert.deepEqual(
-    paths.filter((path) => filePaths.has(path)),
+    (fromInstalledLaunch ? network.map(({ path }) => path) : paths).filter((path) =>
+      filePaths.has(path),
+    ),
     [],
     "Per-file request while staging",
   );
@@ -429,7 +456,11 @@ export async function runWholeBuildAcceptance(mode: "grouped" | "whole-build"): 
     }
   }
 
-  const browser = await chromium.launch({ channel: "chromium", headless: true });
+  const browser = await chromium.launch({
+    args: mode === "grouped" ? [`--remote-debugging-port=${CDP_PORT}`] : [],
+    channel: "chromium",
+    headless: true,
+  });
   try {
     const server = await startServer();
     try {
@@ -508,7 +539,31 @@ export async function runWholeBuildAcceptance(mode: "grouped" | "whole-build"): 
       }
 
       const lane = { offline, page, requests, server };
-      const offered = await stage(lane, baseline, accepted);
+      if (mode === "grouped") {
+        // Let the current offline document discover the unchanged deployment before measuring
+        // an installed launch in a fresh document of this same profile.
+        const samePointer = page.waitForResponse(
+          (response) => new URL(response.url()).pathname === BUILD_POINTER_URL,
+        );
+        await offline(false);
+        await samePointer;
+      }
+      // Grouped timing uses the same slow mobile profile as the default fixture runner.
+      const network =
+        mode === "grouped"
+          ? await connectBrowserNetwork(
+              { cpuSlowdown: 4, port: CDP_PORT },
+              {
+                downloadThroughput: 200_000,
+                latency: 300,
+                offline: false,
+                uploadThroughput: 100_000,
+              },
+            )
+          : undefined;
+      const offered = await stage(lane, baseline, accepted, mode === "grouped").finally(() => {
+        network?.close();
+      });
       assert.equal(offered.lastSave, undefined);
       await offline(true);
       const navigation = page.waitForResponse(
@@ -527,6 +582,23 @@ export async function runWholeBuildAcceptance(mode: "grouped" | "whole-build"): 
         active: accepted.pointer.version,
         staged: undefined,
       });
+      if (mode === "grouped") {
+        const resumed = switched.updateProgress;
+        assert.deepEqual(resumed[0], { phase: "booting", version: accepted.pointer.version });
+        assert.deepEqual(resumed.at(-1), { phase: "applied", version: accepted.pointer.version });
+        assert(
+          resumed.every(
+            (report) => "version" in report && report.version === accepted.pointer.version,
+          ),
+        );
+        const appliedAt = switched.lastSave.appliedAt;
+        assert(appliedAt && switched.appliedAt && switched.playingAt);
+        const ms = (at: number) => `${(at - appliedAt).toFixed(1)} ms`;
+        console.log(
+          `Apply to navigation ${ms(switched.timeOrigin)}, boot ready ${ms(switched.appliedAt)}, ` +
+            `playing ${ms(switched.playingAt)}`,
+        );
+      }
       await offlineFiles(page, updatedPage, accepted);
 
       const again = await stage(lane, accepted, canceled);

@@ -53,6 +53,8 @@ export interface GroupedInstallContext extends LaunchGroupsContext {
 export interface GroupedStagingContext extends LaunchGroupsContext {
   // Stages version unless another context changed the build state since previous.
   publishStaged(previous: BuildState, version: string, pointer: BuildPointer): Promise<void>;
+  onTransfer?(version: string, received: number, total: number): void;
+  onVerify?(version: string): void;
   reportUpdate(state: UpdateState): void;
 }
 
@@ -61,6 +63,8 @@ export interface PrepareGroupsOptions {
   // treats a failed group fetch as a possible redeploy.
   readonly foreground: boolean;
   readonly onBytes: GroupBytes;
+  readonly onVerify?: () => void;
+  readonly revalidatePointer?: boolean;
   readonly seal?: (pointer: BuildPointer, signal: AbortSignal) => Promise<void>;
 }
 
@@ -74,7 +78,7 @@ async function requireGroupRouter(context: Pick<LaunchGroupsContext, "groupRoute
 // the deployed pointer no longer names these groups.
 export async function prepareGroups(
   context: LaunchGroupsContext,
-  { foreground, onBytes, seal }: PrepareGroupsOptions,
+  { foreground, onBytes, onVerify, revalidatePointer, seal }: PrepareGroupsOptions,
   pointer: BuildPointer,
 ): Promise<"complete" | "changed"> {
   const { groupStore, signal } = context;
@@ -135,7 +139,11 @@ export async function prepareGroups(
       received += buildGroupTransferBytes(group);
     }
   }
-  if ((!alreadySealed || foreground) && !stillDeployed(await context.readPointer())) {
+  onVerify?.();
+  if (
+    (!alreadySealed || foreground || revalidatePointer === true) &&
+    !stillDeployed(await context.readPointer())
+  ) {
     return "changed";
   }
   if (!alreadySealed) {
@@ -264,6 +272,7 @@ export async function stageGroups(
   context: GroupedStagingContext,
   previous: BuildState,
   pointer: BuildPointer,
+  revalidatePointer = false,
 ): Promise<"complete" | "changed"> {
   await requireGroupRouter(context);
   const manifest = await context.readDeployedManifest(pointer);
@@ -271,12 +280,16 @@ export async function stageGroups(
     context,
     {
       foreground: false,
-      onBytes: (received, total) =>
+      onBytes: (received, total) => {
         context.reportUpdate({
           phase: "staging",
           value: received / total,
           version: pointer.version,
-        }),
+        });
+        context.onTransfer?.(pointer.version, received, total);
+      },
+      onVerify: () => context.onVerify?.(pointer.version),
+      revalidatePointer,
     },
     pointer,
   );

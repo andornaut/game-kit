@@ -37,6 +37,7 @@ import {
   UPDATE_CHECK_MS,
   UPDATE_RETRY_MAX_MS,
   UPDATE_RETRY_MS,
+  type UpdateProgress,
 } from "./launch.ts";
 
 const POLICY = { cacheNamePrefix: "game-", hashedAssetPrefix: "/assets/" };
@@ -160,7 +161,13 @@ function fixture({
   archiveStore,
   groupStore,
   soundFormat,
-}: { archiveStore?: BuildArchiveStore; groupStore?: BuildGroupStore; soundFormat?: string } = {}) {
+  updateProgress,
+}: {
+  archiveStore?: BuildArchiveStore;
+  groupStore?: BuildGroupStore;
+  soundFormat?: string;
+  updateProgress?: UpdateProgress[];
+} = {}) {
   const container = new FakeContainer();
   const visibility = new FakeDocument();
   const window = new EventTarget();
@@ -236,6 +243,9 @@ function fixture({
       onNetworkPlay: (notice) => networkPlay.push(notice),
       onProgress: (value) => progress.push(value),
       onRequireNewer: (state) => required.push(state),
+      ...(updateProgress === undefined
+        ? {}
+        : { onUpdateProgress: (value: UpdateProgress) => updateProgress.push(value) }),
       onUpdateReady: (offer) => offers.push(offer),
       onUpdateState: (state) => updates.push(state),
       serviceWorkerUrl: ROUTER,
@@ -988,6 +998,33 @@ describe("codec-aware groups", () => {
     return { ...f, after, before, build };
   }
 
+  it("starts discovery before pending codec repair and does not wait for it to play", async () => {
+    const f = await activeForM4a();
+    let finishDiscovery!: (response: Response) => void;
+    f.fetch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishDiscovery = resolve;
+        }),
+    );
+    await expect(f.launch.run()).resolves.toBe("play");
+    const paths = f.fetch.mock.calls.map(([path]) => path);
+    expect(paths).toEqual([
+      BUILD_POINTER_URL,
+      BUILD_POINTER_URL,
+      f.build.pointer.manifest,
+      ...archivePaths(m4a),
+      BUILD_POINTER_URL,
+    ]);
+    expect(await f.groups.store.complete(f.before.version, f.after)).toBe(true);
+
+    finishDiscovery(Response.json(f.build.pointer));
+    await settle();
+    expect(f.fetch).toHaveBeenCalledTimes(paths.length);
+    expect(f.offers).toEqual([]);
+    f.launch.dispose();
+  });
+
   it.each([
     "available",
     "offline",
@@ -1385,7 +1422,7 @@ async function playing(f: ReturnType<typeof fixture>) {
 }
 
 describe("launch with an active build", () => {
-  it("plays at once without fetching, then reclaims and checks for an update", async () => {
+  it("starts one pointer read before reclaim finishes and plays without waiting for it", async () => {
     const f = fixture();
     f.deploy(V1);
     f.store.state = { active: "aaaa" };
@@ -1402,16 +1439,96 @@ describe("launch with an active build", () => {
     const result = f.launch.run();
     await expect(result).resolves.toBe("play");
     f.launch.requestUpdateCheck();
-    f.setOnline(false);
-    f.setOnline(true);
     await settle();
-    expect(f.fetch).not.toHaveBeenCalled();
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([BUILD_POINTER_URL]);
+    expect(f.installBuild).not.toHaveBeenCalled();
     finishReclaim();
     await settle();
     expect(f.store.calls[0]).toBe("reclaim aaaa");
     expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([BUILD_POINTER_URL]);
     expect(f.installBuild).not.toHaveBeenCalled();
     expect(f.offers).toEqual([]);
+  });
+
+  it("bounds a pending startup pointer read without holding play and keeps the ordinary retry", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const f = fixture();
+    f.deploy(V1);
+    f.fetch.mockImplementationOnce(() => new Promise(() => {}));
+    await playing(f);
+    const signal = f.fetch.mock.calls[0]?.[1]?.signal;
+    expect(signal?.aborted).toBe(false);
+    vi.advanceTimersByTime(CONTROL_WAIT_MS);
+    await settle();
+    expect(signal?.aborted).toBe(true);
+    expect(f.fetch).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(UPDATE_RETRY_MS);
+    await settle();
+    expect(f.fetch).toHaveBeenCalledTimes(2);
+    expect(f.failures).toEqual([]);
+    f.launch.dispose();
+  });
+
+  it.each(["hidden", "offline", "disposed"] as const)(
+    "invalidates an early observation when the page becomes %s",
+    async (state) => {
+      const f = fixture();
+      f.deploy(V2);
+      let finish!: (response: Response) => void;
+      f.fetch.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      await playing(f);
+      const signal = f.fetch.mock.calls[0]?.[1]?.signal;
+      if (state === "hidden") {
+        f.visibility.set("hidden");
+      } else if (state === "offline") {
+        f.setOnline(false);
+      } else {
+        f.launch.dispose();
+      }
+      finish(Response.json(V2.pointer));
+      await settle();
+      expect(signal?.aborted).toBe(true);
+      expect(f.fetch).toHaveBeenCalledOnce();
+      expect(f.offers).toEqual([]);
+      if (state === "hidden") {
+        f.visibility.set("visible");
+      } else if (state === "offline") {
+        f.setOnline(true);
+      }
+      await settle();
+      expect(f.offers.map(({ version }) => version)).toEqual(
+        state === "disposed" ? [] : [V2.pointer.version],
+      );
+      f.launch.dispose();
+    },
+  );
+
+  it("confirms a prefetched running pointer before clearing an existing newer stage", async () => {
+    const f = fixture();
+    f.deploy(V1);
+    f.store.state = { active: V1.pointer.version, staged: V2.pointer.version };
+    let finishReclaim!: () => void;
+    vi.spyOn(f.store, "reclaim").mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        finishReclaim = resolve;
+      });
+      return [];
+    });
+    await expect(f.launch.run()).resolves.toBe("play");
+    await settle();
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([BUILD_POINTER_URL]);
+    f.deploy(V2);
+    finishReclaim();
+    await settle();
+    expect(f.store.calls).not.toContain("setStaged undefined");
+    expect(f.store.state).toEqual({ active: V1.pointer.version, staged: V2.pointer.version });
+    expect(f.offers.map(({ version }) => version)).toEqual([V2.pointer.version]);
+    f.launch.dispose();
   });
 
   it("reloads once when this document is older than a complete staged build", async () => {
@@ -1749,7 +1866,8 @@ describe("background updates", () => {
     await settle();
     vi.advanceTimersByTime(UPDATE_CHECK_MS);
     await settle();
-    expect(f.fetch.mock.calls.filter(([url]) => url === BUILD_POINTER_URL)).toHaveLength(1);
+    // Discovery reads once, then revalidates the prefetched pointer before publishing.
+    expect(f.fetch.mock.calls.filter(([url]) => url === BUILD_POINTER_URL)).toHaveLength(2);
     expect(f.offers).toHaveLength(1);
   });
 
@@ -1892,6 +2010,102 @@ describe("background updates", () => {
     expect(f.reload).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
     expect(f.fetch.mock.calls.length).toBe(fetches);
+  });
+
+  it("carries an explicit Apply into matching boot once and leaves legacy boot reports intact", async () => {
+    const updateProgress: UpdateProgress[] = [];
+    const f = fixture({ updateProgress });
+    f.deploy(V2);
+    await playing(f);
+    expect(updateProgress.map(({ phase }) => phase)).toEqual([
+      "preparing",
+      "transferring",
+      "transferring",
+      "verifying",
+      "ready",
+    ]);
+
+    await f.offers[0]!.updateNow(() => {
+      expect(updateProgress.at(-1)).toEqual({ phase: "applying", step: "save", version: "bbbb" });
+    });
+    expect(updateProgress.slice(-4)).toEqual(
+      ["save", "verify", "activate", "reload"].map((step) => ({
+        phase: "applying",
+        step,
+        version: "bbbb",
+      })),
+    );
+    expect(f.reload).toHaveBeenCalledOnce();
+
+    const resumed: UpdateProgress[] = [];
+    const again = fixture({ updateProgress: resumed });
+    const record = f.session.getItem(LAUNCH_PROGRESS_KEY)!;
+    again.session.setItem(LAUNCH_PROGRESS_KEY, record);
+    again.store.state = { active: "bbbb" };
+    again.setOnline(false);
+    await expect(again.launch.run()).resolves.toBe("play");
+    expect(again.session.getItem(LAUNCH_PROGRESS_KEY)).toBeNull();
+    again.launch.bootProgress(1, 2);
+    again.launch.bootProgress(2, 2);
+    expect(resumed).toEqual([
+      { phase: "booting", version: "bbbb" },
+      { counts: { done: 1, total: 2 }, phase: "booting", version: "bbbb" },
+      { phase: "applied", version: "bbbb" },
+    ]);
+    expect(again.progress.map(({ phase }) => phase)).toEqual(["booting", "ready"]);
+    expect(again.reload).not.toHaveBeenCalled();
+
+    const stale: UpdateProgress[] = [];
+    const other = fixture({ updateProgress: stale });
+    other.session.setItem(LAUNCH_PROGRESS_KEY, record);
+    other.store.state = { active: "aaaa" };
+    other.setOnline(false);
+    await expect(other.launch.run()).resolves.toBe("play");
+    other.launch.bootProgress(1, 1);
+    expect(stale).toEqual([{ phase: "applyFailed", version: "bbbb" }]);
+    expect(other.session.getItem(LAUNCH_PROGRESS_KEY)).toBeNull();
+  });
+
+  it("falls back to ordinary boot when the Apply marker cannot be written or consumed", async () => {
+    const updateProgress: UpdateProgress[] = [];
+    const f = fixture({ updateProgress });
+    f.deploy(V2);
+    await playing(f);
+    vi.spyOn(f.session, "setItem").mockImplementation(() => {
+      throw new Error("storage refused");
+    });
+    await f.offers[0]!.updateNow(() => undefined);
+    expect(f.reload).toHaveBeenCalledOnce();
+    expect(f.session.getItem(LAUNCH_PROGRESS_KEY)).toBeNull();
+
+    const resumed: UpdateProgress[] = [];
+    const again = fixture({ updateProgress: resumed });
+    again.session.setItem(LAUNCH_PROGRESS_KEY, JSON.stringify({ updateVersion: "bbbb" }));
+    vi.spyOn(again.session, "removeItem").mockImplementation(() => {
+      throw new Error("storage refused");
+    });
+    again.store.state = { active: "bbbb" };
+    again.setOnline(false);
+    await expect(again.launch.run()).resolves.toBe("play");
+    again.launch.bootProgress(1, 1);
+    expect(again.progress.map(({ phase }) => phase)).toEqual(["ready"]);
+    expect(resumed).toEqual([]);
+  });
+
+  it("reports a rejected Apply as failed and leaves no handoff", async () => {
+    const updateProgress: UpdateProgress[] = [];
+    const f = fixture({ updateProgress });
+    f.deploy(V2);
+    await playing(f);
+    await expect(
+      f.offers[0]!.updateNow(() => Promise.reject(new Error("save refused"))),
+    ).rejects.toThrow("save refused");
+    expect(updateProgress.slice(-2)).toEqual([
+      { phase: "applying", step: "save", version: "bbbb" },
+      { phase: "applyFailed", version: "bbbb" },
+    ]);
+    expect(f.session.getItem(LAUNCH_PROGRESS_KEY)).toBeNull();
+    expect(f.reload).not.toHaveBeenCalled();
   });
 
   it("Update now does not switch when the save fails", async () => {
