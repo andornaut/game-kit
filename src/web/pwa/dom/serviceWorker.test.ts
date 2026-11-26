@@ -17,7 +17,11 @@ import {
 } from "../buildContract.ts";
 import { installedManifest, installedPointer } from "../buildRecords.ts";
 import type { VerifiedJsonBody } from "../verifiedJsonBody.ts";
-import { BUILD_ARCHIVE_ROUTER_PROBE, BUILD_GROUP_ROUTER_PROBE } from "./buildArchiveRouter.ts";
+import {
+  BUILD_ARCHIVE_ROUTER_PROBE,
+  BUILD_GROUP_REPAIR_ROUTER_PROBE,
+  BUILD_GROUP_ROUTER_PROBE,
+} from "./buildArchiveRouter.ts";
 import { createBuildArchiveStore } from "./buildArchiveStore.ts";
 import { createBuildGroupStore } from "./buildGroupStore.ts";
 import { createBuildStore } from "./buildStore.ts";
@@ -565,13 +569,24 @@ describe("group storage after a sound format change", () => {
     await store.put(after, m4a.reference, m4a.blob);
     // Until the seal the router serves the build sealed for Ogg.
     await worker.setRecord(ACTIVE, "v1");
-    expect(await (await worker.get("/hit.ogg", "tab"))!.text()).toBe("ogg bytes");
-    await store.seal(after);
+    expect(await (await worker.navigate("/play/", "tab"))!.text()).toBe("<p>grouped</p>");
+    const signal = new AbortController().signal;
+    await store.activeFormat.seal(after, signal, async () => false);
+    expect(await store.complete("v1", before)).toBe(true);
+    expect((await worker.get("/hit.m4a", "tab"))?.status).toBe(404);
+    expect(worker.fetches).toHaveBeenCalledOnce();
+    worker.fetches.mockClear();
+    await store.activeFormat.seal(after, signal, async () => true);
     expect(await store.complete("v1", after)).toBe(true);
     expect(await store.complete("v1", before)).toBe(false);
     expect(await stored(worker)).toEqual(keys(page, ogg, m4a));
-    // The running router keeps its snapshot; a router that reads the build anew serves M4A.
+    // The pinned tab keeps the earlier snapshot and can also read the repaired audio.
+    await worker.setRecord(ACTIVE, "v2");
+    expect(await (await worker.get("/hit.m4a", "tab"))!.text()).toBe("m4a bytes");
     expect(await (await worker.get("/hit.ogg", "tab"))!.text()).toBe("ogg bytes");
+    expect(await worker.readRecord(pinKey("tab"))).toBe("v1");
+    expect(worker.fetches).not.toHaveBeenCalled();
+    await worker.setRecord(ACTIVE, "v1");
     const next = startWorker(new FakeServer({ "/hit.ogg": "network ogg" }), worker.storage);
     expect(await (await next.get("/hit.m4a", "tab"))!.text()).toBe("m4a bytes");
     expect(await (await next.get("/hit.ogg", "tab"))!.text()).toBe("network ogg");
@@ -766,7 +781,7 @@ describe("archive routing", () => {
     expect(await worker.readRecord(pinKey("v1"))).toBe("v1");
   });
 
-  it.each([BUILD_ARCHIVE_ROUTER_PROBE, BUILD_GROUP_ROUTER_PROBE])(
+  it.each([BUILD_ARCHIVE_ROUTER_PROBE, BUILD_GROUP_REPAIR_ROUTER_PROBE, BUILD_GROUP_ROUTER_PROBE])(
     "echoes the exact capability token %s only to its transferred port",
     (token) => {
       const worker = startWorker(new FakeServer(V1));

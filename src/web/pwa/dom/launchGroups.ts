@@ -15,7 +15,7 @@ import {
   sameDeployedGroups,
   type UpdateState,
 } from "../index.ts";
-import type { BuildGroupStore } from "./buildGroupStore.ts";
+import { activeGroupFormat, type BuildGroupStore } from "./buildGroupStore.ts";
 import { type BuildStore, withBuildStateLock } from "./buildStore.ts";
 
 type GroupFetch = (input: string, init?: RequestInit) => Promise<Response>;
@@ -61,6 +61,7 @@ export interface PrepareGroupsOptions {
   // treats a failed group fetch as a possible redeploy.
   readonly foreground: boolean;
   readonly onBytes: GroupBytes;
+  readonly seal?: (pointer: BuildPointer, signal: AbortSignal) => Promise<void>;
 }
 
 async function requireGroupRouter(context: Pick<LaunchGroupsContext, "groupRouterReady">) {
@@ -73,7 +74,7 @@ async function requireGroupRouter(context: Pick<LaunchGroupsContext, "groupRoute
 // the deployed pointer no longer names these groups.
 export async function prepareGroups(
   context: LaunchGroupsContext,
-  { foreground, onBytes }: PrepareGroupsOptions,
+  { foreground, onBytes, seal }: PrepareGroupsOptions,
   pointer: BuildPointer,
 ): Promise<"complete" | "changed"> {
   const { groupStore, signal } = context;
@@ -138,9 +139,61 @@ export async function prepareGroups(
     return "changed";
   }
   if (!alreadySealed) {
-    await groupStore.seal(pointer, signal);
+    if (seal === undefined) {
+      await groupStore.seal(pointer, signal);
+    } else {
+      await seal(pointer, signal);
+    }
   }
   return "complete";
+}
+
+// Repair only the sound selection of the active build. Verify the candidate before publishing
+// its marker, then recheck the startup records under the same lock as the marker write.
+export async function recoverActiveGroups(context: LaunchGroupsContext, startup: BuildState) {
+  const { active, staged } = startup;
+  const format = activeGroupFormat(context.groupStore);
+  if (
+    active === undefined ||
+    format === undefined ||
+    !(await format.mayDiffer(active, context.soundFormat))
+  ) {
+    return;
+  }
+  const pointer = await context.readPointer();
+  if (
+    pointer.version !== active ||
+    pointer.groups === undefined ||
+    !(await format.differs(pointer)) ||
+    !(await context.groupRouterReady())
+  ) {
+    return;
+  }
+  const manifest = await context.readDeployedManifest(pointer);
+  await prepareGroups(
+    {
+      ...context,
+      downloadGroup(group, onBytes) {
+        if (group.soundFormat === undefined) {
+          throw new LaunchError("verification", "The active build is missing a shared group");
+        }
+        return context.downloadGroup(group, onBytes);
+      },
+    },
+    {
+      foreground: false,
+      onBytes: () => undefined,
+      seal: (candidate, signal) =>
+        format.seal(candidate, signal, async (files) => {
+          if (groupedManifestMismatch(context.soundFormat, manifest, files) !== undefined) {
+            return false;
+          }
+          const current = await context.store.readState();
+          return current.active === active && current.staged === staged;
+        }),
+    },
+    pointer,
+  );
 }
 
 // The stored groups hold the deployed manifest's files (launchRules' groupedManifestMismatch).

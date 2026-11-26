@@ -1,6 +1,7 @@
 // An installed legacy router has the same script URL as its replacement.
 // Ask the controlling worker before making an archive-only build active.
 export const BUILD_ARCHIVE_ROUTER_PROBE = "game-kit:archive-router:1";
+export const BUILD_GROUP_REPAIR_ROUTER_PROBE = "game-kit:group-repair-router:1";
 export const BUILD_GROUP_ROUTER_PROBE = "game-kit:group-router:1";
 
 interface ProbeContext {

@@ -23,7 +23,7 @@ import {
 import { installedManifest } from "../buildRecords.ts";
 import { BUILD_ARCHIVE_ROUTER_PROBE, BUILD_GROUP_ROUTER_PROBE } from "./buildArchiveRouter.ts";
 import type { BuildArchiveStore } from "./buildArchiveStore.ts";
-import type { BuildGroupStore } from "./buildGroupStore.ts";
+import type { ActiveGroupFormat, BuildGroupStore } from "./buildGroupStore.ts";
 import type { BuildInstallOptions, installBuild } from "./buildInstaller.ts";
 import type { BuildStore } from "./buildStore.ts";
 import {
@@ -881,6 +881,26 @@ describe("codec-aware groups", () => {
     const stored = new Set<string>();
     let sealed: BuildPointer | undefined;
     const same = (pointer: BuildPointer) => JSON.stringify(pointer) === JSON.stringify(sealed);
+    const readFiles = (pointer = sealed) => {
+      if (pointer === undefined) {
+        return { kind: "unknown" as const };
+      }
+      const urls = pointer.groups!.flatMap(({ sha256 }) => members.get(sha256)!);
+      const files = new Map(
+        urls
+          .filter((url) => url !== drop)
+          .map((url) => [
+            url,
+            {
+              blob: new Blob([bodies[url]!]),
+              byteSize: bodies[url]!.length,
+              contentType: "application/octet-stream",
+              offset: 0,
+            },
+          ]),
+      );
+      return { files, kind: "ready" as const };
+    };
     const store = {
       complete: vi.fn(async (_version: string, expected?: BuildPointer) =>
         sealed === undefined ? false : expected === undefined || same(expected),
@@ -888,26 +908,7 @@ describe("codec-aware groups", () => {
       put: vi.fn(async (_pointer: BuildPointer, group: { sha256: string }) => {
         stored.add(group.sha256);
       }),
-      read: vi.fn(async () => {
-        if (sealed === undefined) {
-          return { kind: "unknown" as const };
-        }
-        const urls = sealed.groups!.flatMap(({ sha256 }) => members.get(sha256)!);
-        const files = new Map(
-          urls
-            .filter((url) => url !== drop)
-            .map((url) => [
-              url,
-              {
-                blob: new Blob([bodies[url]!]),
-                byteSize: bodies[url]!.length,
-                contentType: "application/octet-stream",
-                offset: 0,
-              },
-            ]),
-        );
-        return { files, kind: "ready" as const };
-      }),
+      read: vi.fn(async () => readFiles()),
       reuse: vi.fn(async (_pointer: BuildPointer, group: { sha256: string }) =>
         stored.has(group.sha256),
       ),
@@ -915,7 +916,18 @@ describe("codec-aware groups", () => {
         sealed = pointer;
       }),
     } satisfies BuildGroupStore;
-    return { store, stored };
+    const activeFormat: ActiveGroupFormat = {
+      mayDiffer: async () => sealed !== undefined,
+      differs: async (pointer) => sealed !== undefined && !same(pointer),
+      seal: async (pointer, signal, verify) => {
+        const read = readFiles(pointer);
+        if (read.kind === "ready" && (await verify(read.files))) {
+          signal.throwIfAborted();
+          await store.seal(pointer);
+        }
+      },
+    };
+    return { store: { ...store, activeFormat }, stored };
   }
 
   function launchFor(build: Deployment, soundFormat: string | undefined, drop?: string) {
@@ -962,6 +974,95 @@ describe("codec-aware groups", () => {
     });
     f.launch.dispose();
   });
+
+  async function activeForM4a(drop?: string) {
+    const build = deployment("cdc7", [core, m4a, ogg], true);
+    const f = launchFor(build, "m4a", drop);
+    const before = { ...build.pointer, groups: [core.reference, ogg.reference] };
+    const after = { ...build.pointer, groups: [core.reference, m4a.reference] };
+    f.groups.stored.add(core.reference.sha256);
+    f.groups.stored.add(ogg.reference.sha256);
+    await f.groups.store.seal(before);
+    f.store.state = { active: before.version };
+    f.groups.store.seal.mockClear();
+    return { ...f, after, before, build };
+  }
+
+  it.each([
+    "available",
+    "offline",
+    "unreachable",
+    "old router",
+    "missing member",
+    "concurrent staging",
+    "concurrent activation",
+    "redeployed",
+  ] as const)(
+    "starts the installed grouped build with the new audio group %s",
+    async (scenario) => {
+      const f = await activeForM4a(scenario === "missing member" ? "/hit.m4a" : undefined);
+      const [audio] = archivePaths(m4a);
+      if (scenario === "offline") {
+        f.setOnline(false);
+      } else if (scenario === "unreachable") {
+        f.routes.delete(audio!);
+      } else if (scenario === "old router") {
+        f.container.claim((_message, [port]) => {
+          port?.postMessage(BUILD_GROUP_ROUTER_PROBE);
+          port?.close();
+        });
+      } else if (scenario === "concurrent staging") {
+        f.routes.set(audio!, () => {
+          f.store.state = { active: f.before.version, staged: "cdc9" };
+          return new Response(m4a.body);
+        });
+      } else if (scenario === "concurrent activation") {
+        f.routes.set(audio!, () => {
+          f.store.state = { active: "cdc8", staged: "cdc9" };
+          return new Response(m4a.body);
+        });
+      } else if (scenario === "redeployed") {
+        const successor = deployment("cdc8", [core, m4a, ogg], true);
+        f.routes.set(audio!, () => {
+          f.deploy(successor);
+          return new Response(m4a.body);
+        });
+      }
+
+      await expect(f.launch.run()).resolves.toBe("play");
+      f.launch.dispose();
+      expect(await f.groups.store.complete(f.before.version, f.after)).toBe(
+        scenario === "available",
+      );
+      expect(await f.groups.store.complete(f.before.version, f.before)).toBe(
+        scenario !== "available",
+      );
+      const transfers = f.fetch.mock.calls
+        .map(([url]) => url)
+        .filter((url) => url.includes("/.game-kit/archive-"));
+      expect(transfers).toEqual(scenario === "offline" || scenario === "old router" ? [] : [audio]);
+      if (scenario === "offline") {
+        expect(f.fetch).not.toHaveBeenCalled();
+      }
+      const state = { active: f.before.version };
+      if (scenario === "concurrent activation") {
+        expect(f.store.state).toEqual({ active: "cdc8", staged: "cdc9" });
+      } else if (scenario === "concurrent staging") {
+        expect(f.store.state).toEqual({ ...state, staged: "cdc9" });
+      } else {
+        expect(f.store.state).toEqual(state);
+      }
+      expect(f.store.calls).toEqual([`reclaim ${f.before.version}`]);
+      expect(f.reload).not.toHaveBeenCalled();
+      expect([f.progress, f.failures, f.networkPlay, f.offers, f.updates]).toEqual([
+        [],
+        [],
+        [],
+        [],
+        [],
+      ]);
+    },
+  );
 
   it("installs every group without a sound format", async () => {
     const build = deployment("cdc2", [core, m4a, ogg], true);

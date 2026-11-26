@@ -44,7 +44,11 @@ import {
   type UpdateState,
 } from "../index.ts";
 import { downloadBuildArchive, downloadBuildGroup } from "./buildArchiveDownload.ts";
-import { BUILD_GROUP_ROUTER_PROBE, supportsBuildArchive } from "./buildArchiveRouter.ts";
+import {
+  BUILD_GROUP_REPAIR_ROUTER_PROBE,
+  BUILD_GROUP_ROUTER_PROBE,
+  supportsBuildArchive,
+} from "./buildArchiveRouter.ts";
 import { type BuildArchiveStore, createBuildArchiveStore } from "./buildArchiveStore.ts";
 import { type BuildGroupStore, createBuildGroupStore } from "./buildGroupStore.ts";
 import { BACKGROUND_INSTALL, FOREGROUND_INSTALL, installBuild } from "./buildInstaller.ts";
@@ -54,6 +58,7 @@ import {
   type GroupedStagingContext,
   installGrouped,
   type LaunchGroupsContext,
+  recoverActiveGroups,
   stageGroups,
 } from "./launchGroups.ts";
 import { type VisibilitySource, watchVisibility } from "./visibility.ts";
@@ -321,7 +326,7 @@ export function prepareBrowserLaunch(
 // Call run() once at document boot. With no active build it installs the deployed build in the
 // foreground and reports onProgress, or onFailure with a resuming retry, or onNetworkPlay where
 // the device cannot install; each later launch tries the install again. With an active build it
-// resolves "play" at once, then checks build.json at launch and on resume and stages a newer
+// plays after any optional codec repair, then checks build.json at launch and on resume and stages a newer
 // build in the background, retrying a failed staging while the page stays visible. Staging never
 // activates: a staged build becomes active through Update now, requireNewer, or the router's
 // promotion at the next launch navigation.
@@ -408,8 +413,11 @@ export function createLaunch(
   };
 
   // The deployed pointer, its groups reduced to the ones this device installs.
-  const readPointer = async (): Promise<BuildPointer> => {
-    const value = await fetchJson(BUILD_POINTER_URL, { cache: "no-store" });
+  const readPointer = async (signal?: AbortSignal): Promise<BuildPointer> => {
+    const value = await fetchJson(BUILD_POINTER_URL, {
+      cache: "no-store",
+      ...(signal === undefined ? {} : { signal }),
+    });
     try {
       return installedPointer(options.soundFormat, parseBuildPointer(value));
     } catch {
@@ -417,8 +425,11 @@ export function createLaunch(
     }
   };
 
-  const readDeployedManifest = async (pointer: BuildPointer): Promise<BuildManifest> => {
-    const value = await fetchJson(pointer.manifest, {});
+  const readDeployedManifest = async (
+    pointer: BuildPointer,
+    signal?: AbortSignal,
+  ): Promise<BuildManifest> => {
+    const value = await fetchJson(pointer.manifest, signal === undefined ? {} : { signal });
     let manifest: BuildManifest | undefined;
     try {
       manifest = parseBuildManifest(value);
@@ -1202,6 +1213,33 @@ export function createLaunch(
       writeSession(session, LAUNCH_RELOAD_KEY, reloadVersion);
       reload();
       return "reloading";
+    }
+    if (page.online()) {
+      // Optional metadata reads must not leave an installed game waiting on an unreachable origin.
+      const readMetadata = async <T>(read: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+        aborts.signal.throwIfAborted();
+        const request = new AbortController();
+        const abort = () => request.abort();
+        aborts.signal.addEventListener("abort", abort, { once: true });
+        const timer = page.timers.setTimeout(abort, CONTROL_WAIT_MS);
+        try {
+          return await read(request.signal);
+        } finally {
+          aborts.signal.removeEventListener("abort", abort);
+          page.timers.clearTimeout(timer);
+        }
+      };
+      await recoverActiveGroups(
+        {
+          ...groups,
+          downloadGroup: (group, onBytes) => downloadGroup(group, onBytes, page.fetch),
+          groupRouterReady: () => archiveRouterReady(BUILD_GROUP_REPAIR_ROUTER_PROBE),
+          readDeployedManifest: (pointer) =>
+            readMetadata((signal) => readDeployedManifest(pointer, signal)),
+          readPointer: () => readMetadata(readPointer),
+        },
+        state,
+      ).catch(() => undefined);
     }
     return play(state.active);
   };

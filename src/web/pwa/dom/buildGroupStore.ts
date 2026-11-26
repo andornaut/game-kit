@@ -16,6 +16,7 @@ import {
   parseBuildPointer,
   RECORD_CONTENT_TYPE,
   recordsCacheName,
+  soundFormatOf,
 } from "../index.ts";
 import { withBuildStateLock } from "./buildStore.ts";
 
@@ -39,6 +40,16 @@ export type BuildGroupRead =
   | { readonly kind: "unavailable" }
   | { readonly kind: "ready"; readonly files: ReadonlyMap<string, BuildGroupFile> };
 
+export interface ActiveGroupFormat {
+  mayDiffer(version: string, soundFormat: string | undefined): Promise<boolean>;
+  differs(pointer: BuildPointer): Promise<boolean>;
+  seal(
+    pointer: BuildPointer,
+    signal: AbortSignal,
+    verify: (files: ReadonlyMap<string, BuildGroupFile>) => Promise<boolean>,
+  ): Promise<void>;
+}
+
 export interface BuildGroupStore {
   reuse(pointer: BuildPointer, group: BuildArchiveReference): Promise<boolean>;
   // The downloader verifies the full SHA-256 before passing the group here.
@@ -53,6 +64,18 @@ export interface BuildGroupStore {
   complete(version: string, expected?: BuildPointer): Promise<boolean>;
   // Only an absent marker yields "unknown". Marker I/O errors propagate.
   read(version: string): Promise<BuildGroupRead>;
+}
+
+interface CodecAwareGroupStore extends BuildGroupStore {
+  readonly activeFormat: ActiveGroupFormat;
+  readSound(version: string, path: string): Promise<BuildGroupFile | undefined>;
+}
+
+export function activeGroupFormat(
+  store: BuildGroupStore | undefined,
+): ActiveGroupFormat | undefined {
+  // The browser store supports active repair. Injected stores can supply only the install API.
+  return (store as Partial<CodecAwareGroupStore> | undefined)?.activeFormat;
 }
 
 const GROUP_ID = { buildId: GROUP_ARCHIVE_IDENTITY, version: GROUP_ARCHIVE_IDENTITY };
@@ -117,6 +140,17 @@ function otherFormat(marker: GroupedPointer, pointer: GroupedPointer): boolean {
   );
 }
 
+function addsSoundFormat(marker: GroupedPointer, pointer: GroupedPointer): boolean {
+  return (
+    otherFormat(marker, pointer) &&
+    pointer.groups.some(
+      ({ soundFormat }) =>
+        soundFormat !== undefined &&
+        !marker.groups.some((group) => group.soundFormat === soundFormat),
+    )
+  );
+}
+
 function member(pointer: GroupedPointer, input: BuildArchiveReference): BuildArchiveReference {
   // A digest names at most one group of a pointer.
   const group = pointer.groups.find(
@@ -144,7 +178,7 @@ export function createBuildGroupStore({
   readonly caches: CacheStorage;
   readonly origin: string;
   readonly policy: BuildPolicy;
-}): BuildGroupStore {
+}): CodecAwareGroupStore {
   if (new URL(origin).origin !== origin) {
     throw new TypeError("Invalid build group store origin");
   }
@@ -254,7 +288,46 @@ export function createBuildGroupStore({
     throw new TypeError("Conflicting cached build group pointer");
   };
 
+  const writeMarker = async (pointer: GroupedPointer, signal?: AbortSignal) => {
+    const cache = await caches.open(records);
+    signal?.throwIfAborted();
+    // Readers see either complete format. Retain the old groups for existing router snapshots.
+    await cache.put(
+      recordKey(pointer.version),
+      new Response(JSON.stringify(pointer), { headers: { "content-type": RECORD_CONTENT_TYPE } }),
+    );
+  };
+
   return {
+    activeFormat: {
+      async differs(value) {
+        const pointer = groupedPointer(value);
+        const marker = await readMarker(pointer.version);
+        return marker.kind === "known" && addsSoundFormat(marker.pointer, pointer);
+      },
+      async mayDiffer(version, soundFormat) {
+        const marker = await readMarker(version);
+        return (
+          marker.kind === "known" &&
+          (soundFormat === undefined ||
+            !marker.pointer.groups.some((group) => group.soundFormat === soundFormat))
+        );
+      },
+      async seal(value, signal, verify) {
+        const pointer = groupedPointer(value);
+        await withBuildStateLock(policy, async () => {
+          signal.throwIfAborted();
+          const marker = await readMarker(pointer.version);
+          if (marker.kind !== "known" || !addsSoundFormat(marker.pointer, pointer)) {
+            return;
+          }
+          const files = await readFiles(pointer);
+          if (files !== undefined && (await verify(files))) {
+            await writeMarker(pointer, signal);
+          }
+        });
+      },
+    },
     async complete(version, expected) {
       const marker = await readMarker(version);
       return (
@@ -287,6 +360,23 @@ export function createBuildGroupStore({
       const files = marker.kind === "known" ? await readFiles(marker.pointer) : undefined;
       return files === undefined ? { kind: "unavailable" } : { files, kind: "ready" };
     },
+    async readSound(version, path) {
+      const format = soundFormatOf(path);
+      if (format === undefined) {
+        return undefined;
+      }
+      const marker = await readMarker(version);
+      if (marker.kind !== "known") {
+        return undefined;
+      }
+      const groups = marker.pointer.groups.filter(({ soundFormat }) => soundFormat === format);
+      if (groups.length === 0) {
+        return undefined;
+      }
+      const files = await readFiles({ ...marker.pointer, groups });
+      return files?.get(path);
+    },
+
     async reuse(value, reference) {
       const pointer = groupedPointer(value);
       const group = member(pointer, reference);
@@ -326,17 +416,7 @@ export function createBuildGroupStore({
         if (marker.kind === "known") {
           return;
         }
-        const cache = await caches.open(records);
-        signal?.throwIfAborted();
-        // One write swaps a replaced marker, so a read finds either format's complete build. The
-        // other format's groups stay until the build is reclaimed, for a router snapshot that
-        // still reads them and for a later change back.
-        await cache.put(
-          recordKey(pointer.version),
-          new Response(JSON.stringify(pointer), {
-            headers: { "content-type": RECORD_CONTENT_TYPE },
-          }),
-        );
+        await writeMarker(pointer, signal);
       });
     },
   };

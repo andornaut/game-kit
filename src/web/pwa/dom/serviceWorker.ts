@@ -33,7 +33,11 @@ import {
   type VerifiedJsonBody,
   versionRecordText,
 } from "../index.ts";
-import { BUILD_ARCHIVE_ROUTER_PROBE, BUILD_GROUP_ROUTER_PROBE } from "./buildArchiveRouter.ts";
+import {
+  BUILD_ARCHIVE_ROUTER_PROBE,
+  BUILD_GROUP_REPAIR_ROUTER_PROBE,
+  BUILD_GROUP_ROUTER_PROBE,
+} from "./buildArchiveRouter.ts";
 import { createBuildArchiveStore } from "./buildArchiveStore.ts";
 import { type BuildGroupFile, createBuildGroupStore } from "./buildGroupStore.ts";
 import { readCachedVersion, withBuildStateLock } from "./buildStore.ts";
@@ -84,7 +88,10 @@ const RETAINED_ARCHIVES = 2;
 
 export { PIN_PRUNE_MS } from "../index.ts";
 
-type RoutedFiles = ReadonlyMap<string, BuildGroupFile>;
+interface RoutedArchive {
+  readonly files: ReadonlyMap<string, BuildGroupFile>;
+  readonly grouped?: true;
+}
 
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -123,7 +130,7 @@ export function runServiceWorker(policy: BuildPolicy): void {
   const builds = new Map<string, Promise<RouterBuild | undefined>>();
   const pins = new Map<string, string>();
 
-  const readArchivedFiles = async (version: string): Promise<RoutedFiles | undefined> => {
+  const readArchivedFiles = async (version: string): Promise<RoutedArchive | undefined> => {
     groupStore ??= createBuildGroupStore({ caches, origin: worker.location.origin, policy });
     const grouped = await groupStore.read(version);
     if (grouped.kind === "unavailable") {
@@ -132,7 +139,7 @@ export function runServiceWorker(policy: BuildPolicy): void {
     }
     if (grouped.kind === "ready") {
       builds.delete(version);
-      return grouped.files;
+      return { files: grouped.files, grouped: true };
     }
     archiveStore ??= createBuildArchiveStore({ caches, origin: worker.location.origin, policy });
     const stored = await archiveStore.read(version);
@@ -142,18 +149,20 @@ export function runServiceWorker(policy: BuildPolicy): void {
     if (stored.kind === "unavailable") {
       throw new TypeError(`Build archive unavailable for ${version}`);
     }
-    return new Map(
-      stored.index.files.map(({ byteSize, contentType, offset, url }) => [
-        url,
-        { blob: stored.blob, byteSize, contentType, offset },
-      ]),
-    );
+    return {
+      files: new Map(
+        stored.index.files.map(({ byteSize, contentType, offset, url }) => [
+          url,
+          { blob: stored.blob, byteSize, contentType, offset },
+        ]),
+      ),
+    };
   };
 
   // Keep recent verified snapshots, including concurrent reads of the same version. Only
   // successful reads stay cached, so the page can still install or repair an archive.
-  const archives = new Map<string, Promise<RoutedFiles | undefined>>();
-  const rememberArchive = (version: string, archive: Promise<RoutedFiles | undefined>) => {
+  const archives = new Map<string, Promise<RoutedArchive | undefined>>();
+  const rememberArchive = (version: string, archive: Promise<RoutedArchive | undefined>) => {
     archives.delete(version);
     archives.set(version, archive);
     if (archives.size > RETAINED_ARCHIVES) {
@@ -436,7 +445,13 @@ export function runServiceWorker(policy: BuildPolicy): void {
     const build =
       archive === undefined ? (legacy ?? (await loadBuild(records, version))) : undefined;
     const path = cacheKeyFor(new URL(request.url).pathname);
-    const entry = archive?.get(path);
+    // The snapshot still serves its existing files. A codec repair may have sealed another
+    // sound group for this same pinned version since the snapshot was loaded.
+    const entry =
+      archive?.files.get(path) ??
+      (archive?.grouped === true && !navigation
+        ? await groupStore?.readSound(version, path).catch(() => undefined)
+        : undefined);
     const file = build?.files.get(path);
     if (
       (archive === undefined && build === undefined) ||
@@ -467,7 +482,11 @@ export function runServiceWorker(policy: BuildPolicy): void {
     event.waitUntil(worker.clients.claim().then(() => prune(true))),
   );
   worker.addEventListener("message", (event) => {
-    if (event.data === BUILD_ARCHIVE_ROUTER_PROBE || event.data === BUILD_GROUP_ROUTER_PROBE) {
+    if (
+      event.data === BUILD_ARCHIVE_ROUTER_PROBE ||
+      event.data === BUILD_GROUP_ROUTER_PROBE ||
+      event.data === BUILD_GROUP_REPAIR_ROUTER_PROBE
+    ) {
       event.ports[0]?.postMessage(event.data);
     }
   });
