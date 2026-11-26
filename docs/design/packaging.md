@@ -1,13 +1,18 @@
 # Packaging
 
 Public modules use explicit `package.json` exports under `runtime/`, `build/` or `test/`. The
-package also exports `package.json` for metadata. Retiring the pre-0.47 aliases changes subpath
-resolution. The canonical targets and installed-build data contracts stay the same. The
-release archive holds compiled JavaScript, declarations, README, licence and `SOURCE_COMMIT`,
+package also exports `package.json` for metadata. Retirement of the pre-0.47 aliases changed
+subpath resolution while preserving canonical targets and installed-build data contracts. See the
+[namespace migration](../../README.md#api-namespaces-and-migration).
+
+The release archive holds compiled JavaScript, declarations, README, licence and `SOURCE_COMMIT`,
 built offline from the committed revision. Release verification and packaging use the same pinned
 source. Consumer receipts identify the checks that actually ran. See the release procedure for
-combining Archie and Chibi's receipt with the separately verified Ada snapshot. Docs-only CI runs
-lint and the attribution check.
+combining Archie and Chibi's receipt with the separately verified Ada snapshot.
+
+When the changed paths are exclusively under `docs/`, CI skips browser tests, unit tests and
+release packaging. Lint and the attribution check still run. Root README edits run the full
+workflow.
 
 Like the other kits, `make check` verifies the working tree and `make lint`, `make test` and
 `make build` each run one part of it. All four go through the local check runner's containers.
@@ -18,8 +23,9 @@ familiar operations with unambiguous roles. A factory's read hook can receive th
 reads so callers can use it during construction. Keep lifecycle and persistence details
 behind the public operation that owns them.
 
-Imports are relative, and runtime imports are acyclic: ESLint's `import-x/no-cycle` covers
-`src/`, `scripts/` and `tests/`.
+Imports are relative. ESLint's `import-x/no-cycle` checks runtime imports in `src/`,
+`scripts/` and `tests/`. Use `import type` for an entirely type-only import. Inline type
+specifiers alone can leave a runtime module load under `verbatimModuleSyntax`.
 
 Reference: [Standalone verification](../../README.md#standalone-verification), [Release artifacts and consumer proof](../../README.md#release-artifacts-and-consumer-proof).
 

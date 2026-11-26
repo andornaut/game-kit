@@ -10,7 +10,13 @@ update-check timing and backoff, deploy and staged-record checks, routed request
 `dom/launchGroups` handles grouped first install, staging and active-build audio recovery.
 It takes the page, stores and launch state as an injected context and keeps no state of its own.
 
-The first install downloads and verifies the complete build from the page under the one loading screen; updates stage in the background and switch silently at launch or through the game's Update now. See the [install and update design](../install-and-update.md).
+The first install downloads and verifies the complete build from the page under one loading
+screen. Updates stage in the background and switch silently at launch or through the game's
+Update now. A navigation outside the selected build goes to the network without a new pin.
+For a codec change, online startup can repair audio groups for the exact active build when the
+controlling worker supports repair. Play continues if the new sounds are unavailable.
+
+See the [install and update design](../install-and-update.md#4-design).
 
 Reference: [Build output](../../README.md#build-output).
 
