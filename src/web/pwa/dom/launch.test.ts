@@ -162,11 +162,13 @@ function fixture({
   groupStore,
   soundFormat,
   updateProgress,
+  onUpdateProgress,
 }: {
   archiveStore?: BuildArchiveStore;
   groupStore?: BuildGroupStore;
   soundFormat?: string;
   updateProgress?: UpdateProgress[];
+  onUpdateProgress?: (value: UpdateProgress) => void;
 } = {}) {
   const container = new FakeContainer();
   const visibility = new FakeDocument();
@@ -243,9 +245,14 @@ function fixture({
       onNetworkPlay: (notice) => networkPlay.push(notice),
       onProgress: (value) => progress.push(value),
       onRequireNewer: (state) => required.push(state),
-      ...(updateProgress === undefined
+      ...(updateProgress === undefined && onUpdateProgress === undefined
         ? {}
-        : { onUpdateProgress: (value: UpdateProgress) => updateProgress.push(value) }),
+        : {
+            onUpdateProgress(value: UpdateProgress) {
+              updateProgress?.push(value);
+              onUpdateProgress?.(value);
+            },
+          }),
       onUpdateReady: (offer) => offers.push(offer),
       onUpdateState: (state) => updates.push(state),
       serviceWorkerUrl: ROUTER,
@@ -2064,6 +2071,21 @@ describe("background updates", () => {
     other.launch.bootProgress(1, 1);
     expect(stale).toEqual([{ phase: "applyFailed", version: "bbbb" }]);
     expect(other.session.getItem(LAUNCH_PROGRESS_KEY)).toBeNull();
+  });
+
+  it("does not reload or leave an Apply marker when a progress callback disposes the launch", async () => {
+    const f = fixture({
+      onUpdateProgress(state) {
+        if (state.phase === "applying" && state.step === "reload") {
+          f.launch.dispose();
+        }
+      },
+    });
+    f.deploy(V2);
+    await playing(f);
+    await f.offers[0]!.updateNow(() => undefined);
+    expect(f.reload).not.toHaveBeenCalled();
+    expect(f.session.getItem(LAUNCH_PROGRESS_KEY)).toBeNull();
   });
 
   it("falls back to ordinary boot when the Apply marker cannot be written or consumed", async () => {

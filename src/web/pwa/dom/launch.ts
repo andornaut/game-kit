@@ -887,7 +887,10 @@ export function createLaunch(
       if (!accepted) {
         throw new Error(`Build ${version} is no longer available for this update offer`);
       }
-      if (disposed || reloading) {
+      if (!disposed && !reloading) {
+        applying("reload");
+      }
+      if (disposed || reloading || required) {
         reportUpdateProgress({ phase: "applyFailed", version });
         return;
       }
@@ -895,7 +898,6 @@ export function createLaunch(
         writeSession(session, LAUNCH_PROGRESS_KEY, JSON.stringify({ updateVersion: version }));
         carried = true;
       }
-      applying("reload");
       reload();
     })().catch((error: unknown) => {
       if (carried) {
