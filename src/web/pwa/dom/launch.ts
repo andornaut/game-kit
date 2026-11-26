@@ -395,7 +395,11 @@ export function createLaunch(
     page.location.reload();
   };
 
-  const fetchJson = async (url: string, init: RequestInit): Promise<unknown> => {
+  const fetchJson = async (
+    url: string,
+    init: RequestInit,
+    onNotFound?: () => void,
+  ): Promise<unknown> => {
     let response: Response;
     try {
       response = await page.fetch(url, init);
@@ -403,6 +407,9 @@ export function createLaunch(
       throw new LaunchError("network", `Could not fetch ${url}`);
     }
     if (!response.ok) {
+      if (response.status === 404) {
+        onNotFound?.();
+      }
       throw new LaunchError("network", `Could not fetch ${url}: ${response.status}`);
     }
     try {
@@ -425,11 +432,23 @@ export function createLaunch(
     }
   };
 
+  // A manifest URL can serve a cacheable 404 before the build becomes visible. The next read
+  // of that URL bypasses the HTTP cache and can still populate it with the immutable response.
+  let missingManifest: string | undefined;
   const readDeployedManifest = async (
     pointer: BuildPointer,
     signal?: AbortSignal,
   ): Promise<BuildManifest> => {
-    const value = await fetchJson(pointer.manifest, signal === undefined ? {} : { signal });
+    const value = await fetchJson(
+      pointer.manifest,
+      {
+        cache: missingManifest === pointer.manifest ? "reload" : "default",
+        ...(signal === undefined ? {} : { signal }),
+      },
+      () => {
+        missingManifest = pointer.manifest;
+      },
+    );
     let manifest: BuildManifest | undefined;
     try {
       manifest = parseBuildManifest(value);
@@ -438,6 +457,9 @@ export function createLaunch(
     }
     if (manifest?.version !== pointer.version || manifest.buildId !== pointer.buildId) {
       throw new LaunchError("verification", `Invalid build manifest for ${pointer.version}`);
+    }
+    if (missingManifest === pointer.manifest) {
+      missingManifest = undefined;
     }
     return manifest;
   };

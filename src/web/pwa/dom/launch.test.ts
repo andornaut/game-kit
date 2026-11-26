@@ -1782,6 +1782,34 @@ describe("background updates", () => {
     expect(f.offers.map((o) => o.version)).toEqual(["bbbb"]);
   });
 
+  it("bypasses a missing manifest's HTTP cache entry on the scheduled retry", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const f = fixture();
+    f.deploy(V2);
+    const url = V2.pointer.manifest;
+    const cacheModes = () =>
+      f.fetch.mock.calls.filter(([path]) => path === url).map(([, init]) => init?.cache);
+    f.routes.set(url, () => new Response(null, { status: 404 }));
+    await playing(f);
+    expect(cacheModes()).toEqual(["default"]);
+    expect(f.updates.at(-1)).toEqual({ phase: "failed", version: "bbbb" });
+    expect(f.store.state).toEqual({ active: "aaaa" });
+    expect(f.offers).toEqual([]);
+
+    f.deploy(V2);
+    vi.advanceTimersByTime(UPDATE_RETRY_MS - 1);
+    await settle();
+    expect(cacheModes()).toEqual(["default"]);
+    vi.advanceTimersByTime(1);
+    await settle();
+    expect(cacheModes()).toEqual(["default", "reload"]);
+    expect(f.store.state).toEqual({ active: "aaaa", staged: "bbbb" });
+    expect(f.offers.map((offer) => offer.version)).toEqual(["bbbb"]);
+    expect(f.failures).toEqual([]);
+    expect(f.reload).not.toHaveBeenCalled();
+    f.launch.dispose();
+  });
+
   it("retries a failed update while visible, from UPDATE_RETRY_MS doubling to UPDATE_RETRY_MAX_MS", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const f = fixture();
