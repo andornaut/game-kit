@@ -39,7 +39,7 @@ function readMode() {
     return values;
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
-    process.exit(2);
+    return process.exit(2);
   }
 }
 

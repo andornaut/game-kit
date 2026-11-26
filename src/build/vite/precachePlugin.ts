@@ -542,7 +542,7 @@ export function precachePlugin({
                     (updateGroup !== undefined || wholeBuild === true)
                   ) {
                     throw new Error(
-                      "precache: fetch-json-data-v1 requires per-file updates; remove the profile or disable archive updates",
+                      "precache: fetch-json-data-v1 requires per-file updates; remove the profile or archive mode",
                     );
                   }
                   const urls = descriptor?.urls ?? (selection as readonly string[]);
