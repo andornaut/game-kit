@@ -45,3 +45,5 @@ Reference: [Build output](../../README.md#build-output).
 | gk-0050 | Install only the device codec from groups and read archive members          | [gk-0050.md](../work/gk-0050.md) |
 | gk-0051 | Compress group archives and export a test encoder                           | [gk-0051.md](../work/gk-0051.md) |
 | gk-0053 | Opt out of decoded group copies and require DecompressionStream at launch   | [gk-0053.md](../work/gk-0053.md) |
+| gk-0076 | Recover audio groups for the active installed build                         | [gk-0076.md](../work/gk-0076.md) |
+| gk-0077 | Reject the JSON-data reuse profile with archive updates                     | [gk-0077.md](../work/gk-0077.md) |
