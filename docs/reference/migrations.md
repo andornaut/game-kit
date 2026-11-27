@@ -2,7 +2,7 @@
 
 Check the entries for the versions you are crossing. Historical entries use the public paths and behaviour of their release.
 
-[Documentation index](README.md)
+[Reference](README.md)
 
 ## Migration to 0.92.0
 
@@ -105,7 +105,7 @@ Update now flow apply. Games only need to update the package pin.
 
 ## Migration to 0.64.0
 
-The deprecated pre-0.47 package subpaths are gone. Use the [canonical paths](using-game-kit.md#api-namespaces-and-migration) in imports, mocks, CSS and generated references.
+The deprecated pre-0.47 package subpaths are gone. Use the [canonical paths](../guides/using-game-kit.md#api-namespaces-and-migration) in imports, mocks, CSS and generated references.
 
 `runtime/web/pwa/dom/launch` no longer exports `LAUNCH_RELOAD_KEY`,
 `LAUNCH_PROGRESS_KEY`, `legacyRoutingCacheName` or `legacyGroupDatabaseName`.
@@ -138,7 +138,7 @@ Standard controls, loading-safe Retry, crash buttons and the crash details summa
 
 ## Update activation and startup recovery in 0.60.1
 
-Update now began revalidating the offered build after saving. Startup storage failures began reaching Loading failed, and Retry rereads startup state. See the [install and update design](install-and-update.md#4-design) for how superseded offers and startup failures are handled.
+Update now began revalidating the offered build after saving. Startup storage failures began reaching Loading failed, and Retry rereads startup state. See the [install and update design](../design/install-and-update.md#4-design) for how superseded offers and startup failures are handled.
 
 - Return `{ kind: "pointer-refusal" }` as the availability from `getState` to leave a non-executable button visible and skip keyboard navigation. Supply `onPointerRefusal` for guarded pointer feedback. The renderer does not announce a reason or run the action in that state.
 

@@ -2,7 +2,7 @@
 
 Use the pure runtime modules with game-owned rules, data and tuning.
 
-[Documentation index](README.md)
+[Reference](README.md)
 
 ## Terrain
 

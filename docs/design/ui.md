@@ -4,7 +4,7 @@ Caller tokens size and place buttons; the kit computes layout, focus steps and p
 HTML UI layer supplies units, frames, button skins, modal isolation, focus rings and refusal
 cues, and the crash screen uses the game's words and colours.
 
-See [High-density game UI](../ui-controls.md#high-density-game-ui), [Dialog-subtree isolation](../ui-controls.md#dialog-subtree-isolation).
+See [High-density game UI](../reference/ui-controls.md#high-density-game-ui), [Dialog-subtree isolation](../reference/ui-controls.md#dialog-subtree-isolation).
 
 ## Layout base
 

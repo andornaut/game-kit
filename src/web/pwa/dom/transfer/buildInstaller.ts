@@ -1,4 +1,4 @@
-// Downloads one build into its cache under a pinned manifest (docs/install-and-update.md). Each
+// Downloads one build into its cache under a pinned manifest (docs/design/install-and-update.md). Each
 // missing file is copied by digest from another build when one holds it, or fetched, streamed,
 // checked against the manifest's exact byte size and full SHA-256, and stored with its digest
 // header. Only missing files are fetched, so a fresh call resumes an interrupted install. The

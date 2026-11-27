@@ -2,7 +2,7 @@
 
 Configure production startup, offline build output, update transport and origin serving.
 
-[Documentation index](README.md)
+[Reference](README.md)
 
 ## Production startup
 
@@ -25,7 +25,7 @@ The plugin also writes the build's manifest at `/.game-kit/manifest-<version>.js
 ## Install packs
 
 Set `packs: { maxBytes }` on `precachePlugin` to batch small assets without changing their logical URLs. See the
-[install and update design](install-and-update.md#4-design) for option limits, fallback and
+[install and update design](../design/install-and-update.md#4-design) for option limits, fallback and
 HTTP transfer qualification.
 
 ## Update progress
@@ -76,7 +76,7 @@ request URL. Keep frequently changed files separate from stable assets. Each
 group has its own SHA-256 and is capped at 24 MiB, including its index.
 
 Serve the deterministic gzip at `buildGroupUrl(group)` as emitted. The
-[install and update design](install-and-update.md#4-design) covers group transport,
+[install and update design](../design/install-and-update.md#4-design) covers group transport,
 verification and the HTTP representation shared with install packs.
 
 An unchanged version skips staging. For a changed version, the page reuses

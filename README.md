@@ -5,10 +5,10 @@ content, strings, palettes, dimensions, schemas, tuning, policies and lifecycle.
 own their asset tooling and wire `runtime/web/*` modules into their pages and `build/*` modules
 into their Vite configuration.
 
-- [Install and import](https://github.com/andornaut/game-kit/blob/main/docs/using-game-kit.md)
-- [GitHub releases](https://github.com/andornaut/game-kit/releases)
+- [Install and import](https://github.com/andornaut/game-kit/blob/main/docs/guides/using-game-kit.md)
 - [Documentation](https://github.com/andornaut/game-kit/blob/main/docs/README.md)
-- [Migration and release notes](https://github.com/andornaut/game-kit/blob/main/docs/migrations.md)
+- [GitHub releases](https://github.com/andornaut/game-kit/releases)
+- [Migration and release notes](https://github.com/andornaut/game-kit/blob/main/docs/reference/migrations.md)
 
 ## Licence
 

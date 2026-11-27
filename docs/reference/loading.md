@@ -2,7 +2,7 @@
 
 Keep required-file recovery and progress in the caller’s existing launch and loading flow.
 
-[Documentation index](README.md)
+[Reference](README.md)
 
 See the [progress and loader contracts](integration-contracts.md#loading-and-progress) for renderer and Phaser loader configuration.
 

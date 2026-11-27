@@ -2,7 +2,7 @@
 
 Module paths in this reference are implementation paths unless prefixed with a public namespace.
 
-[Documentation index](README.md)
+[Reference](README.md)
 
 ## Integration contracts
 

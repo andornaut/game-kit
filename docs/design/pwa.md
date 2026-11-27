@@ -17,9 +17,9 @@ Update now. A navigation outside the selected build goes to the network without 
 For a codec change, online startup can repair audio groups for the exact active build when the
 controlling worker supports repair. Play continues if the new sounds are unavailable.
 
-See the [install and update design](../install-and-update.md#4-design).
+See the [install and update design](install-and-update.md#4-design).
 
-See [PWA integration](../pwa-integration.md) for build output, startup and update configuration.
+See [PWA integration](../reference/pwa-integration.md) for build output, startup and update configuration.
 
 ## Work items
 

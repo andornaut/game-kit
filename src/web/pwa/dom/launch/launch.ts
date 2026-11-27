@@ -1,6 +1,6 @@
 // The one loader: registers the router worker, installs the first build in the foreground under the
 // loading screen, stages later builds in the background and offers Update now during a session
-// (docs/install-and-update.md). The page drives every download; the router only serves the
+// (docs/design/install-and-update.md). The page drives every download; the router only serves the
 // recorded active build or a window's pin.
 import {
   type LoadingFailureLayout,

@@ -2,7 +2,7 @@
 
 Wire foreground input and compose controls with game-owned actions, layout tokens and art.
 
-[Documentation index](README.md)
+[Reference](README.md)
 
 ## Foreground input
 

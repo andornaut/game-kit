@@ -4,7 +4,7 @@ Build-time modules configure a game's Vite and Vitest, emit reduced Phaser bundl
 and content, record build identity and render security headers. They may import runtime modules
 but never test helpers.
 
-See [API namespaces and migration](../using-game-kit.md#api-namespaces-and-migration).
+See [API namespaces and migration](../guides/using-game-kit.md#api-namespaces-and-migration).
 
 ## Work items
 

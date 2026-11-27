@@ -1,4 +1,4 @@
-// The cache layout and records of installed builds (docs/install-and-update.md). One cache per
+// The cache layout and records of installed builds (docs/design/install-and-update.md). One cache per
 // build version holds its verified files. The records cache holds active, staged, one pin per
 // window client and each build's manifest, each under its own key, so no write overwrites another
 // record. Callers write a record only after they have verified what it names. There is no "none"

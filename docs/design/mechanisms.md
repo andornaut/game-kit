@@ -4,7 +4,7 @@ Pure modules hold game-independent rules with no browser, Phaser or Node globals
 content, tuning, seeds and schemas; the kit supplies fixed-step timing, motion, seeded
 randomness, collections, achievements, utility scoring, terrain search and bitmap text metrics.
 
-See [Modules and environments](../development.md#modules-and-environments), [Terrain](../mechanisms.md#terrain).
+See [Modules and environments](../guides/development.md#modules-and-environments), [Terrain](../reference/mechanisms.md#terrain).
 
 ## Work items
 

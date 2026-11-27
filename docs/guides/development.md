@@ -2,7 +2,7 @@
 
 Find implementation modules by environment and verify source and release artifacts.
 
-[Documentation index](README.md)
+[Guides](README.md)
 
 ## Modules and environments
 
@@ -72,7 +72,7 @@ A module's directory names its environment, and its `tsconfig.<environment>.json
 | `dom/`            | `tsconfig.dom.json`    | ES2022 and DOM, no Phaser     |
 | `vite/`           | `tsconfig.vite.json`   | ES2022, Node and Vite, no DOM |
 
-Each compilation rejects the other environments' ambient globals, and ESLint enforces the import boundaries. Pure modules import no environment directory, `dom/` imports no Phaser or `vite/`, `vite/` imports no Phaser or `dom/`, and nothing outside `vite/` imports Vite. `web/<area>/` holds website runtime infrastructure in the same layout. Pure policy such as cache policy and build records at the top and browser bindings in `dom/`. Build-time code lives in `build/`, pure at its top and Node and Vite in `build/vite/`. Canonical public paths classify consumer use, for example `@andornaut/game-kit/build/securityHeadersPlugin` points to `src/build/vite/securityHeadersPlugin.ts`. Each module sits in a source band, which [Packaging](design/packaging.md#source-bands) lists. The combined test/config project has the development types it needs.
+Each compilation rejects the other environments' ambient globals, and ESLint enforces the import boundaries. Pure modules import no environment directory, `dom/` imports no Phaser or `vite/`, `vite/` imports no Phaser or `dom/`, and nothing outside `vite/` imports Vite. `web/<area>/` holds website runtime infrastructure in the same layout. Pure policy such as cache policy and build records at the top and browser bindings in `dom/`. Build-time code lives in `build/`, pure at its top and Node and Vite in `build/vite/`. Canonical public paths classify consumer use, for example `@andornaut/game-kit/build/securityHeadersPlugin` points to `src/build/vite/securityHeadersPlugin.ts`. Each module sits in a source band, which [Packaging](../design/packaging.md#source-bands) lists. The combined test/config project has the development types it needs.
 
 ## Testing fixtures
 

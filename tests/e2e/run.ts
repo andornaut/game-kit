@@ -1,4 +1,4 @@
-// The browser install and update check (docs/install-and-update.md, Tests). It builds the fixture
+// The browser install and update check (docs/design/install-and-update.md#tests). It builds the fixture
 // game's deployments with the kit's precachePlugin, serves them with Cloudflare's HTTP/3 headers,
 // throttles every page and service worker to a slow mobile link and every page to a 4x slower CPU
 // over CDP, and drives Chromium through a first install, offline play and three updates. Runs

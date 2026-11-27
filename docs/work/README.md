@@ -27,8 +27,8 @@ decided or delivered, and why, in a line or two each.
 - Work files are public: no session IDs, hostnames, local home-directory paths or quoted
   conversation, only short approval references.
 - Items approved before work files existed are recorded under the next IDs, with the approval
-  ledger key in `approved`. Other earlier work is recorded in the [migration and release notes](../migrations.md) and Git history.
+  ledger key in `approved`. Other earlier work is recorded in the [migration and release notes](../reference/migrations.md) and Git history.
 - Local docs-only checks cover attribution and lint ([gk-0001](gk-0001.md)). Hosted CI skips
   runtime jobs on classified changes confined to `docs/`. Root `README.md` changes run the normal
-  [verification jobs](../development.md#standalone-verification).
+  [verification jobs](../guides/development.md#standalone-verification).
 - Work files are not part of the release archive.

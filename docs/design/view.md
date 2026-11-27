@@ -3,7 +3,7 @@
 Pure decisions cover fit, settling, render scale, dimming and coordinate mapping. Adapters apply
 them to Phaser cameras and the page, including the page frame turn and tilemap culling.
 
-See [Modules and environments](../development.md#modules-and-environments).
+See [Modules and environments](../guides/development.md#modules-and-environments).
 
 ## Work items
 

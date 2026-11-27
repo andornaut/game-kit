@@ -1,5 +1,5 @@
 // Shared contract between the build plugin, the page installer, the router service worker and the
-// launch module (docs/install-and-update.md). Each side implements its part in its own module.
+// launch module (docs/design/install-and-update.md). Each side implements its part in its own module.
 import type { CachePolicy } from "./cachePolicy.ts";
 import type { VerifiedJsonBody } from "./verifiedJsonBody.ts";
 

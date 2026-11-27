@@ -2,7 +2,7 @@
 
 Install the compiled package, choose public imports and check the version policy.
 
-[Documentation index](README.md)
+[Guides](README.md)
 
 ## Importing
 
@@ -61,7 +61,7 @@ The `exports` map and the exported declarations define the public interface. Int
 
 Modules take data and callbacks only. They never depend on a game's types, control flow or test usage.
 
-Compatible fixes are patch versions and additions are minor versions. Incompatible changes are major versions after 1.0, and minor versions with a [migration note](migrations.md) before 1.0. Update the manifest and lockfile together. Documentation-only changes need no version bump.
+Compatible fixes are patch versions and additions are minor versions. Incompatible changes are major versions after 1.0, and minor versions with a [migration note](../reference/migrations.md) before 1.0. Update the manifest and lockfile together. Documentation-only changes need no version bump.
 
 The kit's own tests define each module's contract. Release consumer proof uses pinned Archie and Chibi revisions and Ada's separate pinned check. Use adoption revisions for incompatible changes. See [Release artifacts and consumer proof](development.md#release-artifacts-and-consumer-proof).
 
