@@ -882,10 +882,11 @@ describe("codec-aware groups", () => {
   // An earlier kit's group, holding both alternatives without a format.
   const mixed = groupOf("mixed sounds", ["/hit.m4a", "/hit.ogg"]);
   const deployment = (version: string, groups: ReturnType<typeof groupOf>[], cold: boolean) => {
-    const { manifest, pointer } = buildOf(version, bodies, ["/hit.m4a"]);
+    const { manifest: base, pointer } = buildOf(version, bodies, ["/hit.m4a"]);
+    const manifest: BuildManifest = { ...base, sounds: { "/hit": ["/hit.ogg", "/hit.m4a"] } };
     return {
       groups,
-      manifest: { ...manifest, sounds: { "/hit": ["/hit.ogg", "/hit.m4a"] } },
+      manifest,
       pointer: {
         ...pointer,
         ...(cold ? { groupedFirstInstall: true as const } : {}),
