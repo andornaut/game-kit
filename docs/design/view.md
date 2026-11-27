@@ -7,5 +7,6 @@ Reference: [Modules and environments](../../README.md#modules-and-environments).
 
 ## Work items
 
-| ID  | Title | Link |
-| --- | ----- | ---- |
+| ID      | Title                                       | Link                             |
+| ------- | ------------------------------------------- | -------------------------------- |
+| gk-0086 | Profile Phaser frame times across the games | [gk-0086.md](../work/gk-0086.md) |
