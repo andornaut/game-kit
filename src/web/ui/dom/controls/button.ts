@@ -6,6 +6,7 @@ import {
   controlPresentation,
 } from "../../../../ui/controlPresentation.ts";
 import type { HoldAction } from "../../../input/dom/index.ts";
+import type { ForegroundAction } from "../foregroundInput.ts";
 import { createNativeButton } from "../nativeButton.ts";
 import { type RefusalCue, refuse, refusing } from "../refusalCue.ts";
 import {
@@ -103,6 +104,7 @@ export interface ButtonView {
   setPressed(pressed: boolean): void;
   // Return this from the caller's existing root resolver. Null excludes the button.
   holdAction(): HoldAction | null;
+  foregroundAction(): ForegroundAction | null;
   dispose(): void;
 }
 
@@ -299,6 +301,25 @@ export function createButton(document: Document, options: ButtonOptions): Button
     },
     element,
     face,
+    foregroundAction() {
+      const state = disposed ? null : current();
+      if (state?.executable !== true || state.action === null) {
+        return null;
+      }
+      const expected = identity(state.action);
+      return {
+        activate: () => {
+          const next = sameAction(expected);
+          if (next?.executable) {
+            dispatch(false, false, next);
+          }
+        },
+        available: () => sameAction(expected)?.executable === true,
+        element,
+        identity: expected,
+        native: true,
+      };
+    },
     holdAction() {
       if (disposed) {
         return null;

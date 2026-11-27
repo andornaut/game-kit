@@ -1,6 +1,7 @@
 import { LOADING_FAILURE_TEXT, type LoadingAttemptState } from "../../../load/index.ts";
 import { colourProperty, type TextRole, type UiColourRole } from "../../../ui/uiTheme.ts";
 import type { HoldActionBinding } from "../../input/dom/index.ts";
+import type { ForegroundInput } from "../../ui/dom/foregroundInput.ts";
 import { createNativeButton } from "../../ui/dom/nativeButton.ts";
 import { paintRetryFocus } from "./retryFocus.ts";
 
@@ -70,6 +71,7 @@ type Presentation = LoadingFailurePresentation<number | "content">;
 
 export interface LoadingFailureContext<Width extends number | "content" = number> {
   readonly bindHoldAction?: HoldActionBinding;
+  readonly foregroundInput?: ForegroundInput;
   readonly layout?: LoadingFailureLayout;
   readonly presentation?: LoadingFailurePresentation<Width>;
   readonly onRetry: () => void | PromiseLike<void>;
@@ -80,6 +82,7 @@ type Context = LoadingFailureContext<number | "content">;
 export interface LoadingFailureNoticeContext<Width extends number | "content" = number> {
   readonly bindHoldAction?: never;
   readonly body: string;
+  readonly foregroundInput?: ForegroundInput;
   readonly layout?: LoadingFailureLayout;
   readonly onRetry?: never;
   readonly presentation?: LoadingFailurePresentation<Width>;
@@ -533,6 +536,7 @@ export function mountLoadingFailure(
   let disposed = false;
   let busy = false;
   let stopHold: (() => void) | undefined;
+  let stopForeground: (() => void) | undefined;
   let generation = 0;
   const render = () => {
     element.hidden = state.kind !== "failed";
@@ -570,6 +574,12 @@ export function mountLoadingFailure(
         finish();
       }
     };
+    const available = () => !disposed && state.kind === "failed" && !busy;
+    const action = { activate: onClick, available, element: retry };
+    retry.addEventListener("click", onClick);
+    if (context.foregroundInput !== undefined) {
+      return { action, dispose: () => retry.removeEventListener("click", onClick) };
+    }
     const heldKeys = new Set<string>();
     const keyTypes = ["keydown", "keypress", "keyup"] as const;
     const neutralTarget = (target: EventTarget | null) =>
@@ -611,8 +621,8 @@ export function mountLoadingFailure(
     }
     document.addEventListener("focusin", onFocus);
     document.defaultView?.addEventListener("blur", clearKeys);
-    retry.addEventListener("click", onClick);
     return {
+      action,
       dispose() {
         clearKeys();
         for (const type of keyTypes) {
@@ -623,7 +633,6 @@ export function mountLoadingFailure(
         document.defaultView?.removeEventListener("blur", clearKeys);
         retry.removeEventListener("click", onClick);
       },
-      onClick,
     };
   };
   const events =
@@ -637,6 +646,7 @@ export function mountLoadingFailure(
       disposed = true;
       generation += 1;
       events?.dispose();
+      stopForeground?.();
       focus?.dispose();
       element.remove();
       const stop = stopHold;
@@ -653,12 +663,16 @@ export function mountLoadingFailure(
     },
   };
   try {
-    if (retry !== undefined && events !== undefined) {
-      stopHold = context.bindHoldAction?.({
-        activate: events.onClick,
-        available: () => !disposed && state.kind === "failed" && !busy,
-        element: retry,
-      });
+    stopForeground = context.foregroundInput?.register({
+      layer: "recovery",
+      resolve: (target) =>
+        target === retry && events !== undefined
+          ? { ...events.action, identity: `${state.attempt}:${generation}`, native: true }
+          : undefined,
+      root: element,
+    });
+    if (events !== undefined) {
+      stopHold = context.bindHoldAction?.(events.action);
     }
   } catch (error) {
     view.dispose();

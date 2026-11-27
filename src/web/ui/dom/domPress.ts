@@ -1,9 +1,10 @@
 import {
+  capturePressGuard,
   followOnePress,
-  guardPassed,
   type OutsidePress,
   outsidePressMove,
   type PressGuard,
+  pressGuardPassed,
 } from "../../../input/index.ts";
 import { readUnit } from "./viewUnits.ts";
 
@@ -67,16 +68,6 @@ function followFirstPointer(handlers: FollowedPress, element: HTMLElement): () =
   };
 }
 
-function passed(guard: PressGuard, nowMs: number): boolean {
-  const { tapGuard } = guard;
-  return tapGuard === undefined || guardPassed(tapGuard.guardMs, tapGuard.drawnMs(), nowMs);
-}
-
-// Captures the gate for a followed press, or refuses it outright while the tap guard holds.
-function capture(guard: PressGuard, event: Event): () => boolean {
-  return passed(guard, event.timeStamp) ? guard.gate.capture() : () => false;
-}
-
 // Stops every click inside root that the guard refuses before any listener under root sees it.
 // Returns a function that removes the listeners.
 export function guardClicks(guard: PressGuard, root: HTMLElement): () => void {
@@ -86,7 +77,7 @@ export function guardClicks(guard: PressGuard, root: HTMLElement): () => void {
   const stopFollowing = followFirstPointer(
     {
       down(event) {
-        presses.set(event.pointerId, capture(guard, event));
+        presses.set(event.pointerId, capturePressGuard(guard, event.timeStamp));
       },
       up(event, followed) {
         released =
@@ -99,7 +90,7 @@ export function guardClicks(guard: PressGuard, root: HTMLElement): () => void {
   const onClick = (event: MouseEvent) => {
     const accepted =
       event.detail === 0
-        ? passed(guard, event.timeStamp) && guard.gate.accepts()
+        ? pressGuardPassed(guard, event.timeStamp) && guard.gate.accepts()
         : released?.() === true;
     released = undefined;
     if (!accepted) {
@@ -137,7 +128,7 @@ export function listenOutsideTaps(
         press =
           event.target === backdrop
             ? {
-                check: capture(guard, event),
+                check: capturePressGuard(guard, event.timeStamp),
                 maxDistance: tapMaxDistance * readUnit(backdrop),
                 outside: { start: point(event), tapping: true },
               }

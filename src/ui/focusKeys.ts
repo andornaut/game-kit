@@ -27,6 +27,30 @@ export function focusKeyAction(
   return repeat && action !== "next" && action !== "previous" ? undefined : action;
 }
 
+// Foreground aliases share the original focus steps. P stays with legacy callers.
+export function foregroundKeyAction(key: string, shift: boolean): FocusKeyAction | undefined {
+  switch (key.toLowerCase()) {
+    case "w":
+    case "k":
+    case "a":
+    case "h":
+      return focusKeyAction("ArrowUp", false, false);
+    case "s":
+    case "j":
+    case "d":
+    case "l":
+      return focusKeyAction("ArrowDown", false, false);
+    case "e":
+    case "f":
+    case "spacebar":
+      return focusKeyAction(" ", false, false);
+    default:
+      return key.toLowerCase() !== "p" && Object.hasOwn(KEY_ACTIONS, key)
+        ? focusKeyAction(key, shift, false)
+        : undefined;
+  }
+}
+
 // The focus after a step through targets, in order and wrapping round, from focus: the first
 // (next) or last (previous) target when focus is none of them. Undefined when there are none.
 export function stepFocus<Target>(

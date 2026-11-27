@@ -50,6 +50,14 @@ export function inputModality(document: Document): InputModality | undefined {
   return tracked.get(document)?.last.modality;
 }
 
+// A window capture owner can stop input before the document's passive tracker sees it.
+export function recordInputModality(document: Document, modality: InputModality): void {
+  const tracking = tracked.get(document);
+  if (tracking !== undefined) {
+    tracking.last.modality = modality;
+  }
+}
+
 // FocusOptions.focusVisible, typed here for DOM libraries that predate it.
 type ModalFocusOptions = FocusOptions & { readonly focusVisible?: boolean };
 

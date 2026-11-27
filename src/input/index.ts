@@ -9,5 +9,10 @@ export {
   outsidePressMove,
   outsideTapped,
 } from "./outsideTap.ts";
-export { type PressGate, type PressGuard } from "./pressGuard.ts";
+export {
+  capturePressGuard,
+  type PressGate,
+  type PressGuard,
+  pressGuardPassed,
+} from "./pressGuard.ts";
 export { guardPassed } from "./tapGuard.ts";

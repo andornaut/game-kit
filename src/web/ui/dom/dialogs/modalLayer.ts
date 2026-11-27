@@ -1,5 +1,6 @@
 import { type FocusKeyAction, focusKeyAction, stepFocus } from "../../../../ui/focusKeys.ts";
 import { focusTarget, trackInputModality } from "../focusModality.ts";
+import type { ForegroundInput, ForegroundSurface } from "../foregroundInput.ts";
 
 // One modal layer shared by every card a game opens over its UI root. The top modal alone takes
 // the keyboard: Tab and the arrows step the focus through its controls, then its live elements',
@@ -10,9 +11,13 @@ import { focusTarget, trackInputModality } from "../focusModality.ts";
 // open and restores the focus on close. It moves the focus through focusTarget (focusModality),
 // so the ring shows only after keyboard input, and tracks the document's input modality from its
 // creation. It does not use <dialog>.showModal() or popover: the top layer renders outside a
-// turned page frame.
+// turned page frame. A supplied foreground router owns the keys and secondary pointer actions.
 
 export interface ModalOptions {
+  readonly foreground?: Pick<
+    ForegroundSurface,
+    "dismiss" | "guard" | "preserveKey" | "ready" | "resolve" | "skip" | "targets"
+  >;
   // Dialog mode isolates its subtree; only the exact backdrop may take outside pointer input.
   // Backdrop requires dialog mode. The default layer mode retains its existing live regions.
   readonly isolation?: "layer" | "dialog";
@@ -47,6 +52,7 @@ interface OpenModal {
   readonly opener: Element | null;
   readonly options: ModalOptions;
   readonly strict: boolean;
+  releaseInput?: (() => void) | undefined;
 }
 
 const FOCUSABLE = [
@@ -143,7 +149,7 @@ function inertTargets(
 }
 
 // The modal layer over root, whose element children are the game's UI layers.
-export function createModalLayer(root: HTMLElement): ModalLayer {
+export function createModalLayer(root: HTMLElement, foregroundInput?: ForegroundInput): ModalLayer {
   const document = root.ownerDocument;
   // From creation, so a key pressed before the first card opens counts; the layer's dispose
   // leaves it, since the tracking is the document's.
@@ -434,7 +440,7 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
       event.type === "keydown" || event.type === "keypress" || event.type === "keyup";
     if (!inside && (keyboard || !state.backdrop || event.target !== modal.options.backdrop)) {
       // A body or html root captures neutral keys before they can bubble to document.
-      if (!keyboard || !onNeutralKey(event as KeyboardEvent)) {
+      if (foregroundInput !== undefined || !keyboard || !onNeutralKey(event as KeyboardEvent)) {
         refuse(event);
       }
     } else if (keyboard) {
@@ -483,12 +489,14 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
   for (const type of inputTypes) {
     root.addEventListener(type, onRootInput, true);
   }
-  for (const type of keyTypes) {
-    root.addEventListener(type, onRootKey);
+  if (foregroundInput === undefined) {
+    for (const type of keyTypes) {
+      root.addEventListener(type, onRootKey);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("keyup", onKeyUp);
+    document.addEventListener("keypress", onNeutralKey);
   }
-  document.addEventListener("keydown", onKeyDown);
-  document.addEventListener("keyup", onKeyUp);
-  document.addEventListener("keypress", onNeutralKey);
   document.addEventListener("focusin", onFocusIn);
   return {
     back() {
@@ -511,6 +519,9 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
       document.removeEventListener("keyup", onKeyUp);
       document.removeEventListener("keypress", onNeutralKey);
       document.removeEventListener("focusin", onFocusIn);
+      for (const modal of stack) {
+        modal.releaseInput?.();
+      }
       stack.length = 0;
       applyInert();
     },
@@ -522,7 +533,34 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
         options: accepted,
         strict: accepted.isolation === "dialog",
       };
+      const foreground = accepted.foreground;
+      const close = accepted.close;
       stack.push(modal);
+      try {
+        modal.releaseInput = foregroundInput?.register({
+          ...foreground,
+          active: () => top() === modal,
+          dismiss:
+            foreground?.dismiss ??
+            (() =>
+              close === undefined
+                ? null
+                : { activate: close, available: () => true, element: dialog }),
+          layer: "modal",
+          ready: () => {
+            const state = modal.strict ? strictState(modal) : undefined;
+            return (
+              (state === undefined || (state.backdrop && state.dialog)) &&
+              foreground?.ready?.() !== false
+            );
+          },
+          root: dialog,
+          tabTargets: () => modalTargets(modal),
+        });
+      } catch (error) {
+        stack.pop();
+        throw error;
+      }
       dialog.setAttribute("aria-modal", "true");
       if (!dialog.hasAttribute("tabindex")) {
         dialog.tabIndex = -1;
@@ -536,6 +574,7 @@ export function createModalLayer(root: HTMLElement): ModalLayer {
         }
         const wasTop = index === stack.length - 1;
         stack.splice(index, 1);
+        modal.releaseInput?.();
         dialog.removeAttribute("aria-modal");
         applyInert();
         if (!wasTop) {

@@ -1,4 +1,5 @@
 import type { ModalInputScope } from "./modalInput.ts";
+import { guardPassed } from "./tapGuard.ts";
 
 // The gate a press answers to: a modalInput scope, or the gate itself for presses outside any
 // modal.
@@ -10,4 +11,13 @@ export type PressGate = Pick<ModalInputScope, "accepts" | "capture">;
 export interface PressGuard {
   readonly gate: PressGate;
   readonly tapGuard?: { readonly drawnMs: () => number | null; readonly guardMs: number };
+}
+
+export function pressGuardPassed(guard: PressGuard, nowMs: number): boolean {
+  const { tapGuard } = guard;
+  return tapGuard === undefined || guardPassed(tapGuard.guardMs, tapGuard.drawnMs(), nowMs);
+}
+
+export function capturePressGuard(guard: PressGuard, nowMs: number): () => boolean {
+  return pressGuardPassed(guard, nowMs) ? guard.gate.capture() : () => false;
 }

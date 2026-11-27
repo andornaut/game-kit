@@ -124,6 +124,7 @@ const DIRECT_MODULES = {
   "web/ui/dom": [
     "domPress",
     "focusModality",
+    "foregroundInput",
     "layoutProperties",
     "nativeButton",
     "refusalCue",

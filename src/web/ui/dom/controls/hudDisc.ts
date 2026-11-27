@@ -49,6 +49,7 @@ export interface HudDiscView {
   refresh(): void;
   setPressed(pressed: boolean): void;
   holdAction: ButtonView["holdAction"];
+  foregroundAction: ButtonView["foregroundAction"];
   dispose(): void;
 }
 
@@ -115,6 +116,7 @@ export function createHudDisc(document: Document, options: HudDiscOptions): HudD
     dispose: () => view.dispose(),
     element: view.element,
     face: view.face,
+    foregroundAction: view.foregroundAction,
     holdAction: () => view.holdAction(),
     refresh: () => view.refresh(),
     setIcon(next, nextBearings = NO_BEARINGS) {

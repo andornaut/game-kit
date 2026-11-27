@@ -41,7 +41,7 @@
     "vite": "^8.3.5",
     "vitest": "^5.0.5"
   },
-  "version": "0.93.0",
+  "version": "0.94.0",
   "peerDependencies": {
     "phaser": "^4.2.1",
     "typescript": "^6.0.3",
@@ -164,6 +164,7 @@
     "./runtime/web/crash/crashModel": "./src/web/crash/crashModel.ts",
     "./runtime/web/crash/dom/crash.css": "./src/web/crash/dom/crash.css",
     "./runtime/web/crash/dom/crashScreen": "./src/web/crash/dom/crashScreen.ts",
+    "./runtime/web/input/dom/foregroundInput": "./src/web/ui/dom/foregroundInput.ts",
     "./runtime/web/input/dom/holdActions": "./src/web/input/dom/holdActions.ts",
     "./runtime/web/input/dom/pagePresses": "./src/web/input/dom/pagePresses.ts",
     "./runtime/web/progress/dom/loadingFailure": "./src/web/progress/dom/loadingFailure.ts",

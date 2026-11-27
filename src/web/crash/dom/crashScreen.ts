@@ -7,6 +7,7 @@
 // focusTarget (web/ui/dom/focusModality), so the focus fill shows only after keyboard input.
 import type { HoldActionBinding } from "../../input/dom/index.ts";
 import { focusTarget, trackInputModality } from "../../ui/dom/focusModality.ts";
+import type { ForegroundInput } from "../../ui/dom/foregroundInput.ts";
 import { createNativeButton } from "../../ui/dom/nativeButton.ts";
 import {
   crashGate,
@@ -37,6 +38,7 @@ export interface CrashScreenOptions {
   readonly colours: CrashColours;
   // Whether the screen shows the message and stack, with a Copy button.
   readonly dev: boolean;
+  readonly foregroundInput?: ForegroundInput;
   readonly words: CrashWords;
 }
 
@@ -157,6 +159,14 @@ function showCrashScreen(page: CrashPage, options: CrashScreenOptions, report: C
   // Both buttons share their native semantic closures. Summary and text selection stay native.
   const stops: (() => void)[] = [];
   try {
+    options.foregroundInput?.register({
+      layer: "crash",
+      resolve: (target) => {
+        const action = actions.find(({ element }) => element.contains(target as Node));
+        return action === undefined ? undefined : { ...action, native: true };
+      },
+      root: screen,
+    });
     for (const action of actions) {
       const stop = options.bindHoldAction?.(action);
       if (stop !== undefined) {

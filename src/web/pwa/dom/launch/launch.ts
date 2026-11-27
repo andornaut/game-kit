@@ -9,6 +9,7 @@ import {
   type LoadingFailureView,
   mountLoadingFailure,
 } from "../../../progress/dom/index.ts";
+import type { ForegroundInput } from "../../../ui/dom/foregroundInput.ts";
 import {
   bootBytesOf,
   BUILD_POINTER_URL,
@@ -318,6 +319,7 @@ export interface BrowserLaunchPreparation {
   readonly parent: HTMLElement;
   readonly onUnsupported: () => void;
   readonly failure?: {
+    readonly foregroundInput?: ForegroundInput;
     readonly layout?: LoadingFailureLayout;
     readonly presentation?: BrowserFailurePresentation;
   };

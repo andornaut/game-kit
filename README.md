@@ -53,6 +53,24 @@ Move image processing from `art/rgbaImage` to `build/rgbaImage`, which also expo
 
 Apply the mapping to JavaScript and TypeScript imports, test mocks and configuration, and stylesheet imports. Change the old build-info reference to `/// <reference types="@andornaut/game-kit/build/buildInfo" />`. This declaration-only export still provides `__APP_VERSION__`, `__BUILD_ID__` and `__COMMIT__`. Historical migration notes use the subpaths current at the time. The source inventory uses implementation paths relative to `src/`.
 
+## Foreground input
+
+Use `bindForegroundInput(options, document)` from `runtime/web/input/dom/foregroundInput` to
+give the active page, modal, recovery panel or crash screen one input owner. Bind it before
+game-level capture handlers. Register each page with its current action resolver and remove
+its registration on exit. Pass the router to `createModalLayer(root, foregroundInput)` and to
+loading failure and crash options. Replace overlapping legacy key and secondary-button handlers
+when adopting the router.
+
+Arrows, WASD and HJKL move focus. Enter, Space, E and F invoke the focused eligible action.
+Editors, composition, native controls and keys explicitly reserved by the surface keep their own
+handling. Supply `preserveKey` where a control owns directional movement. Escape uses the top
+surface's eligible Skip or dismissal. The game supplies the fallback and eligibility rules.
+
+Secondary pointer activation resolves the current action on guarded release. Drag, cancellation,
+surface changes and loss of availability prevent activation. Context-menu suppression is scoped
+to the gesture. With the router omitted, existing modal and recovery bindings retain their defaults.
+
 ## Placed row heights and one-action centring in 0.91.0
 
 - Additive. A placed form row list takes a height per row: `rows.place(context, [{ element, height }])` and `FormRowsRow.height` in `formRowsGeometry`, in whole units. A row without one is a slider's `layout.height` or the layout's `height`. Each row's track, padding, icon, switch, lane, art-locked sizes and press dip follow its own height, so rows of different heights share one list instead of one list per height. Lists without per-row heights render as in 0.90.0.

@@ -311,6 +311,7 @@ export interface FormRowView {
   refresh(): void;
   setPressed(pressed: boolean): void;
   holdAction: ButtonView["holdAction"];
+  foregroundAction: ButtonView["foregroundAction"];
   dispose(): void;
 }
 
@@ -451,6 +452,7 @@ export function createFormRow(document: Document, options: FormRowOptions): Form
   return {
     dispose: () => view.dispose(),
     element: view.element,
+    foregroundAction: view.foregroundAction,
     holdAction: () => view.holdAction(),
     label: labelSlot,
     note,
