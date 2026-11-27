@@ -937,7 +937,6 @@ describe("codec-aware groups", () => {
       }),
     } satisfies BuildGroupStore;
     const activeFormat: ActiveGroupFormat = {
-      mayDiffer: async () => sealed !== undefined,
       differs: async (pointer) => sealed !== undefined && !same(pointer),
       seal: async (pointer, signal, verify) => {
         const read = readFiles(pointer);
@@ -1008,30 +1007,52 @@ describe("codec-aware groups", () => {
     return { ...f, after, before, build };
   }
 
-  it("starts discovery before pending codec repair and does not wait for it to play", async () => {
+  it("plays before discovery and repairs the selected audio from the regular check", async () => {
     const f = await activeForM4a();
-    let finishDiscovery!: (response: Response) => void;
-    f.fetch.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finishDiscovery = resolve;
-        }),
-    );
+    const discovery = deferred<Response>();
+    f.fetch.mockImplementationOnce(() => discovery.promise);
     await expect(f.launch.run()).resolves.toBe("play");
+    await settle();
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([BUILD_POINTER_URL]);
+    expect(await f.groups.store.complete(f.before.version, f.before)).toBe(true);
+
+    discovery.resolve(Response.json(f.build.pointer));
+    await settle();
     const paths = f.fetch.mock.calls.map(([path]) => path);
     expect(paths).toEqual([
-      BUILD_POINTER_URL,
       BUILD_POINTER_URL,
       f.build.pointer.manifest,
       ...archivePaths(m4a),
       BUILD_POINTER_URL,
     ]);
     expect(await f.groups.store.complete(f.before.version, f.after)).toBe(true);
-
-    finishDiscovery(Response.json(f.build.pointer));
-    await settle();
-    expect(f.fetch).toHaveBeenCalledTimes(paths.length);
     expect(f.offers).toEqual([]);
+    expect(f.reload).not.toHaveBeenCalled();
+    f.launch.dispose();
+  });
+
+  it("plays a soundless grouped build while the only version check is pending", async () => {
+    const base = buildOf("cd90", { "/a.js": bodies["/a.js"]!, "/play/": bodies["/play/"]! });
+    const build = {
+      ...base,
+      groups: [core],
+      manifest: { ...base.manifest, sounds: {} },
+      pointer: { ...base.pointer, groups: [core.reference] },
+    };
+    const f = launchFor(build, undefined);
+    f.groups.stored.add(core.reference.sha256);
+    await f.groups.store.seal(build.pointer);
+    f.store.state = { active: build.pointer.version };
+    const discovery = deferred<Response>();
+    f.fetch.mockImplementationOnce(() => discovery.promise);
+    await expect(f.launch.run()).resolves.toBe("play");
+    await settle();
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([BUILD_POINTER_URL]);
+    discovery.resolve(Response.json(build.pointer));
+    await settle();
+    expect(f.fetch.mock.calls.map(([url]) => url)).toEqual([BUILD_POINTER_URL]);
+    expect(f.offers).toEqual([]);
+    expect(f.reload).not.toHaveBeenCalled();
     f.launch.dispose();
   });
 
@@ -1077,6 +1098,7 @@ describe("codec-aware groups", () => {
       }
 
       await expect(f.launch.run()).resolves.toBe("play");
+      await settle();
       f.launch.dispose();
       expect(await f.groups.store.complete(f.before.version, f.after)).toBe(
         scenario === "available",

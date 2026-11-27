@@ -280,15 +280,13 @@ downloads no other format's sound bytes. An `undefined` sound format installs
 every group. Grouped staging reads the build manifest for this check. Groups
 an earlier kit built without format tags still install in full.
 
-Install and staging can reseal a build for a different sound format, reusing
-shared groups by digest. For an already active grouped build, online startup
-can also recover the new format's audio when the exact active version is
-still deployed and the controlling worker supports group repair. Launch
-verifies the selected groups and rechecks the active and staged records before
-sealing them. The router keeps its pinned snapshot and can serve newly
-recovered audio missing from that snapshot for the same version. If recovery
-is unavailable or fails, play continues without the missing sounds. The old
-groups stay stored until the build is reclaimed.
+An installed build starts while the regular version check runs. If the
+deployed build is already active and is missing audio for the device's format,
+the same check can recover those groups when the controlling worker supports
+repair. It reuses shared groups by digest and verifies the selected groups
+and active and staged records before sealing. The router can serve recovered
+audio alongside its pinned snapshot for the same version. Play can continue
+without unavailable sounds. The old groups stay stored until build reclamation.
 
 The build rejects more than 100 groups in grouped mode, counting each sound
 format's group separately, or more than 100 listed files in specific-file

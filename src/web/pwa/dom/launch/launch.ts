@@ -1076,6 +1076,28 @@ export function createLaunch(
     reportUpdate,
   };
 
+  // Audio repair shares discovery. Its manifest and pre-seal recheck each have a bounded read.
+  const readRepairMetadata = async <T>(read: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+    aborts.signal.throwIfAborted();
+    const request = new AbortController();
+    const abort = () => request.abort();
+    aborts.signal.addEventListener("abort", abort, { once: true });
+    const timer = page.timers.setTimeout(abort, CONTROL_WAIT_MS);
+    try {
+      return await read(request.signal);
+    } finally {
+      aborts.signal.removeEventListener("abort", abort);
+      page.timers.clearTimeout(timer);
+    }
+  };
+  const groupedRepair: LaunchGroupsContext = {
+    ...groups,
+    groupRouterReady: () => archiveRouterReady(BUILD_GROUP_REPAIR_ROUTER_PROBE),
+    readDeployedManifest: (pointer) =>
+      readRepairMetadata((signal) => readDeployedManifest(pointer, signal)),
+    readPointer: () => readRepairMetadata(readPointer),
+  };
+
   // Stages the build the pointer names; a redeploy mid-staging restarts on the new manifest.
   // Records in attempt the version it tries, so a failure can name it.
   const stageDeployed = async (restarts: number, attempt: { version?: string }): Promise<void> => {
@@ -1133,6 +1155,16 @@ export function createLaunch(
         });
       }
       reportUpdate({ phase: "idle" });
+      if (
+        pointer.groups !== undefined &&
+        pointer.version === documentVersion &&
+        visible &&
+        !required &&
+        !disposed &&
+        !reloading
+      ) {
+        await recoverActiveGroups(groupedRepair, pointer).catch(() => undefined);
+      }
       return;
     }
     const { buildId, version } = pointer;
@@ -1453,35 +1485,6 @@ export function createLaunch(
     }
     if (visible && page.online() && !disposed && !reloading) {
       startEarlyPointer(state);
-    }
-    if (page.online()) {
-      // Optional metadata reads must not leave an installed game waiting on an unreachable origin.
-      const readMetadata = async <T>(read: (signal: AbortSignal) => Promise<T>): Promise<T> => {
-        aborts.signal.throwIfAborted();
-        const request = new AbortController();
-        const abort = () => request.abort();
-        aborts.signal.addEventListener("abort", abort, { once: true });
-        const timer = page.timers.setTimeout(abort, CONTROL_WAIT_MS);
-        try {
-          return await read(request.signal);
-        } finally {
-          aborts.signal.removeEventListener("abort", abort);
-          page.timers.clearTimeout(timer);
-        }
-      };
-      await recoverActiveGroups(
-        {
-          ...groups,
-          downloadGroup: (group, onBytes) => downloadGroup(group, onBytes, page.fetch),
-          groupRouterReady: () => archiveRouterReady(BUILD_GROUP_REPAIR_ROUTER_PROBE),
-          readDeployedManifest: (pointer) =>
-            readMetadata((signal) => readDeployedManifest(pointer, signal)),
-          // Repair retains its own bounded read and revalidation. It never awaits the
-          // speculative discovery observation and can only repair the active version.
-          readPointer: () => readMetadata(readPointer),
-        },
-        state,
-      ).catch(() => undefined);
     }
     if (updateVersion !== undefined) {
       if (updateVersion === state.active && !disposed) {

@@ -158,23 +158,13 @@ export async function prepareGroups(
 
 // Repair only the sound selection of the active build. Verify the candidate before publishing
 // its marker, then recheck the startup records under the same lock as the marker write.
-export async function recoverActiveGroups(context: LaunchGroupsContext, startup: BuildState) {
-  const { active, staged } = startup;
+export async function recoverActiveGroups(context: LaunchGroupsContext, pointer: BuildPointer) {
   const format = activeGroupFormat(context.groupStore);
-  if (
-    active === undefined ||
-    format === undefined ||
-    !(await format.mayDiffer(active, context.soundFormat))
-  ) {
+  if (pointer.groups === undefined || format === undefined || !(await format.differs(pointer))) {
     return;
   }
-  const pointer = await context.readPointer();
-  if (
-    pointer.version !== active ||
-    pointer.groups === undefined ||
-    !(await format.differs(pointer)) ||
-    !(await context.groupRouterReady())
-  ) {
+  const { active, staged } = await context.store.readState();
+  if (pointer.version !== active || !(await context.groupRouterReady())) {
     return;
   }
   const manifest = await context.readDeployedManifest(pointer);

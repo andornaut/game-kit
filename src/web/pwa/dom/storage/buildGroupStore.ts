@@ -41,7 +41,6 @@ export type BuildGroupRead =
   | { readonly kind: "ready"; readonly files: ReadonlyMap<string, BuildGroupFile> };
 
 export interface ActiveGroupFormat {
-  mayDiffer(version: string, soundFormat: string | undefined): Promise<boolean>;
   differs(pointer: BuildPointer): Promise<boolean>;
   seal(
     pointer: BuildPointer,
@@ -304,14 +303,6 @@ export function createBuildGroupStore({
         const pointer = groupedPointer(value);
         const marker = await readMarker(pointer.version);
         return marker.kind === "known" && addsSoundFormat(marker.pointer, pointer);
-      },
-      async mayDiffer(version, soundFormat) {
-        const marker = await readMarker(version);
-        return (
-          marker.kind === "known" &&
-          (soundFormat === undefined ||
-            !marker.pointer.groups.some((group) => group.soundFormat === soundFormat))
-        );
       },
       async seal(value, signal, verify) {
         const pointer = groupedPointer(value);
