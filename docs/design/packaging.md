@@ -92,3 +92,4 @@ includes type-only imports and re-exports. The config requires one area per ship
 | gk-0080 | Add Dependabot coverage for GameKit                                          | [gk-0080.md](../work/gk-0080.md) |
 | gk-0083 | Publish GameKit 0.92.0 with updater recovery                                 | [gk-0083.md](../work/gk-0083.md) |
 | gk-0085 | Organize shared modules by responsibility                                    | [gk-0085.md](../work/gk-0085.md) |
+| gk-0091 | Organize GameKit documentation around topic guides                           | [gk-0091.md](../work/gk-0091.md) |
