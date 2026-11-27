@@ -1,5 +1,5 @@
 // What other areas import from web/pwa/; consumers import the package exports.
-export { type AppWindowHost, runsInAppWindow } from "./appWindow.ts";
+export { type AppCloseHost, type AppWindowHost, canExitApp, runsInAppWindow } from "./appWindow.ts";
 export {
   BACK_GUARD_GESTURES,
   backGuardState,

@@ -22,6 +22,26 @@ Retry action. Recoverable failures still use the installer's Retry.
 
 The plugin also writes the build's manifest at `/.game-kit/manifest-<version>.json` (`buildContract`'s `buildManifestUrl`) and the pointer at `/.game-kit/build.json` (`BUILD_POINTER_URL`). The manifest lists every file the complete build needs offline under the URL the page requests, with its full SHA-256 and exact byte size, including the page, the build output it loads, the public files it links, the web app manifest's icons and the files `hashedFiles` names, every sound alternative included. Each alternative's URL extension names its format, and the page installs only the alternatives in its `soundFormat`. It also records each sound's alternatives, the `boot` files the game reads after install and any verified JSON families. The version changes with any listed file's content and with the build ID, sounds or boot files. The pointer names the version, its build ID and its manifest URL. `build/buildManifest` constructs and strictly validates both. The page and the router read them with checks that ignore fields a later kit version adds.
 
+## Platform Back and confirmed exit
+
+Create one page-level guard with `createBackNavigationGuard` from
+`@andornaut/game-kit/runtime/web/pwa/dom/backNavigation`. Pass the actual window `history`,
+the window as timer and event target, the game's `stateKey`, and the existing `onBack` route.
+Use `backCloseWatcher(navigator.userAgent, browserCloseWatcher())` to select the watcher.
+`backCloseWatcher` is in `@andornaut/game-kit/runtime/web/pwa/backNavigation`.
+
+Call `setEnabled(true)` while the game owns platform Back. Keep the guard enabled while the
+confirmation is open and after Cancel. Route `onBack` through existing nested dismissal,
+active play and Start rules. Keep separate Escape and in-game controls on their existing paths.
+
+Use `canLeave()` for the platform confirmation's Exit availability. On confirmation, call
+`await leave()` once. GameKit releases its current guard entry and performs one known
+browser traversal or a supported one-entry app close. When it returns `false`, keep the
+current screen and return to its normal input routing. `dispose()` releases the page-level
+binding when the owner ends. A browser with no usable interception retains its own handling.
+History interception can require trusted input before the first Back. Existing Firefox
+Android installed-app support limits apply.
+
 ## Install packs
 
 Set `packs: { maxBytes }` on `precachePlugin` to batch small assets without changing their logical URLs. See the

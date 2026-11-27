@@ -4,6 +4,12 @@ Check the entries for the versions you are crossing. Historical entries use the 
 
 [Reference](README.md)
 
+## Confirmed platform exit in 0.95.0
+
+Use [the scoped Back guard](pwa-integration.md#platform-back-and-confirmed-exit) when a game
+needs to release platform navigation after confirmation. The page-lifetime `guardBackNavigation`
+interface is still available for existing callers.
+
 ## Turned action sizing in 0.94.2
 
 `createActionGroup().measure()` measures the layout border box before a frame turn. Button
