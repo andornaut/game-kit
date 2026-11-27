@@ -187,3 +187,4 @@ The DOM part in `src/web/ui/dom/controls/slider.ts` uses `slider.css` in the for
 | gk-0071 | Keep art sizes and add row gaps, one-action rows and press dips to placed form rows | [gk-0071.md](../work/gk-0071.md) |
 | gk-0072 | Place rows of different heights in one list and centre one-action faces in the row  | [gk-0072.md](../work/gk-0072.md) |
 | gk-0074 | Skip pending artwork in modal keyboard navigation                                   | [gk-0074.md](../work/gk-0074.md) |
+| gk-0094 | Measure action buttons in layout space                                              | [gk-0094.md](../work/gk-0094.md) |
