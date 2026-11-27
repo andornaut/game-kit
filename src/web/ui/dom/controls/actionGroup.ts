@@ -73,8 +73,8 @@ export interface ActionGroupView {
     context: DomActionGridContext,
     actions: readonly DomAction[],
   ): ActionGridArrangement<HTMLElement>;
-  // Each element's natural face size in whole base px, rounded up, measured at max-content with
-  // the group's placement suspended. Measure after fonts load and labels change.
+  // Each element's natural border-box size in whole base px, rounded up, measured at max-content
+  // in layout space with the group's placement suspended. Measure after fonts load and labels change.
   measure(elements: readonly HTMLElement[]): ButtonSize[];
   // Removes the group's marks from the actions it placed. The elements stay where they are.
   dispose(): void;
@@ -252,13 +252,33 @@ export function createActionGroup(
     measure(elements) {
       assertLive();
       const unit = readUnit(element);
+      const view = element.ownerDocument.defaultView;
       element.setAttribute(ACTION_MEASURING_ATTRIBUTE, "");
       try {
         return elements.map((child) => {
-          const rect = child.getBoundingClientRect();
+          if (view === null || child.getClientRects().length === 0) {
+            return { height: 0, width: 0 };
+          }
+          // Use the resolved layout dimensions. Viewport rectangles include ancestor transforms.
+          const style = view.getComputedStyle(child);
+          const pixels = (value: string) => (value.endsWith("px") ? Number.parseFloat(value) : 0);
+          let width = pixels(style.width);
+          let height = pixels(style.height);
+          if (style.boxSizing !== "border-box") {
+            width +=
+              pixels(style.paddingLeft) +
+              pixels(style.paddingRight) +
+              pixels(style.borderLeftWidth) +
+              pixels(style.borderRightWidth);
+            height +=
+              pixels(style.paddingTop) +
+              pixels(style.paddingBottom) +
+              pixels(style.borderTopWidth) +
+              pixels(style.borderBottomWidth);
+          }
           // A rounding allowance keeps an exact length from rounding up a whole unit.
           const whole = (length: number) => Math.max(0, Math.ceil(length / unit - 1e-6));
-          return { height: whole(rect.height), width: whole(rect.width) };
+          return { height: whole(height), width: whole(width) };
         });
       } finally {
         element.removeAttribute(ACTION_MEASURING_ATTRIBUTE);

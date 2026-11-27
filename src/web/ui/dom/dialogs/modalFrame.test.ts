@@ -272,6 +272,7 @@ describe("createModalFrame for pages, projection and Chibi's cards", () => {
 
   it("shows the footer while its group measures, before the first layout", () => {
     const { frame, stay } = page();
+    stay.style.cssText = "box-sizing: border-box; width: 80px; height: 48px";
     let measuring: boolean | undefined;
     vi.spyOn(stay, "getBoundingClientRect").mockImplementation(() => {
       measuring = frame.card.hasAttribute("data-ui-modal-measuring");

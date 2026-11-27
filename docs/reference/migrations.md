@@ -4,6 +4,11 @@ Check the entries for the versions you are crossing. Historical entries use the 
 
 [Reference](README.md)
 
+## Turned action sizing in 0.94.2
+
+`createActionGroup().measure()` measures the layout border box before a frame turn. Button
+sizes still round up to whole base units, including at fractional fit scales.
+
 ## Migration to 0.92.0
 
 The precache plugin now rejects `fetch-json-data-v1` with grouped or whole-build archive

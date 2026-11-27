@@ -124,16 +124,20 @@ describe("createActionGroup", () => {
 
   it("measures natural faces in whole base px with placement suspended", () => {
     const { back, group, ok } = fixture();
-    group.element.style.setProperty("--ui-unit", "2");
+    group.element.style.setProperty("--ui-unit", "1.25");
+    ok.style.cssText =
+      "box-sizing: content-box; width: 61.5px; height: 55.5px; padding: 1.25px 1.5px; border: 1px solid";
+    back.style.cssText =
+      "box-sizing: border-box; width: 75.0000001px; height: 60px; padding: 4px; border: 1px solid";
     const seen: boolean[] = [];
     const rect = (width: number, height: number) => () => {
       seen.push(group.element.hasAttribute(ACTION_MEASURING_ATTRIBUTE));
       return { height, width } as DOMRect;
     };
-    vi.spyOn(ok, "getBoundingClientRect").mockImplementation(rect(101, 96));
-    vi.spyOn(back, "getBoundingClientRect").mockImplementation(rect(120.0000001, 96));
+    vi.spyOn(ok, "getBoundingClientRect").mockImplementation(rect(60, 66.5));
+    vi.spyOn(back, "getBoundingClientRect").mockImplementation(rect(60, 75.0000001));
     expect(group.measure([ok, back])).toEqual([
-      { height: 48, width: 51 },
+      { height: 48, width: 54 },
       { height: 48, width: 60 },
     ]);
     expect(seen).toEqual([true, true]);
