@@ -4,6 +4,13 @@ Check the entries for the versions you are crossing. Historical entries use the 
 
 [Reference](README.md)
 
+## Browser Back corrections in 0.95.1
+
+The shared Back guard handles desktop Firefox toolbar Back on its exact owned entry pair.
+Firefox reports the same event for untagged scripted Back on that pair. After a GameKit-owned
+first-install reload, the guard can arm when the earlier document proved it was at the end of
+history and the reloaded entry matches. Consumers keep the same guard API.
+
 ## Confirmed platform exit in 0.95.0
 
 Use [the scoped Back guard](pwa-integration.md#platform-back-and-confirmed-exit) when a game

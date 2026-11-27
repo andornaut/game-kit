@@ -6,6 +6,7 @@ import {
   ESCAPE_KEY,
   isBackGuardState,
 } from "../index.ts";
+import { takeBackReloadTail } from "./backReloadTail.ts";
 
 export interface HistoryLike {
   // How many entries the window's session history holds, before and after the current one.
@@ -216,6 +217,11 @@ export function createBackNavigationGuard(
 ): BackNavigationGuard {
   const navigation = keyedNavigation(eventTarget);
   const host = eventTarget as Partial<AppCloseWindow>;
+  const userAgent = host.navigator?.userAgent ?? "";
+  // WORKAROUND https://bugzilla.mozilla.org/show_bug.cgi?id=2062328
+  // Desktop Firefox reports its toolbar Back like an untagged script traversal. Accept that
+  // ambiguity only on the exact owned marker-to-base pair. Remove once Firefox reports it.
+  const firefoxBack = /\bFirefox\/\d/.test(userAgent) && !/\bAndroid\b/.test(userAgent);
   const app =
     typeof host.close === "function" &&
     typeof host.matchMedia === "function" &&
@@ -226,7 +232,7 @@ export function createBackNavigationGuard(
   const initiallyClosable = app !== undefined && canExitApp(createCloseWatcher, app);
   const launch = navigation?.activation;
   // The entry list omits cross-origin history. A fresh push starts at the tail.
-  const launchHidden =
+  let launchHidden =
     navigation !== undefined &&
     launch?.navigationType === "push" &&
     launch.entry.id === navigation.currentEntry?.id
@@ -273,9 +279,14 @@ export function createBackNavigationGuard(
     }
     const entries = navigation.entries();
     const hidden = history.length - entries.length;
+    const provenHidden =
+      launchHidden ??
+      (hidden !== 0 && navigation.activation === launch && base.id === launch?.entry.id
+        ? takeBackReloadTail(history, eventTarget)
+        : undefined);
     if (
       hidden !== 0 &&
-      (hidden !== launchHidden || navigation.activation !== launch || base.id !== launch?.entry.id)
+      (hidden !== provenHidden || navigation.activation !== launch || base.id !== launch?.entry.id)
     ) {
       return;
     }
@@ -311,6 +322,7 @@ export function createBackNavigationGuard(
       navigation.entries()[base.index]?.id === base.id
     ) {
       const marker = { base, entry, token };
+      launchHidden = provenHidden;
       lastMarker = marker;
       if (enabled && generation === started) {
         owned = marker;
@@ -490,7 +502,8 @@ export function createBackNavigationGuard(
       marker === undefined ||
       !currentMarker(marker) ||
       move.navigationType !== "traverse" ||
-      !move.userInitiated ||
+      move.info !== undefined ||
+      (!move.userInitiated && !firefoxBack) ||
       !move.destination.sameDocument ||
       move.destination.id !== marker.base.id ||
       event.defaultPrevented

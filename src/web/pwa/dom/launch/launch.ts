@@ -44,6 +44,7 @@ import {
   type UpdateOffer,
   type UpdateState,
 } from "../../index.ts";
+import { browserLaunchLocation } from "../backReloadTail.ts";
 import {
   BUILD_GROUP_REPAIR_ROUTER_PROBE,
   BUILD_GROUP_ROUTER_PROBE,
@@ -293,7 +294,10 @@ function contextForBrowser(
     container,
     eventTarget: window,
     fetch: (input, init) => fetch(input, init),
-    location: window.location,
+    location: browserLaunchLocation(
+      () => parseProgressCarry(readSession(session, LAUNCH_PROGRESS_KEY)) !== undefined,
+      window,
+    ),
     online: () => navigator.onLine,
     storage: {
       manager: navigator.storage,

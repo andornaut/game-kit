@@ -59,4 +59,4 @@ See [PWA integration](../reference/pwa-integration.md) for build output, startup
 | gk-0090 | Keep speculative audio repair off installed startup                         | [gk-0090.md](../work/gk-0090.md) |
 | gk-0093 | Release the browser Back guard on confirmed exit                            | [gk-0093.md](../work/gk-0093.md) |
 | gk-0095 | Recover a grouped install after force reload                                | [gk-0095.md](../work/gk-0095.md) |
-| gk-0096 | Handle trusted Firefox Back on the owned guard entry                        | [gk-0096.md](../work/gk-0096.md) |
+| gk-0096 | Preserve platform Back across Firefox and first-install reload              | [gk-0096.md](../work/gk-0096.md) |

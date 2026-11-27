@@ -134,7 +134,7 @@ const DIRECT_MODULES = {
   "web/ui/dom/controls": ["actionGroup"],
   "web/ui/dom/dialogs": [],
   "web/ui/dom/layout": [],
-  "web/pwa/dom": ["visibility"],
+  "web/pwa/dom": ["backReloadTail", "visibility"],
   "web/pwa/dom/storage": ["buildArchiveStore", "buildGroupStore", "buildStore"],
   "web/pwa/dom/transfer": [
     "buildArchiveDownload",

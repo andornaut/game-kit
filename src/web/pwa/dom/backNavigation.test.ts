@@ -161,14 +161,18 @@ function fixture({
   installed,
   keyed = true,
   onBack = vi.fn(),
+  userAgent,
 }: {
   createCloseWatcher?: () => TestWatcher;
   keyed?: boolean;
   onBack?: () => void;
+  userAgent?: string;
   history?: KeyedHistory;
   installed?: { readonly closes: boolean; readonly userAgent: string };
 } = {}) {
-  const target = Object.assign(new EventTarget(), keyed ? { navigation: history } : {});
+  const target = Object.assign(new EventTarget(), keyed ? { navigation: history } : {}, {
+    navigator: { userAgent },
+  });
   const app = {
     close: vi.fn(() => {
       app.closed = installed?.closes === true;
@@ -208,6 +212,34 @@ function fixture({
 }
 
 describe("createBackNavigationGuard", () => {
+  it.each([
+    ["Gecko/20100101 Firefox/156.0", 1, undefined, true],
+    ["Gecko/20100101 Firefox/156.0", 1, { kit: true }, false],
+    ["Gecko/20100101 Firefox/156.0", 0, undefined, false],
+    ["Android Firefox/156.0", 1, undefined, false],
+    ["Chrome/159.0", 1, undefined, false],
+  ] as const)(
+    "bounds untagged Back on %s to the owned pair (%s, %s)",
+    (userAgent, destination, info, owns) => {
+      const { flushInputTask, gesture, guard, history, onBack } = fixture({ userAgent });
+      guard.setEnabled(true);
+      gesture();
+      const marker = history.currentEntry;
+      const move = history.move(destination, {
+        cancelable: true,
+        userInitiated: false,
+        ...(info === undefined ? {} : { info }),
+      });
+      flushInputTask();
+      expect(move.defaultPrevented).toBe(owns);
+      expect(history.currentEntry.id === marker.id).toBe(owns);
+      expect(onBack).toHaveBeenCalledTimes(owns ? 1 : 0);
+      expect(history.traverseTo).not.toHaveBeenCalled();
+      guard.dispose();
+      history.finishCleanup();
+    },
+  );
+
   it("arms in the captured trusted entry gesture and releases the exact marker once on Home", async () => {
     const { flushInputTask, gesture, guard, history, onBack, target } = fixture();
     const base = history.currentEntry;
