@@ -1018,7 +1018,9 @@ describe("codec-aware groups", () => {
     expect(await f.groups.store.complete(f.before.version, f.before)).toBe(true);
 
     discovery.resolve(Response.json(f.build.pointer));
-    await settle();
+    await vi.waitFor(async () => {
+      expect(await f.groups.store.complete(f.before.version, f.after)).toBe(true);
+    });
     const paths = f.fetch.mock.calls.map(([path]) => path);
     expect(paths).toEqual([
       BUILD_POINTER_URL,
@@ -1026,7 +1028,6 @@ describe("codec-aware groups", () => {
       ...archivePaths(m4a),
       BUILD_POINTER_URL,
     ]);
-    expect(await f.groups.store.complete(f.before.version, f.after)).toBe(true);
     expect(f.offers).toEqual([]);
     expect(f.reload).not.toHaveBeenCalled();
     f.launch.dispose();
@@ -1099,7 +1100,13 @@ describe("codec-aware groups", () => {
       }
 
       await expect(f.launch.run()).resolves.toBe("play");
-      await settle();
+      if (scenario === "available") {
+        await vi.waitFor(async () => {
+          expect(await f.groups.store.complete(f.before.version, f.after)).toBe(true);
+        });
+      } else {
+        await settle();
+      }
       f.launch.dispose();
       expect(await f.groups.store.complete(f.before.version, f.after)).toBe(
         scenario === "available",
