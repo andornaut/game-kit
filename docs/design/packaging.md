@@ -84,3 +84,4 @@ config refuses to load while a shipped module is in no area or in two.
 | gk-0079 | Audit GameKit documentation against current source                           | [gk-0079.md](../work/gk-0079.md) |
 | gk-0080 | Add Dependabot coverage for GameKit                                          | [gk-0080.md](../work/gk-0080.md) |
 | gk-0083 | Publish GameKit 0.92.0 with updater recovery                                 | [gk-0083.md](../work/gk-0083.md) |
+| gk-0085 | Organize shared modules by responsibility                                    | [gk-0085.md](../work/gk-0085.md) |
