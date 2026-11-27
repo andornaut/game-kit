@@ -46,6 +46,7 @@ import {
 const POLICY = { cacheNamePrefix: "game-", hashedAssetPrefix: "/assets/" };
 const ORIGIN = "https://game.test";
 const ROUTER = "/sw.js";
+const GROUPED_ROUTER_RELOAD_KEY = "game-kit:grouped-router-reload";
 const LAUNCH_PROGRESS_KEY = "game-kit:launch-progress";
 const LAUNCH_RELOAD_KEY = "game-kit:launch-reload";
 
@@ -164,19 +165,20 @@ function fixture({
   archiveStore,
   groupStore,
   onUpdateProgress,
+  session = new FakeSession(),
   soundFormat,
   updateProgress,
 }: {
   archiveStore?: BuildArchiveStore;
   groupStore?: BuildGroupStore;
   onUpdateProgress?: (value: UpdateProgress) => void;
+  session?: FakeSession;
   soundFormat?: string;
   updateProgress?: UpdateProgress[];
 } = {}) {
   const container = new FakeContainer();
   const visibility = new FakeDocument();
   const window = new EventTarget();
-  const session = new FakeSession();
   const reload = vi.fn();
   const routes = new Map<string, () => Response>();
   const fetch = vi.fn<FetchLike>(async (input) => {
@@ -429,6 +431,107 @@ describe("grouped updates", () => {
       ["/play/", { blob: new Blob(["<html>"]), byteSize: 6, contentType: "text/html", offset: 0 }],
     ]);
   const readCold = async () => ({ files: coldFiles(), kind: "ready" as const });
+
+  function installedGrouped(session = new FakeSession(), read: BuildGroupStore["read"] = readCold) {
+    const f = fixture({
+      groupStore: { complete: vi.fn(), put: vi.fn(), read, reuse: vi.fn(), seal: vi.fn() },
+      session,
+    });
+    f.store.state = { active: cold.pointer.version };
+    f.setOnline(false);
+    f.container.register.mockImplementation(() => new Promise(() => {}));
+    return f;
+  }
+
+  it("reloads an uncontrolled grouped launch once and resumes boot under the router", async () => {
+    const f = installedGrouped();
+    f.session.setItem(
+      LAUNCH_PROGRESS_KEY,
+      JSON.stringify({ bootBytes: 2, receivedBytes: 7, version: cold.pointer.version }),
+    );
+    await expect(f.launch.run()).resolves.toBe("reloading");
+    expect(f.container.register).toHaveBeenCalledOnce();
+    expect(f.reload).toHaveBeenCalledOnce();
+    expect(f.session.getItem(GROUPED_ROUTER_RELOAD_KEY)).toBe(cold.pointer.version);
+    expect(f.session.getItem(LAUNCH_PROGRESS_KEY)).not.toBeNull();
+    expect(f.store.calls).toEqual([]);
+    expect(f.fetch).not.toHaveBeenCalled();
+    expect(f.installBuild).not.toHaveBeenCalled();
+    f.launch.dispose();
+
+    const read = vi.fn(readCold);
+    const next = installedGrouped(f.session, read);
+    next.container.claim();
+    await expect(next.launch.run()).resolves.toBe("play");
+    expect(next.container.register).toHaveBeenCalledOnce();
+    expect(next.reload).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+    expect(next.fetch).not.toHaveBeenCalled();
+    expect(next.installBuild).not.toHaveBeenCalled();
+    expect(next.progress).toContainEqual(expect.objectContaining({ phase: "booting" }));
+    expect(next.session.getItem(GROUPED_ROUTER_RELOAD_KEY)).toBeNull();
+    next.launch.dispose();
+  });
+
+  it("offers Retry if the ordinary reload remains uncontrolled and never reloads again", async () => {
+    const f = installedGrouped();
+    await expect(f.launch.run()).resolves.toBe("reloading");
+    f.launch.dispose();
+
+    const next = installedGrouped(f.session);
+    const result = next.launch.run();
+    await settle();
+    expect(next.failures).toEqual([{ reason: "verification", retry: expect.any(Function) }]);
+    expect(next.reload).not.toHaveBeenCalled();
+    next.failures[0]!.retry();
+    await settle();
+    expect(next.failures).toHaveLength(2);
+    expect(next.reload).not.toHaveBeenCalled();
+
+    next.container.claim();
+    next.failures[1]!.retry();
+    await expect(result).resolves.toBe("play");
+    expect(next.reload).not.toHaveBeenCalled();
+    expect(next.fetch).not.toHaveBeenCalled();
+    expect(next.installBuild).not.toHaveBeenCalled();
+    expect(next.session.getItem(GROUPED_ROUTER_RELOAD_KEY)).toBeNull();
+    next.launch.dispose();
+  });
+
+  it.each(["read throws", "write throws", "write ignored"] as const)(
+    "offers Retry without navigating when the session fence %s",
+    async (scenario) => {
+      const f = installedGrouped();
+      const blocked = () => {
+        throw new Error("Session storage blocked");
+      };
+      if (scenario === "read throws") {
+        vi.spyOn(f.session, "getItem").mockImplementation(blocked);
+      } else {
+        vi.spyOn(f.session, "setItem").mockImplementation(
+          scenario === "write throws" ? blocked : () => undefined,
+        );
+      }
+      const result = f.launch.run();
+      await settle();
+      expect(f.failures).toEqual([{ reason: "verification", retry: expect.any(Function) }]);
+      expect(f.reload).not.toHaveBeenCalled();
+      f.container.claim();
+      f.failures[0]!.retry();
+      await expect(result).resolves.toBe("play");
+      expect(f.reload).not.toHaveBeenCalled();
+      f.launch.dispose();
+    },
+  );
+
+  it("does not await a controller or registration for an active file build", async () => {
+    const f = installedGrouped(new FakeSession(), async () => ({ kind: "unknown" }));
+    await expect(f.launch.run()).resolves.toBe("play");
+    expect(f.container.register).toHaveBeenCalledOnce();
+    expect(f.reload).not.toHaveBeenCalled();
+    expect(f.failures).toEqual([]);
+    f.launch.dispose();
+  });
 
   it("waits for the router and seals and activates groups before the first reload", async () => {
     let sealed = false;

@@ -4,6 +4,12 @@ Check the entries for the versions you are crossing. Historical entries use the 
 
 [Reference](README.md)
 
+## Grouped startup after force reload in 0.95.2
+
+An installed grouped build can make one ordinary reload when a force reload bypasses its
+router and the tab can record the attempt. If the reload fails to restore control, startup
+uses the existing Retry screen. The launch API is unchanged.
+
 ## Browser Back corrections in 0.95.1
 
 The shared Back guard handles desktop Firefox toolbar Back on its exact owned entry pair.

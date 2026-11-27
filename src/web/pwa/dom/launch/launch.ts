@@ -91,7 +91,7 @@ export type SessionLike = Pick<Storage, "getItem" | "removeItem" | "setItem">;
 export interface LaunchStorage {
   // navigator.storage, which the installer asks for persistence and a quota estimate.
   readonly manager: Pick<StorageManager, "estimate" | "persist"> | undefined;
-  // The tab's sessionStorage. Without it the fallback launch reload never runs.
+  // The tab's sessionStorage, used for reload guards and progress carry.
   readonly session: SessionLike | undefined;
 }
 
@@ -198,6 +198,7 @@ const MAX_RESTARTS = 3;
 // Session keys: the build a launch reload targeted, and first-install progress carried across the
 // reload that boots the new build.
 const LAUNCH_RELOAD_KEY = "game-kit:launch-reload";
+const GROUPED_ROUTER_RELOAD_KEY = "game-kit:grouped-router-reload";
 const LAUNCH_PROGRESS_KEY = "game-kit:launch-progress";
 
 function readSession(session: SessionLike | undefined, key: string): string | null | undefined {
@@ -546,6 +547,15 @@ export function createLaunch(
 
   const controlledByRouter = () => page.container.controller?.scriptURL === routerUrl;
 
+  // A force reload can bypass the router. Allow one ordinary reload until control returns.
+  const claimGroupedRouterReload = (version: string): boolean => {
+    if (readSession(session, GROUPED_ROUTER_RELOAD_KEY) !== null) {
+      return false;
+    }
+    writeSession(session, GROUPED_ROUTER_RELOAD_KEY, version);
+    return readSession(session, GROUPED_ROUTER_RELOAD_KEY) === version;
+  };
+
   // Resolves once the router controls the page, or after CONTROL_WAIT_MS.
   const waitForRouter = () =>
     new Promise<void>((resolve) => {
@@ -732,6 +742,9 @@ export function createLaunch(
   const play = (version: string): LaunchResult => {
     documentVersion = version;
     writeSession(session, LAUNCH_RELOAD_KEY, undefined);
+    if (controlledByRouter()) {
+      writeSession(session, GROUPED_ROUTER_RELOAD_KEY, undefined);
+    }
     void afterLaunch();
     return "play";
   };
@@ -1459,15 +1472,38 @@ export function createLaunch(
     const { reloadVersion, state } = await readStartup().catch((error: unknown) => {
       throw new LaunchError("verification", "Could not read stored build state", { cause: error });
     });
+    const active = state.active;
+    if (active !== undefined) {
+      // The router updates its own script without blocking an installed launch.
+      register().catch((error: unknown) =>
+        console.warn("Service worker registration failed; offline play may be stale.", error),
+      );
+      if (
+        reloadVersion === undefined &&
+        !controlledByRouter() &&
+        context.groupStore !== undefined
+      ) {
+        const grouped = await context.groupStore.read(active).catch(() => undefined);
+        if (disposed) {
+          return "reloading";
+        }
+        if (grouped?.kind === "ready" && !controlledByRouter()) {
+          if (!claimGroupedRouterReload(active)) {
+            throw new LaunchError(
+              "verification",
+              "The installed grouped build is not controlled by its router",
+            );
+          }
+          reload();
+          return "reloading";
+        }
+      }
+    }
     const progressRecord = readSession(session, LAUNCH_PROGRESS_KEY);
     const updateVersion = takeUpdateCarry(session, progressRecord);
-    if (state.active === undefined) {
+    if (active === undefined) {
       return firstInstall();
     }
-    // The router updates its own script; play does not wait for it.
-    register().catch((error: unknown) =>
-      console.warn("Service worker registration failed; offline play may be stale.", error),
-    );
     const carry = parseProgressCarry(progressRecord);
     if (carry !== undefined && carry.version === state.active) {
       progress = {
@@ -1498,7 +1534,7 @@ export function createLaunch(
         reportUpdateProgress({ phase: "applyFailed", version: updateVersion });
       }
     }
-    return play(state.active);
+    return play(active);
   };
 
   let running: Promise<LaunchResult> | undefined;
