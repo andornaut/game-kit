@@ -11,3 +11,4 @@ Reference: [Modules and environments](../../README.md#modules-and-environments).
 | ------- | ------------------------------------------- | -------------------------------- |
 | gk-0086 | Profile Phaser frame times across the games | [gk-0086.md](../work/gk-0086.md) |
 | gk-0087 | Improve gameplay performance across games   | [gk-0087.md](../work/gk-0087.md) |
+| gk-0089 | Reduce gameplay frame-time p99 in all games | [gk-0089.md](../work/gk-0089.md) |
