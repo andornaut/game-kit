@@ -3,7 +3,7 @@
 Public modules use explicit `package.json` exports under `runtime/`, `build/` or `test/`. The
 package also exports `package.json` for metadata. Retirement of the pre-0.47 aliases changed
 subpath resolution while preserving canonical targets and installed-build data contracts. See the
-[namespace migration](../../README.md#api-namespaces-and-migration).
+[namespace migration](../using-game-kit.md#api-namespaces-and-migration).
 
 The release archive holds compiled JavaScript, declarations, README, licence and `SOURCE_COMMIT`,
 built offline from the committed revision. Release verification and packaging use the same pinned
@@ -27,7 +27,7 @@ Imports are relative. ESLint's `import-x/no-cycle` checks runtime imports in `sr
 `scripts/` and `tests/`. Use `import type` for an entirely type-only import. Inline type
 specifiers alone can leave a runtime module load under `verbatimModuleSyntax`.
 
-Reference: [Standalone verification](../../README.md#standalone-verification), [Release artifacts and consumer proof](../../README.md#release-artifacts-and-consumer-proof).
+See [Standalone verification](../development.md#standalone-verification), [Release artifacts and consumer proof](../development.md#release-artifacts-and-consumer-proof).
 
 ## Source bands
 

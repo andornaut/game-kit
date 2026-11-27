@@ -19,7 +19,7 @@ controlling worker supports repair. Play continues if the new sounds are unavail
 
 See the [install and update design](../install-and-update.md#4-design).
 
-Reference: [Build output](../../README.md#build-output).
+See [PWA integration](../pwa-integration.md) for build output, startup and update configuration.
 
 ## Work items
 

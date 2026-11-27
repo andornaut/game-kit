@@ -6,7 +6,7 @@ text and stays readable without game fonts or art; games may configure its prese
 type and colours follow the uiTheme text roles and slots where the game sets them. A configured
 panel can draw a bevel highlight row under its top border.
 
-Reference: [Required loading failures](../../README.md#required-loading-failures).
+See [Required loading failures](../loading.md#required-loading-failures) for the integration contract.
 
 ## Work items
 

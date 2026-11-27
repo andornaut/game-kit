@@ -1,8 +1,8 @@
 # Work items
 
-Each user request is one file, `docs/work/<id>.md`, whether approved or not. It records scope and milestones; live
-progress (claims, blocks, receipts and acceptance) stays in the work protocol state root. The
-[design index](../design/README.md) lists the work items of each area.
+Each user request has one file, `docs/work/<id>.md`, regardless of approval status. The file records scope, decisions and outcome.
+Live claims, blocks, receipts and acceptance stay in the work protocol state root. Browse items by
+area in the [design index](../design/README.md) or return to the [documentation index](../README.md).
 
 | Front matter | Content                                                                        |
 | ------------ | ------------------------------------------------------------------------------ |
@@ -27,6 +27,8 @@ decided or delivered, and why, in a line or two each.
 - Work files are public: no session IDs, hostnames, local home-directory paths or quoted
   conversation, only short approval references.
 - Items approved before work files existed are recorded under the next IDs, with the approval
-  ledger key in `approved`; other earlier work is recorded in the README and git history.
-- Docs-only changes run only the attribution and lint checks ([gk-0001](gk-0001.md)).
+  ledger key in `approved`. Other earlier work is recorded in the [migration and release notes](../migrations.md) and Git history.
+- Local docs-only checks cover attribution and lint ([gk-0001](gk-0001.md)). Hosted CI skips
+  runtime jobs on classified changes confined to `docs/`. Root `README.md` changes run the normal
+  [verification jobs](../development.md#standalone-verification).
 - Work files are not part of the release archive.
