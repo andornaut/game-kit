@@ -1,4 +1,4 @@
-import { colourProperty, type UiColourRole } from "../../../ui/index.ts";
+import { colourProperty, type UiColourRole } from "../../../ui/uiTheme.ts";
 
 // Paint native button states under Retry's inline reset and without stylesheets.
 export function paintRetryFocus(

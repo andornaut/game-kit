@@ -5,19 +5,19 @@
     "types": ["node"]
   },
   "files": [
-    "src/build/vite/buildArchiveFiles.ts",
     "src/build/vite/buildInfo.d.ts",
-    "src/build/vite/classicWorker.ts",
     "src/build/vite/contentHash.ts",
     "src/build/vite/gameConfig.ts",
     "src/build/vite/gitHead.ts",
-    "src/build/vite/groupArchive.ts",
     "src/build/vite/hashedIconsPlugin.ts",
-    "src/build/vite/originMemberPacks.ts",
-    "src/build/vite/phaserBuildPlugin.ts",
-    "src/build/vite/phaserSource.ts",
-    "src/build/vite/phaserUses.ts",
-    "src/build/vite/precachePlugin.ts",
+    "src/build/vite/phaserBuild/phaserBuildPlugin.ts",
+    "src/build/vite/phaserBuild/phaserSource.ts",
+    "src/build/vite/phaserBuild/phaserUses.ts",
+    "src/build/vite/precache/buildArchiveFiles.ts",
+    "src/build/vite/precache/classicWorker.ts",
+    "src/build/vite/precache/groupArchive.ts",
+    "src/build/vite/precache/originMemberPacks.ts",
+    "src/build/vite/precache/precachePlugin.ts",
     "src/build/vite/securityHeadersPlugin.ts"
   ]
 }

@@ -9,7 +9,10 @@ import { fileURLToPath } from "node:url";
 import { build, type Plugin } from "vite";
 
 import { validateBuildManifest, validateBuildPointer } from "../../src/build/buildManifest.ts";
-import { precachePlugin, type PrecachePluginOptions } from "../../src/build/vite/precachePlugin.ts";
+import {
+  precachePlugin,
+  type PrecachePluginOptions,
+} from "../../src/build/vite/precache/precachePlugin.ts";
 import {
   BUILD_POINTER_URL,
   type BuildManifest,

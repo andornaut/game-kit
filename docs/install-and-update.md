@@ -58,10 +58,10 @@ Chibi and Archie use an ungrouped precache. Defects 1, 7 and 10 (group store and
 ### Components
 
 - `build/precachePlugin` records hash and size for every URL. It emits `/.game-kit/manifest-<version>.json`, a pointer at `/.game-kit/build.json` with `schema`, `version`, `buildId` and `manifest`, and optional packs. Configure the host to serve the pointer with `Cache-Control: no-store`. The worker reads installed build metadata from storage.
-- `dom/buildStore` owns the cache layout, records and reclamation.
-- `dom/buildInstaller` fetches, verifies, stores and resumes builds.
-- `dom/launch` runs the loader, update discovery and in-session Update now. See the migration table for the APIs it replaced.
-- `dom/serviceWorker` serves the client's pinned build or the build named by `active`. It uses `skipWaiting` and `clients.claim`. The page owns install and staging downloads. `no-store` requests bypass the router. Files under `hashedAssetPrefix` use the default cache mode, so the HTTP cache or the router may answer those requests. The router prunes closed clients' pins on activation and on navigation at most once a minute, sparing pins written within that minute.
+- `dom/storage/buildStore` owns the cache layout, records and reclamation.
+- `dom/transfer/buildInstaller` fetches, verifies, stores and resumes builds.
+- `dom/launch/launch` runs the loader, update discovery and in-session Update now. See the migration table for the APIs it replaced.
+- `dom/routing/serviceWorker` serves the client's pinned build or the build named by `active`. It uses `skipWaiting` and `clients.claim`. The page owns install and staging downloads. `no-store` requests bypass the router. Files under `hashedAssetPrefix` use the default cache mode, so the HTTP cache or the router may answer those requests. The router prunes closed clients' pins on activation and on navigation at most once a minute, sparing pins written within that minute.
 
 **Driver (decided).** The page installer drives the download, under the visible loading screen: 6 lanes, default priority, 3 attempts, 30 s inactivity timeout, no SW event held open. Updates use the same installer in background mode: 2 lanes, `low`, paused while hidden.
 

@@ -4,11 +4,12 @@ The kit supplies the app window, install, back and exit handling, offline play, 
 worker with its precache manifest, update offers and never-throwing save storage. Games own
 registration, policies and copy.
 
-`dom/launch` and `dom/serviceWorker` bind pages, Cache Storage, the network and timers. Their
-decisions are pure functions in `launchRules` and `routerRules`: progress, the progress carry,
-update-check timing and backoff, deploy and staged-record checks, routed requests and pin pruning.
-`dom/launchGroups` handles grouped first install, staging and active-build audio recovery.
-It takes the page, stores and launch state as an injected context and keeps no state of its own.
+Under `src/web/pwa/dom/`, `launch/` handles install prompts, page startup and updates.
+`routing/` holds the service worker and its capability protocol. Both use the stores in
+`storage/` and verified transfer helpers in `transfer/`. Pure `launchRules` and
+`routerRules` hold progress, timing, deployment, request and pin decisions.
+`launch/launchGroups.ts` handles grouped first install, staging and active-build audio recovery
+using the page, stores and launch state supplied by its context.
 
 The first install downloads and verifies the complete build from the page under one loading
 screen. Updates stage in the background and switch silently at launch or through the game's

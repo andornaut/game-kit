@@ -7,7 +7,7 @@ import { chromium, type Locator, type Page } from "playwright-core";
 import { createServer } from "vite";
 
 const markup = `<!doctype html>
-  <link rel="stylesheet" href="/src/web/ui/dom/controls.css?direct">
+  <link rel="stylesheet" href="/src/web/ui/dom/controls/controls.css?direct">
   <link rel="stylesheet" href="/src/web/crash/dom/crash.css?direct">
   <link rel="stylesheet" href="/theme.css">
   <main id="root">
@@ -32,7 +32,7 @@ const theme = `
 // outside any --ui-unit.
 const partsMarkup = `<!doctype html>
   <link rel="stylesheet" href="/src/web/ui/dom/ui.css?direct">
-  <link rel="stylesheet" href="/src/web/ui/dom/hudDisc.css?direct">
+  <link rel="stylesheet" href="/src/web/ui/dom/controls/hudDisc.css?direct">
   <link rel="stylesheet" href="/parts.css">
   <main id="discs"></main>
   <div id="pagers"><div id="scaled-pager"></div></div>`;
@@ -179,14 +179,14 @@ try {
     );
     await page.goto(origin);
     await page.evaluate(async () => {
-      const path = "/src/web/ui/dom/modalLayer.ts";
+      const path = "/src/web/ui/dom/dialogs/modalLayer.ts";
       const { createModalLayer } = (await import(
         path
-      )) as typeof import("../../src/web/ui/dom/modalLayer.ts");
-      const buttonPath = "/src/web/ui/dom/button.ts";
+      )) as typeof import("../../src/web/ui/dom/dialogs/modalLayer.ts");
+      const buttonPath = "/src/web/ui/dom/controls/button.ts";
       const { createButton } = (await import(
         buttonPath
-      )) as typeof import("../../src/web/ui/dom/button.ts");
+      )) as typeof import("../../src/web/ui/dom/controls/button.ts");
       const holdPath = "/src/web/input/dom/holdActions.ts";
       const { bindHoldActions } = (await import(
         holdPath
@@ -445,10 +445,10 @@ try {
         const view = themed ?? mountLoadingFailure({ onRetry }, parent);
         CSS.supports = supports;
         view.update({ attempt: 1, error: new Error("Fixture failure"), kind: "failed" });
-        const modalPath = "/src/web/ui/dom/modalLayer.ts";
+        const modalPath = "/src/web/ui/dom/dialogs/modalLayer.ts";
         const { createModalLayer } = (await import(
           modalPath
-        )) as typeof import("../../src/web/ui/dom/modalLayer.ts");
+        )) as typeof import("../../src/web/ui/dom/dialogs/modalLayer.ts");
         const modal = createModalLayer(parent);
         const retry = view.element.querySelector("button")!;
         let reset = retry.style.cssText;
@@ -1007,16 +1007,18 @@ try {
     // painted beyond it. The disc's box and hit area do not move.
     await page.goto(`${origin}parts`);
     await page.evaluate(async () => {
-      const discPath = "/src/web/ui/dom/hudDisc.ts";
+      const discPath = "/src/web/ui/dom/controls/hudDisc.ts";
       const { createHudDisc } = (await import(
         discPath
-      )) as typeof import("../../src/web/ui/dom/hudDisc.ts");
-      const pagerPath = "/src/web/ui/dom/pager.ts";
+      )) as typeof import("../../src/web/ui/dom/controls/hudDisc.ts");
+      const pagerPath = "/src/web/ui/dom/controls/pager.ts";
       const { createPager } = (await import(
         pagerPath
-      )) as typeof import("../../src/web/ui/dom/pager.ts");
-      const statePath = "/src/ui/pager.ts";
-      const { pagerState } = (await import(statePath)) as typeof import("../../src/ui/pager.ts");
+      )) as typeof import("../../src/web/ui/dom/controls/pager.ts");
+      const statePath = "/src/ui/actions/pager.ts";
+      const { pagerState } = (await import(
+        statePath
+      )) as typeof import("../../src/ui/actions/pager.ts");
       const rule = { holdMs: 500, slopPx: 5 };
       const discs = document.querySelector<HTMLElement>("#discs")!;
       const views: Record<string, ReturnType<typeof createHudDisc>> = {};

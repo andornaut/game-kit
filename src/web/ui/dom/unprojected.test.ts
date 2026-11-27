@@ -5,11 +5,11 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import type { SliderArt } from "../../../ui/slider.ts";
-import { createActionGroup, createPressContext } from "./actionGroup.ts";
-import { createFormRow, createFormRows } from "./formRow.ts";
-import { createModalFrame } from "./modalFrame.ts";
-import { createSlider } from "./slider.ts";
+import type { SliderArt } from "../../../ui/layout/slider.ts";
+import { createActionGroup, createPressContext } from "./controls/actionGroup.ts";
+import { createFormRow, createFormRows } from "./controls/formRow.ts";
+import { createSlider } from "./controls/slider.ts";
+import { createModalFrame } from "./dialogs/modalFrame.ts";
 
 // Callers without a projection get the same markup, inline styles and CSS as GameKit 0.83.0. The
 // digests are of 0.83.0's output for the same calls, and of its stylesheets with comments removed
@@ -24,7 +24,7 @@ const markup = (...elements: Element[]) => elements.map((e) => e.outerHTML).join
 // A stylesheet as an unprojected caller resolves it: projected and opt-in rules gone and the length
 // variable replaced by its unprojected definition, calc(var(--ui-unit, 1) * 1px).
 function unprojectedCss(file: string, length: string): string {
-  return readFileSync(join(import.meta.dirname, file), "utf8")
+  return readFileSync(join(import.meta.dirname, "controls", file), "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/[^{}]*(projected|data-ui-form-action|data-ui-form-press-dip)[^{}]*\{[^{}]*\}/g, "")
     .replace(new RegExp(`\\s*${length}:[^;]*;`, "g"), "")

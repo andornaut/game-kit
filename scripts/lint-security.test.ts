@@ -48,8 +48,12 @@ it.each([
 });
 
 it.each([
-  { banned: false, file: "src/web/ui/dom/probe.ts", source: 'import "../../../ui/index.ts";' },
-  { banned: false, file: "src/ui/probe.ts", source: 'import "./slider.ts";' },
+  {
+    banned: false,
+    file: "src/web/ui/dom/controls/probe.ts",
+    source: 'import "../../../../ui/layout/slider.ts";',
+  },
+  { banned: false, file: "src/ui/layout/probe.ts", source: 'import "./slider.ts";' },
   { banned: true, file: "src/rect.ts", source: 'import "./web/pwa/index.ts";' },
   {
     banned: false,
@@ -63,7 +67,31 @@ it.each([
     source: 'import type { P } from "../web/pwa/index.ts";',
   },
   { banned: true, file: "src/text/probe.ts", source: 'import "../view/pagePoint.ts";' },
-  { banned: true, file: "src/web/ui/dom/probe.ts", source: 'import "../../../ui/slider.ts";' },
+  {
+    banned: true,
+    file: "src/web/ui/dom/dialogs/probe.ts",
+    source: 'import "../controls/placedRows.ts";',
+  },
+  {
+    banned: true,
+    file: "src/ui/actions/probe.ts",
+    source: 'import type { SliderLayout } from "../layout/slider.ts";',
+  },
+  {
+    banned: false,
+    file: "src/web/pwa/dom/launch/probe.ts",
+    source: 'import "../routing/buildArchiveRouter.ts";',
+  },
+  {
+    banned: true,
+    file: "src/web/pwa/dom/launch/probe.ts",
+    source: 'import "../routing/serviceWorker.ts";',
+  },
+  {
+    banned: true,
+    file: "src/web/pwa/dom/routing/probe.ts",
+    source: 'import "../launch/launch.ts";',
+  },
   { banned: true, file: "src/numbers.ts", source: 'import "./random.ts";' },
   { banned: true, file: "src/rect.ts", source: 'import "../scripts/runtime.ts";' },
 ])("guards the source bands: $file, $source", async ({ banned, file, source }) => {

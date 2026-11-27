@@ -8,9 +8,10 @@ Reference: [High-density game UI](../../README.md#high-density-game-ui), [Dialog
 
 ## Layout base
 
-Components keep pure geometry and state in `src/ui/<component>.ts` and their DOM part in
-`src/web/ui/dom/<component>.ts` with an opt-in `<component>.css`. `controls.css` holds button
-geometry only.
+Pure action sizing and hit areas live in `src/ui/actions/`, and component geometry and layout
+trees live in `src/ui/layout/`. Browser components live in `src/web/ui/dom/controls/`,
+`dialogs/` or `layout/` with their opt-in stylesheets. Shared browser primitives and base
+styles live directly in `src/web/ui/dom/`. `controls.css` holds button geometry only.
 
 - Action groups own spacing. Layout boxes equal the drawn faces; the group applies the gap tokens
   or a named override, and each press area is an outset clamped to half the space toward a
@@ -58,8 +59,8 @@ geometry only.
 
 ## Modal frame
 
-The modal frame builds on the layout base: pure geometry in `src/ui/modalFrame.ts`, the DOM part
-in `src/web/ui/dom/modalFrame.ts` with `modalFrame.css`, and isolation through the existing modal
+The modal frame builds on the layout base with pure geometry in `src/ui/layout/modalFrame.ts`, the DOM part
+in `src/web/ui/dom/dialogs/modalFrame.ts` with `modalFrame.css`, and isolation through the existing modal
 layer and modal input gate.
 
 - Every length is a whole unit measured from the card's outer edge. The skin is a separate layer
@@ -140,8 +141,8 @@ theme slots.
 
 ## Slider
 
-A slider row builds on the form row: pure steps and geometry in `src/ui/slider.ts`, the DOM part
-in `src/web/ui/dom/slider.ts` with `slider.css`, in the form row list's grid.
+A slider row builds on the form row. Pure steps and geometry live in `src/ui/layout/slider.ts`.
+The DOM part in `src/web/ui/dom/controls/slider.ts` uses `slider.css` in the form row list's grid.
 
 - The value is a whole step from 0 to the game's step count. Left and right arrows move one step,
   Home and End to the ends, and a press anywhere on the row drags the thumb's centre along the

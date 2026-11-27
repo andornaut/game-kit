@@ -6,7 +6,8 @@
 // colours and its own type. It tracks the input modality from install and focuses Reload through
 // focusTarget (web/ui/dom/focusModality), so the focus fill shows only after keyboard input.
 import type { HoldActionBinding } from "../../input/dom/index.ts";
-import { createNativeButton, focusTarget, trackInputModality } from "../../ui/dom/index.ts";
+import { focusTarget, trackInputModality } from "../../ui/dom/focusModality.ts";
+import { createNativeButton } from "../../ui/dom/nativeButton.ts";
 import {
   crashGate,
   type CrashReport,

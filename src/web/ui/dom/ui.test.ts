@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { BUTTON_GAP, SMALL_BUTTON_GAP, STACK_BUTTON_GAP } from "../../../ui/spacing.ts";
+import { BUTTON_GAP, SMALL_BUTTON_GAP, STACK_BUTTON_GAP } from "../../../ui/actions/spacing.ts";
 import { PENDING_ATTRIBUTE } from "./imageReady.ts";
 import { REFUSAL_ATTRIBUTES, REFUSAL_SHAKE, REFUSAL_SHAKE_MS } from "./refusalCue.ts";
 import { UI_UNIT, units, VIEW_PROPERTIES } from "./viewUnits.ts";

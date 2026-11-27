@@ -56,7 +56,7 @@ try {
     await page.evaluate(async (held) => {
       const gateModule = "/src/input/modalInput.ts";
       const holdModule = "/src/web/input/dom/holdActions.ts";
-      const modalModule = "/src/web/ui/dom/modalLayer.ts";
+      const modalModule = "/src/web/ui/dom/dialogs/modalLayer.ts";
       const { createModalInputGate } = (await import(
         gateModule
       )) as typeof import("../../src/input/modalInput.ts");
@@ -65,7 +65,7 @@ try {
       )) as typeof import("../../src/web/input/dom/holdActions.ts");
       const { createModalLayer } = (await import(
         modalModule
-      )) as typeof import("../../src/web/ui/dom/modalLayer.ts");
+      )) as typeof import("../../src/web/ui/dom/dialogs/modalLayer.ts");
       const root = document.querySelector<HTMLElement>("#root")!;
       const opener = document.querySelector<HTMLButtonElement>("#opener")!;
       const confirmation = document.querySelector<HTMLElement>("#confirmation")!;

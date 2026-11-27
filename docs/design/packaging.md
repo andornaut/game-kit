@@ -32,12 +32,16 @@ Reference: [Standalone verification](../../README.md#standalone-verification), [
 ## Source bands
 
 `src/` follows the shared source structure (game-coordinator gc-0029). Each band holds layers,
-lowest first. A module imports only areas in its own layer or an earlier one, type-only imports
-included, and a directory area only through its `index.ts`, which re-exports what other areas use.
-Runtime imports form no cycle, so only type-only imports may form one, within a layer. An area is a
-file in `src/` or `src/web/`, or the files directly in one directory; `build/` and `testing/` are
-whole trees. Package exports stay the consumer surface. Tests beside their modules and
-`tests/e2e/` may import any module. The kit has no page entries, so no Entries band.
+lowest first. A module may import from its own layer or an earlier one, including type-only
+imports. UI and browser PWA areas expose named modules directly to other areas. Other directory
+areas expose their existing `index.ts`. Runtime imports are acyclic. An area is a source file,
+the files directly in a directory, or a whole tree for `build/` and `testing/`. Tests beside
+their modules and `tests/e2e/` may import any module. The kit has no page entries.
+
+Package exports keep stable consumer subpaths independently of these source paths. The
+`dom/`, `phaser/` and `vite/` directory segments set the environment for their descendants.
+The Vite build groups `precache/` for offline distribution and `phaserBuild/` for renderer
+bundling and feature analysis. Shared build configuration and metadata stay in `build/vite/`.
 
 | Band             | Layer | Areas, relative to `src/`                                                                                                                                |
 | ---------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -48,21 +52,24 @@ whole trees. Package exports stay the consumer surface. Tests beside their modul
 |                  | 2     | `achievements`, `achievements/`, `web/save/`                                                                                                             |
 | Presentation     | 1     | `art/`, `input/`, `modalLayout`, `motion`, `progress`, `text/`, `view/`                                                                                  |
 |                  | 2     | `ui/`, `web/view/`                                                                                                                                       |
+|                  | 3     | `ui/actions/`                                                                                                                                            |
+|                  | 4     | `ui/layout/`                                                                                                                                             |
 | Platform         | 1     | `load/`, `progressState`, `web/buildLabel`, `web/crash/`, `web/pwa/`                                                                                     |
 |                  | 2     | `web/pwa/archive/` (the build archive codec, which needs `TextEncoder`)                                                                                  |
 | Engine and views | 1     | `clock/phaser/`, `input/phaser/`, `load/phaser/`, `progress/phaser/`, `text/phaser/`, `view/phaser/`, `web/input/dom/`, `web/save/dom/`, `web/view/dom/` |
-|                  | 2     | `web/ui/dom/`, `web/view/phaser/`                                                                                                                        |
-|                  | 3     | `web/crash/dom/`, `web/progress/dom/`                                                                                                                    |
-|                  | 4     | `web/pwa/dom/`                                                                                                                                           |
+|                  | 2     | `web/ui/dom/`, `web/view/phaser/`, `web/pwa/dom/`, `web/pwa/dom/storage/`                                                                                |
+|                  | 3     | `web/ui/dom/controls/`, `web/ui/dom/layout/`, `web/pwa/dom/transfer/`                                                                                    |
+|                  | 4     | `web/ui/dom/dialogs/`, `web/pwa/dom/routing/`                                                                                                            |
+|                  | 5     | `web/crash/dom/`, `web/progress/dom/`                                                                                                                    |
+|                  | 6     | `web/pwa/dom/launch/`                                                                                                                                    |
 | Support          | 1     | `build/` (build-time code: pure at its top, Node and Vite in `build/vite/`), `testing/`                                                                  |
 
 Every `dom/` and `phaser/` directory is in Engine and views or Support, so only those bands
 import Phaser or the DOM. Nothing in `src/` imports `scripts/` or `tests/`.
 
-ESLint guards the table, which `SOURCE_BANDS` in `eslint.config.mjs` holds:
-`import-x/no-restricted-paths` rejects an import into a later layer, past another directory
-area's `index.ts`, or into `scripts/` or `tests/`, type-only imports and re-exports included. The
-config refuses to load while a shipped module is in no area or in two.
+ESLint uses `SOURCE_BANDS` and `DIRECT_MODULES` in `eslint.config.mjs` to reject imports into
+later layers, into private modules of another area, or into `scripts/` or `tests/`. This
+includes type-only imports and re-exports. The config requires one area per shipped module.
 
 ## Work items
 

@@ -75,6 +75,8 @@ const SOURCE_BANDS = [
     [
       ["art", "input", "modalLayout.ts", "motion.ts", "progress.ts", "text", "view"],
       ["ui", "web/view"],
+      ["ui/actions"],
+      ["ui/layout"],
     ],
   ],
   [
@@ -98,9 +100,11 @@ const SOURCE_BANDS = [
         "web/save/dom",
         "web/view/dom",
       ],
-      ["web/ui/dom", "web/view/phaser"],
+      ["web/ui/dom", "web/view/phaser", "web/pwa/dom", "web/pwa/dom/storage"],
+      ["web/ui/dom/controls", "web/ui/dom/layout", "web/pwa/dom/transfer"],
+      ["web/ui/dom/dialogs", "web/pwa/dom/routing"],
       ["web/crash/dom", "web/progress/dom"],
-      ["web/pwa/dom"],
+      ["web/pwa/dom/launch"],
     ],
   ],
   ["Support", [["build/**", "testing/**"]]],
@@ -110,6 +114,41 @@ const LAYERS = SOURCE_BANDS.flatMap(([, layers]) => layers);
 const isFile = (area) => area.endsWith(".ts");
 const isTree = (area) => area.endsWith("/**");
 const areaGlob = (area) => (isFile(area) || isTree(area) ? `src/${area}` : `src/${area}/*.ts`);
+
+// Grouped areas name the modules that other areas can import directly. Other directory
+// areas retain their existing index.ts boundary.
+const DIRECT_MODULES = {
+  ui: ["controlPresentation", "focusKeys", "projection", "uiTheme"],
+  "ui/actions": ["actionGroup", "buttonLayout", "hitAreas", "hudDisc", "pager"],
+  "ui/layout": ["formRow", "layoutTree", "modalFrame", "slider"],
+  "web/ui/dom": [
+    "domPress",
+    "focusModality",
+    "layoutProperties",
+    "nativeButton",
+    "refusalCue",
+    "sheetFrames",
+    "viewUnits",
+  ],
+  "web/ui/dom/controls": ["actionGroup"],
+  "web/ui/dom/dialogs": [],
+  "web/ui/dom/layout": [],
+  "web/pwa/dom": ["visibility"],
+  "web/pwa/dom/storage": ["buildArchiveStore", "buildGroupStore", "buildStore"],
+  "web/pwa/dom/transfer": [
+    "buildArchiveDownload",
+    "buildInstaller",
+    "sha256",
+    "verifiedJsonSource",
+  ],
+  "web/pwa/dom/routing": ["buildArchiveRouter"],
+  "web/pwa/dom/launch": [],
+};
+
+function privateModules(area) {
+  const exposed = DIRECT_MODULES[area] ?? ["index"];
+  return exposed.length === 0 ? areaGlob(area) : `src/${area}/!(${exposed.join("|")}).ts`;
+}
 
 function holds(area, module) {
   if (isTree(area)) {
@@ -132,10 +171,10 @@ if (misplaced.length > 0) {
 
 const BAND_MESSAGE =
   "src/ imports its own layer or a lower one in the source bands (docs/design/packaging.md), " +
-  "another directory area only through its index.ts, and never scripts/ or tests/.";
+  "another directory area only through its exposed modules, and never scripts/ or tests/.";
 
 // What each area may not import, type-only imports and re-exports included: a later layer, a
-// module of another directory area in its own or an earlier layer other than its index.ts, and
+// private module of another directory area in its own or an earlier layer, and
 // scripts/ and tests/. A zone takes either globs or plain paths, so the file areas of later layers
 // get a zone of their own.
 const BAND_ZONES = LAYERS.flatMap((areas, layer) =>
@@ -147,7 +186,7 @@ const BAND_ZONES = LAYERS.flatMap((areas, layer) =>
       ...LAYERS.slice(0, layer + 1)
         .flat()
         .filter((other) => other !== area && !isFile(other) && !isTree(other))
-        .map((other) => `src/${other}/!(index).ts`),
+        .map(privateModules),
       "scripts/**",
       "tests/**",
     ];

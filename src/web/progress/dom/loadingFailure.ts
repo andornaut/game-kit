@@ -1,7 +1,7 @@
 import { LOADING_FAILURE_TEXT, type LoadingAttemptState } from "../../../load/index.ts";
-import { colourProperty, type TextRole, type UiColourRole } from "../../../ui/index.ts";
+import { colourProperty, type TextRole, type UiColourRole } from "../../../ui/uiTheme.ts";
 import type { HoldActionBinding } from "../../input/dom/index.ts";
-import { createNativeButton } from "../../ui/dom/index.ts";
+import { createNativeButton } from "../../ui/dom/nativeButton.ts";
 import { paintRetryFocus } from "./retryFocus.ts";
 
 export interface LoadingFailureLayout {

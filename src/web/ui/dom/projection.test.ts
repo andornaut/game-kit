@@ -5,22 +5,22 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Rect } from "../../../rect.ts";
-import { type ActionProjection, arrangeActions } from "../../../ui/actionGroup.ts";
-import type { FormRowLayout } from "../../../ui/formRow.ts";
-import type { SliderArt } from "../../../ui/slider.ts";
+import { type ActionProjection, arrangeActions } from "../../../ui/actions/actionGroup.ts";
+import type { FormRowLayout } from "../../../ui/layout/formRow.ts";
+import type { SliderArt } from "../../../ui/layout/slider.ts";
 import {
   ACTION_PROJECTED_ATTRIBUTE,
   createActionGroup,
   createPressContext,
-} from "./actionGroup.ts";
+} from "./controls/actionGroup.ts";
 import {
   createFormRow,
   createFormRows,
   FORM_ROW_ACTION_ATTRIBUTE,
   FORM_ROWS_PROJECTED_ATTRIBUTE,
-} from "./formRow.ts";
-import { createModalFrame } from "./modalFrame.ts";
-import { createSlider } from "./slider.ts";
+} from "./controls/formRow.ts";
+import { createSlider } from "./controls/slider.ts";
+import { createModalFrame } from "./dialogs/modalFrame.ts";
 
 // Placement on a game's grid: Archie's device art-pixel grid at several scales and DPRs, every
 // placed part's edges written in CSS px from its holder's corner.
@@ -379,7 +379,10 @@ describe("a placed form row list", () => {
 
   it("writes its tracks and lengths through the length variable", () => {
     const strip = (file: string) =>
-      readFileSync(join(import.meta.dirname, file), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+      readFileSync(join(import.meta.dirname, "controls", file), "utf8").replace(
+        /\/\*[\s\S]*?\*\//g,
+        "",
+      );
     const form = strip("formRow.css");
     expect(form).toContain(
       ":where(.ui-form-rows[data-ui-form-projected], .ui-form-rows[data-ui-form-projected] *) {\n" +

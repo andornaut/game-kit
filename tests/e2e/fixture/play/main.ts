@@ -6,7 +6,7 @@ import {
   createLaunch,
   prepareBrowserLaunch,
   type UpdateProgress,
-} from "../../../../src/web/pwa/dom/launch.ts";
+} from "../../../../src/web/pwa/dom/launch/launch.ts";
 import { POLICY, SAVE_MS } from "../policy.ts";
 
 declare const __VARIANT__: string;
